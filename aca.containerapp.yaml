@@ -14,8 +14,6 @@ properties:
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: ollama-base-url
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
-      - name: azure-openai-api-key
-        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: graph-client-secret
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: notion-token
@@ -37,14 +35,8 @@ properties:
             value: qwen3:4b-instruct
           - name: OLLAMA_KEEP_ALIVE
             value: "-1"
-          - name: AZURE_OPENAI_FALLBACK_ENABLED
+          - name: KEYWORD_FALLBACK_ENABLED
             value: "true"
-          - name: AZURE_OPENAI_ENDPOINT
-            value: PLACEHOLDER_AZURE_OPENAI_ENDPOINT
-          - name: AZURE_OPENAI_API_KEY
-            secretRef: azure-openai-api-key
-          - name: AZURE_OPENAI_DEPLOYMENT
-            value: PLACEHOLDER_AZURE_OPENAI_DEPLOYMENT
           - name: GRAPH_TENANT_ID
             value: PLACEHOLDER_GRAPH_TENANT_ID
           - name: GRAPH_CLIENT_ID

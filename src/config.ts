@@ -40,17 +40,8 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
       ollamaKeepAlive: env.OLLAMA_KEEP_ALIVE || -1,
       timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000),
-      azureFallbackEnabled: readBool(env.AZURE_OPENAI_FALLBACK_ENABLED, true)
+      keywordFallbackEnabled: readBool(env.KEYWORD_FALLBACK_ENABLED, true)
     },
-    azureOpenAI:
-      env.AZURE_OPENAI_ENDPOINT && env.AZURE_OPENAI_API_KEY && env.AZURE_OPENAI_DEPLOYMENT
-        ? {
-            endpoint: env.AZURE_OPENAI_ENDPOINT,
-            apiKey: env.AZURE_OPENAI_API_KEY,
-            deployment: env.AZURE_OPENAI_DEPLOYMENT,
-            apiVersion: env.AZURE_OPENAI_API_VERSION || "2024-10-21"
-          }
-        : undefined,
     graph:
       env.GRAPH_TENANT_ID &&
       env.GRAPH_CLIENT_ID &&

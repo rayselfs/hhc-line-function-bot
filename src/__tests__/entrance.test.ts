@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../server.js";
 import { signLineBody } from "../line-signature.js";
-import type { AppConfig, FunctionRouterPort, LineReplyClient } from "../types.js";
+import { createApp } from "../server.js";
+import type {
+  AppConfig,
+  FunctionRouterPort,
+  LineReplyClient,
+  PostbackHandlerRegistry
+} from "../types.js";
 
 function testConfig(): AppConfig {
   return {
@@ -38,7 +43,7 @@ function testConfig(): AppConfig {
         allowRooms: false,
         allowedMessageTypes: ["text"],
         groupRequireWakeWord: true,
-        wakeKeywords: ["slides"],
+        wakeKeywords: ["小哈"],
         acceptMention: true,
         enabledFunctions: ["find_ppt_slides"]
       }
@@ -47,7 +52,7 @@ function testConfig(): AppConfig {
       ollamaBaseUrl: "http://127.0.0.1:11434",
       ollamaModel: "qwen3:4b-instruct",
       timeoutMs: 8000,
-      azureFallbackEnabled: true
+      keywordFallbackEnabled: true
     }
   };
 }
@@ -72,7 +77,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "reply-token",
       source: { type: "group", groupId: "Cmain", userId: "U1" },
-      message: { type: "text", text: "小哈 查投影片" }
+      message: { type: "text", text: "小哈 查投影片 奇異恩典" }
     });
 
     const res = await app.inject({
@@ -87,7 +92,7 @@ describe("LINE entrance", () => {
     expect(router.route).not.toHaveBeenCalled();
   });
 
-  it("selects the profile by webhook path and passes only enabled functions to the router", async () => {
+  it("selects the profile by webhook path and suggests only enabled quick replies on deny", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -103,7 +108,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "reply-token",
       source: { type: "group", groupId: "Cslides", userId: "U1" },
-      message: { type: "text", text: "slides 找 主日 詩歌 ppt" }
+      message: { type: "text", text: "小哈 不支援的要求" }
     });
 
     const res = await app.inject({
@@ -118,9 +123,16 @@ describe("LINE entrance", () => {
     expect(route.mock.calls[0]?.[0]).toMatchObject({
       profileName: "slides",
       enabledFunctions: ["find_ppt_slides"],
-      text: "slides 找 主日 詩歌 ppt"
+      text: "小哈 不支援的要求"
     });
-    expect(replyText).toHaveBeenCalledWith("reply-token", "目前不支援這個請求。");
+    expect(replyText).toHaveBeenCalledWith("reply-token", "目前不支援這個請求，請改用下方功能。", {
+      quickReplies: [
+        {
+          label: "查投影片",
+          action: { type: "message", label: "查投影片", text: "小哈 查投影片" }
+        }
+      ]
+    });
   });
 
   it("ignores a group message without wake word before calling the router", async () => {
@@ -130,7 +142,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "reply-token",
       source: { type: "group", groupId: "Cmain", userId: "U1" },
-      message: { type: "text", text: "查一下服事表" }
+      message: { type: "text", text: "查服事表" }
     });
 
     const res = await app.inject({
@@ -155,14 +167,7 @@ describe("LINE entrance", () => {
       router: { route },
       createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
     });
-    let body = lineBody({
-      type: "message",
-      replyToken: "reply-token",
-      source: { type: "user", userId: "Uallowed" },
-      message: { type: "text", text: "查這週服事表" }
-    });
-
-    body = lineBody({
+    const body = lineBody({
       type: "message",
       replyToken: "reply-token",
       source: { type: "user", userId: "Uallowed" },
@@ -207,6 +212,48 @@ describe("LINE entrance", () => {
     expect(router.route).not.toHaveBeenCalled();
   });
 
+  it("allows postback events for allowlisted groups and dispatches by action", async () => {
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const handleSelect = vi.fn().mockResolvedValue({
+      ok: true,
+      replyText: "已選擇第 1 個投影片"
+    });
+    const postbackHandlers: PostbackHandlerRegistry = {
+      select_ppt: handleSelect
+    };
+    const app = createApp(testConfig(), {
+      router: { route: vi.fn() },
+      postbackHandlers,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "postback",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      postback: { data: "action=select_ppt&requestId=req-1&index=0" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(handleSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "select_ppt",
+        params: expect.objectContaining({ requestId: "req-1", index: "0" })
+      }),
+      expect.objectContaining({
+        profile: expect.objectContaining({ name: "main" }),
+        event: expect.objectContaining({ replyToken: "reply-token" })
+      })
+    );
+    expect(replyText).toHaveBeenCalledWith("reply-token", "已選擇第 1 個投影片", undefined);
+  });
+
   it("reports profiles, enabled functions, and LLM status from healthz", async () => {
     const app = createApp(testConfig(), { router: { route: vi.fn() } });
 
@@ -223,7 +270,7 @@ describe("LINE entrance", () => {
       llm: {
         primary: "ollama",
         model: "qwen3:4b-instruct",
-        fallback: "azure_openai"
+        fallback: "keyword"
       }
     });
   });

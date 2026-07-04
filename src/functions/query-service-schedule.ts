@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { FunctionHandler, NotionDatabaseClient } from "../types.js";
+import type { FunctionHandler, JsonRecord, NotionDatabaseClient } from "../types.js";
 
 const argsSchema = z.object({
   query: z.string().optional().default(""),
@@ -18,13 +18,34 @@ export interface QueryServiceScheduleOptions {
     role: string;
     person: string;
   };
+  now?: () => Date;
+}
+
+interface ServiceRow {
+  date: string;
+  meeting: string;
+  role: string;
+  person: string;
+}
+
+interface DerivedFilters {
+  date?: string;
+  meeting?: string;
+  role?: string;
+  range?: {
+    start: string;
+    endExclusive: string;
+  };
 }
 
 export function createQueryServiceScheduleHandler(
   options: QueryServiceScheduleOptions
 ): FunctionHandler {
+  const now = options.now ?? (() => new Date());
+
   return async (rawArgs) => {
     const args = argsSchema.parse(rawArgs);
+    const derivedFilters = deriveFilters(args, now());
     const pages = await options.notion.queryDatabase(options.databaseId);
 
     const rows = pages.map((page) => ({
@@ -35,25 +56,76 @@ export function createQueryServiceScheduleHandler(
     }));
 
     const filtered = rows
-      .filter((row) => matchesOptional(row.date, args.date))
-      .filter((row) => matchesOptional(row.meeting, args.meeting))
-      .filter((row) => matchesOptional(row.role, args.role))
+      .filter((row) => matchesOptional(row.date, derivedFilters.date))
+      .filter((row) => matchesOptional(row.meeting, derivedFilters.meeting))
+      .filter((row) => matchesOptional(row.role, derivedFilters.role))
+      .filter((row) => matchesDateRange(row.date, derivedFilters.range))
       .slice(0, 10);
 
     if (filtered.length === 0) {
-      return { ok: true, replyText: "查不到符合的服事表。" };
+      return {
+        ok: true,
+        replyText: "查不到符合的服事表。",
+        quickReplies: [
+          {
+            label: "查本週服事",
+            action: { type: "message", label: "查本週服事", text: "小哈 查本週服事" }
+          },
+          {
+            label: "查主日服事",
+            action: { type: "message", label: "查主日服事", text: "小哈 查主日服事" }
+          }
+        ]
+      };
     }
 
     return {
       ok: true,
-      replyText: filtered
-        .map(
-          (row) =>
-            `${row.date || "未填日期"} ${row.meeting || "未填聚會"} - ${row.role || "未填服事"}：${row.person || "未填人員"}`
-        )
-        .join("\n")
+      replyText: filtered.map(formatRow).join("\n")
     };
   };
+}
+
+function deriveFilters(args: z.infer<typeof argsSchema>, now: Date): DerivedFilters {
+  const query = args.query.trim();
+  const filters: DerivedFilters = {
+    date: args.date,
+    meeting: args.meeting,
+    role: args.role
+  };
+
+  if (/(本週|本周|這週|这周)/.test(query)) {
+    filters.range = {
+      start: toDateKey(now),
+      endExclusive: toDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000))
+    };
+  }
+
+  if (!filters.meeting && query.includes("主日")) {
+    filters.meeting = "主日";
+  }
+
+  if (!filters.role) {
+    filters.role = extractRole(query);
+  }
+
+  return filters;
+}
+
+function extractRole(query: string): string | undefined {
+  const knownRoles = [
+    "司會",
+    "主席",
+    "領詩",
+    "敬拜",
+    "司琴",
+    "招待",
+    "音控",
+    "投影",
+    "兒童",
+    "講員"
+  ];
+  return knownRoles.find((role) => query.includes(role));
 }
 
 function matchesOptional(value: string, expected?: string): boolean {
@@ -63,12 +135,37 @@ function matchesOptional(value: string, expected?: string): boolean {
   return value.toLowerCase().includes(expected.trim().toLowerCase());
 }
 
+function matchesDateRange(value: string, range: DerivedFilters["range"]): boolean {
+  if (!range) {
+    return true;
+  }
+  const date = extractDateKey(value);
+  if (!date) {
+    return false;
+  }
+  return date >= range.start && date < range.endExclusive;
+}
+
+function extractDateKey(value: string): string {
+  return value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+}
+
+function toDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatRow(row: ServiceRow): string {
+  return `${row.date || "未填日期"} ${row.meeting || "未填聚會"} - ${row.role || "未填服事"}：${
+    row.person || "未填人員"
+  }`;
+}
+
 function propertyToText(property: unknown): string {
   if (!property || typeof property !== "object") {
     return "";
   }
 
-  const value = property as Record<string, unknown>;
+  const value = property as JsonRecord;
   const type = typeof value.type === "string" ? value.type : "";
 
   switch (type) {
@@ -100,7 +197,7 @@ function propertyToText(property: unknown): string {
         .join(", ");
     }
     case "formula": {
-      const formula = value.formula as Record<string, unknown> | undefined;
+      const formula = value.formula as JsonRecord | undefined;
       if (!formula || typeof formula.type !== "string") {
         return "";
       }

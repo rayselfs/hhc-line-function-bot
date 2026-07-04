@@ -1,11 +1,33 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import type { FunctionHandler, GraphDriveClient } from "../types.js";
+import { buildPostbackQuickReply } from "../line-reply.js";
+import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
+import type {
+  DriveItem,
+  FunctionHandler,
+  FunctionHandlerContext,
+  GraphDriveClient,
+  PostbackHandler
+} from "../types.js";
 
 const argsSchema = z.object({
   query: z.string().optional().default(""),
   includePdf: z.boolean().optional()
 });
+
+const POSTBACK_ACTION = "select_ppt";
+const MAX_CANDIDATES = 5;
+const SELECTION_TTL_MS = 10 * 60 * 1000;
+const MIN_FUZZY_SCORE = 0.45;
+
+const similarChineseCharacters: Record<string, string> = {
+  易: "異",
+  点: "典",
+  點: "典"
+};
+
+const titleAliases: Array<[string, string]> = [["amazinggrace", "奇異恩典"]];
 
 export interface FindPptSlidesOptions {
   graph: GraphDriveClient;
@@ -13,46 +35,180 @@ export interface FindPptSlidesOptions {
   folderItemId: string;
   allowedExtensions: string[];
   defaultIncludePdf: boolean;
+  sessionStore?: SessionStore;
   now?: () => Date;
+  requestIdFactory?: () => string;
+}
+
+export interface FindPptSlidesPostbackOptions {
+  graph: GraphDriveClient;
+  sessionStore: SessionStore;
+  now?: () => Date;
+}
+
+interface ScoredItem {
+  item: DriveItem;
+  score: number;
 }
 
 export function createFindPptSlidesHandler(options: FindPptSlidesOptions): FunctionHandler {
   const now = options.now ?? (() => new Date());
   const configuredExtensions = normalizeExtensions(options.allowedExtensions);
+  const sessionStore =
+    options.sessionStore ?? new InMemorySessionStore({ now, ttlMs: SELECTION_TTL_MS });
+  const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
-  return async (rawArgs) => {
+  return async (rawArgs, context) => {
     const args = argsSchema.parse(rawArgs);
+    const rawQuery = args.query.trim();
+
+    if (!rawQuery) {
+      return {
+        ok: true,
+        replyText: "請輸入投影片關鍵字，例如：小哈 查投影片 奇異恩典。"
+      };
+    }
+
     const includePdf = args.includePdf ?? options.defaultIncludePdf;
     const extensions = configuredExtensions.filter(
       (extension) => includePdf || extension !== ".pdf"
     );
-    const query = normalizeText(args.query);
-
     const allItems = await options.graph.listFolderChildren(options.driveId, options.folderItemId);
-    const matched = allItems
-      .filter((item) => extensions.some((extension) => item.name.toLowerCase().endsWith(extension)))
-      .filter((item) => !query || normalizeText(item.name).includes(query))
-      .slice(0, 3);
+    const candidates = rankPptCandidates(allItems, rawQuery, extensions);
 
-    if (matched.length === 0) {
-      return { ok: true, replyText: "找不到符合的投影片。" };
+    if (candidates.length === 0) {
+      return { ok: true, replyText: "查不到符合的投影片。" };
     }
 
-    const expiresAt = new Date(now().getTime() + 24 * 60 * 60 * 1000).toISOString();
-    const lines = [`找到 ${matched.length} 個檔案，連結 24 小時內有效：`];
-
-    for (const [index, item] of matched.entries()) {
-      const link = await options.graph.createSharingLink(options.driveId, item.id, expiresAt);
-      lines.push(`${index + 1}. ${item.name}`);
-      lines.push(link);
-      lines.push(`過期：${expiresAt}`);
+    if (candidates.length === 1) {
+      return createSharingLinkReply(options.graph, options.driveId, candidates[0].item, now());
     }
+
+    const requestId = requestIdFactory();
+    sessionStore.set({
+      id: requestId,
+      type: "ppt_selection",
+      profileName: context.profile.name,
+      requesterUserId: context.event.source.userId,
+      source: context.event.source,
+      driveId: options.driveId,
+      items: candidates.map(({ item }) => ({ id: item.id, name: item.name })),
+      expiresAt: new Date(now().getTime() + SELECTION_TTL_MS).toISOString()
+    });
 
     return {
       ok: true,
-      replyText: lines.join("\n")
+      replyText: [
+        `找到 ${candidates.length} 個可能的投影片，請選擇：`,
+        ...candidates.map(({ item }, index) => `${index + 1}. ${item.name}`)
+      ].join("\n"),
+      quickReplies: candidates.map((_candidate, index) =>
+        buildPostbackQuickReply(
+          String(index + 1),
+          new URLSearchParams({
+            action: POSTBACK_ACTION,
+            requestId,
+            index: String(index)
+          }).toString()
+        )
+      )
     };
   };
+}
+
+export function createFindPptSlidesPostbackHandler(
+  options: FindPptSlidesPostbackOptions
+): PostbackHandler {
+  const now = options.now ?? (() => new Date());
+
+  return async (request, context) => {
+    const requestId = request.params.requestId;
+    const selectedIndex = Number(request.params.index);
+
+    if (
+      request.action !== POSTBACK_ACTION ||
+      !requestId ||
+      !Number.isInteger(selectedIndex) ||
+      selectedIndex < 0
+    ) {
+      return { ok: true, replyText: "這個選擇已失效，請重新查詢。" };
+    }
+
+    const session = options.sessionStore.get(requestId);
+    if (
+      !session ||
+      session.type !== "ppt_selection" ||
+      session.profileName !== context.profile.name ||
+      !sourceMatches(session.source, context.event.source) ||
+      (session.requesterUserId && session.requesterUserId !== context.event.source.userId)
+    ) {
+      return { ok: true, replyText: "這個選擇已失效，請重新查詢。" };
+    }
+
+    const item = session.items[selectedIndex];
+    if (!item) {
+      return { ok: true, replyText: "這個選擇已失效，請重新查詢。" };
+    }
+
+    options.sessionStore.delete(requestId);
+    return createSharingLinkReply(options.graph, session.driveId, item, now());
+  };
+}
+
+async function createSharingLinkReply(
+  graph: GraphDriveClient,
+  driveId: string,
+  item: Pick<DriveItem, "id" | "name">,
+  now: Date
+) {
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  const link = await graph.createSharingLink(driveId, item.id, expiresAt);
+
+  return {
+    ok: true,
+    replyText: [`找到投影片：${item.name}`, link, `過期時間：${expiresAt}`].join("\n")
+  };
+}
+
+function rankPptCandidates(
+  items: DriveItem[],
+  rawQuery: string,
+  extensions: string[]
+): ScoredItem[] {
+  const query = normalizeSearchText(rawQuery);
+  const queryWithAliases = normalizeKnownAliases(query);
+
+  return items
+    .filter((item) => extensions.some((extension) => item.name.toLowerCase().endsWith(extension)))
+    .map((item) => ({
+      item,
+      score: scoreCandidate(query, queryWithAliases, item)
+    }))
+    .filter(({ score }) => score >= MIN_FUZZY_SCORE)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return extensionPriority(right.item.name) - extensionPriority(left.item.name);
+    })
+    .slice(0, MAX_CANDIDATES);
+}
+
+function scoreCandidate(query: string, queryWithAliases: string, item: DriveItem): number {
+  const normalizedName = normalizeSearchText(item.name);
+  const normalizedNameWithAliases = normalizeKnownAliases(normalizedName);
+
+  if (normalizedName.includes(query) || normalizedNameWithAliases.includes(queryWithAliases)) {
+    return 1;
+  }
+  if (normalizedName.includes(queryWithAliases) || normalizedNameWithAliases.includes(query)) {
+    return 0.92;
+  }
+
+  return Math.max(
+    diceCoefficient(query, normalizedName),
+    diceCoefficient(queryWithAliases, normalizedNameWithAliases)
+  );
 }
 
 function normalizeExtensions(extensions: string[]): string[] {
@@ -66,6 +222,91 @@ function normalizeExtensions(extensions: string[]): string[] {
   );
 }
 
-function normalizeText(value: string): string {
-  return value.trim().toLowerCase();
+function normalizeSearchText(value: string): string {
+  const withoutExtension = value.replace(/\.[a-z0-9]+$/i, "");
+  return Array.from(withoutExtension.normalize("NFKC").toLowerCase())
+    .map((character) => similarChineseCharacters[character] ?? character)
+    .join("")
+    .replace(/[\s_\-()[\]{}.,，。:：;；'"!?！？/\\|]+/g, "");
+}
+
+function normalizeKnownAliases(value: string): string {
+  return titleAliases.reduce(
+    (normalized, [alias, canonical]) => normalized.replaceAll(alias, canonical),
+    value
+  );
+}
+
+function diceCoefficient(left: string, right: string): number {
+  if (!left || !right) {
+    return 0;
+  }
+  if (left === right) {
+    return 1;
+  }
+  const leftBigrams = bigrams(left);
+  const rightBigrams = bigrams(right);
+  if (leftBigrams.length === 0 || rightBigrams.length === 0) {
+    return left === right ? 1 : 0;
+  }
+
+  const counts = new Map<string, number>();
+  for (const gram of leftBigrams) {
+    counts.set(gram, (counts.get(gram) ?? 0) + 1);
+  }
+
+  let intersections = 0;
+  for (const gram of rightBigrams) {
+    const count = counts.get(gram) ?? 0;
+    if (count > 0) {
+      intersections += 1;
+      counts.set(gram, count - 1);
+    }
+  }
+
+  return (2 * intersections) / (leftBigrams.length + rightBigrams.length);
+}
+
+function bigrams(value: string): string[] {
+  if (value.length < 2) {
+    return value ? [value] : [];
+  }
+  const grams: string[] = [];
+  for (let index = 0; index < value.length - 1; index += 1) {
+    grams.push(value.slice(index, index + 2));
+  }
+  return grams;
+}
+
+function extensionPriority(name: string): number {
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(".pptx")) {
+    return 3;
+  }
+  if (lowerName.endsWith(".ppt")) {
+    return 2;
+  }
+  if (lowerName.endsWith(".pdf")) {
+    return 1;
+  }
+  return 0;
+}
+
+function sourceMatches(
+  expected: FunctionHandlerContext["event"]["source"],
+  actual: FunctionHandlerContext["event"]["source"]
+): boolean {
+  if (expected.type !== actual.type) {
+    return false;
+  }
+  switch (expected.type) {
+    case "group":
+      return expected.groupId === actual.groupId;
+    case "room":
+      return expected.roomId === actual.roomId;
+    case "user":
+      return expected.userId === actual.userId;
+    default:
+      return false;
+  }
 }

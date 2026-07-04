@@ -9,6 +9,7 @@ import type {
   RouteInput,
   RouteResult
 } from "./types.js";
+import type { KeywordFallbackRouter } from "./keyword-router.js";
 
 const modelDecisionSchema = z.object({
   action: z.string(),
@@ -26,8 +27,8 @@ export class ProviderResponseError extends Error {
 
 export interface FunctionRouterOptions {
   primary: ChatProvider;
-  fallback?: ChatProvider;
-  fallbackEnabled: boolean;
+  keywordFallback?: KeywordFallbackRouter;
+  keywordFallbackEnabled: boolean;
 }
 
 export function createFunctionRouter(options: FunctionRouterOptions): FunctionRouterPort {
@@ -52,23 +53,15 @@ class FunctionRouter implements FunctionRouterPort {
       }
     }
 
-    if (!this.options.fallback || !this.options.fallbackEnabled) {
-      return { type: "deny", reason: "fallback_not_configured", provider: "router" };
+    if (!this.options.keywordFallback || !this.options.keywordFallbackEnabled) {
+      return { type: "deny", reason: "keyword_fallback_not_configured", provider: "router" };
     }
 
-    try {
-      return parseProviderDecision(
-        "azure_openai",
-        await this.options.fallback.completeJson({ ...input, prompt }),
-        input
-      );
-    } catch {
-      return { type: "deny", reason: "fallback_failed", provider: "azure_openai" };
-    }
+    return this.options.keywordFallback.route(input);
   }
 
   private shouldFallback(error: unknown): boolean {
-    if (!this.options.fallbackEnabled || !this.options.fallback) {
+    if (!this.options.keywordFallbackEnabled || !this.options.keywordFallback) {
       return false;
     }
     return error instanceof ProviderResponseError;
@@ -76,7 +69,7 @@ class FunctionRouter implements FunctionRouterPort {
 }
 
 function parseProviderDecision(
-  provider: "ollama" | "azure_openai",
+  provider: "ollama",
   rawContent: string,
   input: RouteInput
 ): RouteResult {
@@ -143,7 +136,7 @@ function buildRouterPrompt(enabledFunctions: FunctionName[]): string {
 
 const functionDescriptions: Record<FunctionName, string> = {
   find_ppt_slides:
-    '- find_ppt_slides: find church song, worship, sermon, or pop-song PowerPoint/PDF slide files. Arguments: {"query":"text", "includePdf": boolean}.',
+    '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"text", "includePdf": boolean}.',
   query_service_schedule:
     '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"text", "date":"YYYY-MM-DD optional", "meeting":"text optional", "role":"text optional"}.'
 };

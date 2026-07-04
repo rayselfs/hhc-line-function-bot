@@ -1,7 +1,7 @@
-import { createAzureOpenAIProvider } from "./clients/azure-openai.js";
 import { createOllamaProvider } from "./clients/ollama.js";
 import { loadConfigFromEnv } from "./config.js";
-import { createFunctionRegistry } from "./functions/registry.js";
+import { createFunctionRegistries } from "./functions/registry.js";
+import { createKeywordFallbackRouter } from "./keyword-router.js";
 import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
 
@@ -13,13 +13,16 @@ const primary = createOllamaProvider({
   timeoutMs: config.llm.timeoutMs,
   keepAlive: config.llm.ollamaKeepAlive
 });
-const fallback = config.azureOpenAI ? createAzureOpenAIProvider(config.azureOpenAI) : undefined;
 const router = createFunctionRouter({
   primary,
-  fallback,
-  fallbackEnabled: config.llm.azureFallbackEnabled && Boolean(fallback)
+  keywordFallback: createKeywordFallbackRouter(),
+  keywordFallbackEnabled: config.llm.keywordFallbackEnabled
 });
-const functionRegistry = createFunctionRegistry(config);
-const app = createApp(config, { router, functionRegistry });
+const registries = createFunctionRegistries(config);
+const app = createApp(config, {
+  router,
+  functionRegistry: registries.functions,
+  postbackHandlers: registries.postbacks
+});
 
 await app.listen({ host: config.host, port: config.port });

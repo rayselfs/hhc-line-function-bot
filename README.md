@@ -1,6 +1,6 @@
 # hhc-line-function-bot
 
-LINE webhook service for routing selected church bot requests to functions through a local-first LLM router.
+LINE webhook service for routing selected church bot requests to local-first functions.
 
 ## What It Does
 
@@ -8,12 +8,14 @@ LINE webhook service for routing selected church bot requests to functions throu
 - Multiple bot profiles in one service, each on its own webhook path.
 - Per-profile allowlists, wake words, message type filtering, and function toggles.
 - Function router that uses Ollama `qwen3:4b-instruct` first.
-- Azure OpenAI fallback only when Ollama times out, is unreachable, or returns invalid JSON.
+- Conservative keyword fallback when Ollama times out, is unreachable, or returns invalid JSON.
+- LINE Quick Reply suggestions for supported functions.
+- Postback-based selection state for multi-result flows, currently used by PPT search.
 - Function handlers:
-  - `find_ppt_slides`: searches a configured Microsoft Graph drive folder and returns 24 hour sharing links.
+  - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
   - `query_service_schedule`: queries Notion with env-configured property mapping.
 
-Disabled, unknown, or unclear actions are denied and do not call Azure OpenAI.
+Disabled, unknown, unclear, or explicitly denied actions are denied. There is no Azure OpenAI fallback in this version.
 
 ## Local Setup
 
@@ -71,6 +73,19 @@ Example shape:
 
 Use `*` in an allowlist only when you intentionally want to allow every id for that source type.
 
+## Routing
+
+Primary routing uses Ollama. Keyword fallback is intentionally narrow:
+
+- `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`
+- `query_service_schedule`: `服事表`, `服事`
+
+Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
+
+## State
+
+Multi-result PPT search stores a short-lived in-memory session and replies with LINE postback Quick Replies. The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
+
 ## Runtime Secrets
 
 Do not commit real `.env` files. In Azure Container Apps, store runtime values in ACA secrets, especially:
@@ -80,7 +95,6 @@ Do not commit real `.env` files. In Azure Container Apps, store runtime values i
 - LINE channel secrets and tokens inside the profile JSON
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
-- `AZURE_OPENAI_API_KEY`
 
 ## GitHub Actions
 

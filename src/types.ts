@@ -25,14 +25,7 @@ export interface LlmConfig {
   ollamaModel: string;
   ollamaKeepAlive?: string | number;
   timeoutMs: number;
-  azureFallbackEnabled: boolean;
-}
-
-export interface AzureOpenAIConfig {
-  endpoint: string;
-  apiKey: string;
-  deployment: string;
-  apiVersion: string;
+  keywordFallbackEnabled: boolean;
 }
 
 export interface GraphConfig {
@@ -66,7 +59,6 @@ export interface AppConfig {
   maxBodyBytes: number;
   profiles: BotProfileConfig[];
   llm: LlmConfig;
-  azureOpenAI?: AzureOpenAIConfig;
   graph?: GraphConfig;
   notion?: NotionConfig;
 }
@@ -81,7 +73,12 @@ export interface LineEvent {
   replyToken?: string;
   source: LineSource;
   message?: LineMessage;
-  postback?: unknown;
+  postback?: LinePostback;
+}
+
+export interface LinePostback {
+  data?: string;
+  params?: Record<string, string>;
 }
 
 export interface LineSource {
@@ -117,12 +114,12 @@ export type RouteResult =
       action: FunctionName;
       arguments: JsonRecord;
       confidence?: number;
-      provider: "ollama" | "azure_openai";
+      provider: "ollama" | "keyword";
     }
   | {
       type: "deny";
       reason: string;
-      provider: "ollama" | "azure_openai" | "router";
+      provider: "ollama" | "keyword" | "router";
     };
 
 export interface FunctionRouterPort {
@@ -141,17 +138,63 @@ export interface ChatProvider {
 }
 
 export interface LineReplyClient {
-  replyText(replyToken: string, text: string): Promise<void>;
+  replyText(replyToken: string, text: string, options?: LineReplyOptions): Promise<void>;
 }
 
 export interface FunctionExecutionResult {
   ok: boolean;
   replyText: string;
+  quickReplies?: QuickReplyItem[];
 }
 
-export type FunctionHandler = (args: JsonRecord) => Promise<FunctionExecutionResult>;
+export interface FunctionHandlerContext {
+  profile: BotProfileConfig;
+  event: LineEvent;
+}
+
+export type FunctionHandler = (
+  args: JsonRecord,
+  context: FunctionHandlerContext
+) => Promise<FunctionExecutionResult>;
 
 export type FunctionRegistry = Partial<Record<FunctionName, FunctionHandler>>;
+
+export interface QuickReplyItem {
+  label: string;
+  action:
+    | {
+        type: "message";
+        label: string;
+        text: string;
+      }
+    | {
+        type: "postback";
+        label: string;
+        data: string;
+        displayText?: string;
+      };
+}
+
+export interface LineReplyOptions {
+  quickReplies?: QuickReplyItem[];
+}
+
+export interface PostbackRequest {
+  action: string;
+  params: Record<string, string>;
+}
+
+export interface PostbackContext {
+  profile: BotProfileConfig;
+  event: LineEvent;
+}
+
+export type PostbackHandler = (
+  request: PostbackRequest,
+  context: PostbackContext
+) => Promise<FunctionExecutionResult>;
+
+export type PostbackHandlerRegistry = Record<string, PostbackHandler>;
 
 export interface DriveItem {
   id: string;

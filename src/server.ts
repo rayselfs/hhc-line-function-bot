@@ -2,7 +2,9 @@ import fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { createLineSdkReplyClient } from "./clients/line.js";
+import { buildFunctionQuickReplies } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
+import { messages } from "./messages.js";
 import type {
   AppConfig,
   BotProfileConfig,
@@ -11,12 +13,15 @@ import type {
   LineEvent,
   LineMessage,
   LineReplyClient,
-  LineWebhookPayload
+  LineWebhookPayload,
+  PostbackHandlerRegistry,
+  PostbackRequest
 } from "./types.js";
 
 export interface AppDependencies {
   router: FunctionRouterPort;
   functionRegistry?: FunctionRegistry;
+  postbackHandlers?: PostbackHandlerRegistry;
   createLineReplyClient?: (profile: BotProfileConfig) => LineReplyClient;
 }
 
@@ -48,7 +53,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
     llm: {
       primary: "ollama",
       model: config.llm.ollamaModel,
-      fallback: config.llm.azureFallbackEnabled ? "azure_openai" : "disabled"
+      fallback: config.llm.keywordFallbackEnabled ? "keyword" : "disabled"
     }
   }));
 
@@ -60,6 +65,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         profile,
         deps.router,
         functionRegistry,
+        deps.postbackHandlers ?? {},
         createReplyClient
       );
     });
@@ -74,6 +80,7 @@ async function handleWebhook(
   profile: BotProfileConfig,
   router: FunctionRouterPort,
   functionRegistry: FunctionRegistry,
+  postbackHandlers: PostbackHandlerRegistry,
   createReplyClient: (profile: BotProfileConfig) => LineReplyClient
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
@@ -113,6 +120,19 @@ async function handleWebhook(
 
   const line = createReplyClient(profile);
   for (const event of allowedEvents) {
+    if (event.type === "postback") {
+      if (!event.replyToken) {
+        continue;
+      }
+      const result = await handlePostbackEvent(event, profile, postbackHandlers);
+      await line.replyText(
+        event.replyToken,
+        result.replyText,
+        result.quickReplies ? { quickReplies: result.quickReplies } : undefined
+      );
+      continue;
+    }
+
     if (event.type !== "message" || event.message?.type !== "text" || !event.message.text) {
       continue;
     }
@@ -129,21 +149,30 @@ async function handleWebhook(
     }
 
     if (route.type === "deny") {
-      await line.replyText(event.replyToken, "目前不支援這個請求。");
+      const quickReplies = buildFunctionQuickReplies(profile);
+      await line.replyText(
+        event.replyToken,
+        quickReplies.length > 0 ? messages.unsupportedWithSuggestions : messages.unsupported,
+        quickReplies.length > 0 ? { quickReplies } : undefined
+      );
       continue;
     }
 
     const handler = functionRegistry[route.action];
     if (!handler) {
-      await line.replyText(event.replyToken, "這個功能尚未完成設定。");
+      await line.replyText(event.replyToken, messages.functionNotConfigured);
       continue;
     }
 
     try {
-      const result = await handler(route.arguments);
-      await line.replyText(event.replyToken, result.replyText);
+      const result = await handler(route.arguments, { profile, event });
+      await line.replyText(
+        event.replyToken,
+        result.replyText,
+        result.quickReplies ? { quickReplies: result.quickReplies } : undefined
+      );
     } catch {
-      await line.replyText(event.replyToken, "處理請求時發生錯誤。");
+      await line.replyText(event.replyToken, messages.requestFailed);
     }
   }
 
@@ -152,6 +181,31 @@ async function handleWebhook(
     allowedEvents: allowedEvents.length,
     ignored: ignoredCounts.size > 0 ? formatIgnoredSummary(ignoredCounts) : undefined
   });
+}
+
+async function handlePostbackEvent(
+  event: LineEvent,
+  profile: BotProfileConfig,
+  postbackHandlers: PostbackHandlerRegistry
+) {
+  const request = parsePostbackData(event.postback?.data ?? "");
+  if (!request) {
+    return { ok: true, replyText: messages.postbackUnsupported };
+  }
+  const handler = postbackHandlers[request.action];
+  if (!handler) {
+    return { ok: true, replyText: messages.postbackUnsupported };
+  }
+  return handler(request, { profile, event });
+}
+
+function parsePostbackData(data: string): PostbackRequest | null {
+  const params = Object.fromEntries(new URLSearchParams(data));
+  const action = params.action;
+  if (!action) {
+    return null;
+  }
+  return { action, params };
 }
 
 function parseWebhookPayload(body: Buffer): LineWebhookPayload | null {
@@ -181,6 +235,9 @@ function allowEvent(profile: BotProfileConfig, event: LineEvent): AllowResult {
       if (!isAllowedId(profile.allowedGroupIds, event.source.groupId)) {
         return { allowed: false, reason: "group_not_allowed" };
       }
+      if (eventType === "postback") {
+        return { allowed: true, reason: "group_postback_allowed" };
+      }
       if (eventType !== "message") {
         return { allowed: false, reason: "event_type_not_allowed" };
       }
@@ -198,6 +255,9 @@ function allowEvent(profile: BotProfileConfig, event: LineEvent): AllowResult {
       }
       if (!isAllowedId(profile.allowedUserIds, event.source.userId)) {
         return { allowed: false, reason: "user_not_allowed" };
+      }
+      if (eventType === "postback") {
+        return { allowed: true, reason: "direct_user_postback_allowed" };
       }
       if (eventType !== "message") {
         return { allowed: false, reason: "event_type_not_allowed" };

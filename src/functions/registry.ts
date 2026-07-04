@@ -1,44 +1,69 @@
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
+import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
 import type {
   AppConfig,
   FunctionRegistry,
   GraphDriveClient,
-  NotionDatabaseClient
+  NotionDatabaseClient,
+  PostbackHandlerRegistry
 } from "../types.js";
-import { createFindPptSlidesHandler } from "./find-ppt-slides.js";
+import {
+  createFindPptSlidesHandler,
+  createFindPptSlidesPostbackHandler
+} from "./find-ppt-slides.js";
 import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
 
 export interface RegistryClients {
   graph?: GraphDriveClient;
   notion?: NotionDatabaseClient;
+  sessionStore?: SessionStore;
 }
 
-export function createFunctionRegistry(
+export interface FunctionRegistries {
+  functions: FunctionRegistry;
+  postbacks: PostbackHandlerRegistry;
+}
+
+export function createFunctionRegistries(
   config: AppConfig,
   clients: RegistryClients = {}
-): FunctionRegistry {
-  const registry: FunctionRegistry = {};
+): FunctionRegistries {
+  const functions: FunctionRegistry = {};
+  const postbacks: PostbackHandlerRegistry = {};
 
   if (config.graph) {
     const graph = clients.graph ?? createGraphDriveClient(config.graph);
-    registry.find_ppt_slides = createFindPptSlidesHandler({
+    const sessionStore = clients.sessionStore ?? new InMemorySessionStore();
+    functions.find_ppt_slides = createFindPptSlidesHandler({
       graph,
       driveId: config.graph.driveId,
       folderItemId: config.graph.pptFolderItemId,
       allowedExtensions: config.graph.allowedExtensions,
-      defaultIncludePdf: config.graph.defaultIncludePdf
+      defaultIncludePdf: config.graph.defaultIncludePdf,
+      sessionStore
+    });
+    postbacks.select_ppt = createFindPptSlidesPostbackHandler({
+      graph,
+      sessionStore
     });
   }
 
   if (config.notion) {
     const notion = clients.notion ?? createNotionDatabaseClient(config.notion);
-    registry.query_service_schedule = createQueryServiceScheduleHandler({
+    functions.query_service_schedule = createQueryServiceScheduleHandler({
       notion,
       databaseId: config.notion.databaseId,
       properties: config.notion.properties
     });
   }
 
-  return registry;
+  return { functions, postbacks };
+}
+
+export function createFunctionRegistry(
+  config: AppConfig,
+  clients: RegistryClients = {}
+): FunctionRegistry {
+  return createFunctionRegistries(config, clients).functions;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createKeywordFallbackRouter } from "../keyword-router.js";
 import { ProviderResponseError, createFunctionRouter } from "../router.js";
 import type { ChatProvider } from "../types.js";
 
@@ -15,15 +16,18 @@ describe("function router", () => {
       JSON.stringify({
         action: "find_ppt_slides",
         confidence: 0.93,
-        arguments: { query: "主日詩歌", includePdf: true }
+        arguments: { query: "奇異恩典", includePdf: true }
       })
     );
-    const azure = provider(JSON.stringify({ action: "deny", reason: "unused" }));
-    const router = createFunctionRouter({ primary: qwen, fallback: azure, fallbackEnabled: true });
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
 
     const result = await router.route({
       profileName: "main",
-      text: "找主日詩歌 ppt",
+      text: "小哈 查投影片 奇異恩典",
       enabledFunctions: ["find_ppt_slides"],
       source: { type: "user", userId: "U1" }
     });
@@ -32,25 +36,27 @@ describe("function router", () => {
       type: "execute",
       action: "find_ppt_slides",
       provider: "ollama",
-      arguments: { query: "主日詩歌", includePdf: true }
+      arguments: { query: "奇異恩典", includePdf: true }
     });
-    expect(azure.completeJson).not.toHaveBeenCalled();
   });
 
-  it("denies disabled functions without calling fallback", async () => {
+  it("denies disabled functions without calling keyword fallback", async () => {
     const qwen = provider(
       JSON.stringify({
         action: "query_service_schedule",
         confidence: 0.9,
-        arguments: { query: "招待" }
+        arguments: { query: "服事表" }
       })
     );
-    const azure = provider(JSON.stringify({ action: "find_ppt_slides", arguments: {} }));
-    const router = createFunctionRouter({ primary: qwen, fallback: azure, fallbackEnabled: true });
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
 
     const result = await router.route({
       profileName: "slides",
-      text: "查招待服事",
+      text: "小哈 查服事表",
       enabledFunctions: ["find_ppt_slides"],
       source: { type: "group", groupId: "C1", userId: "U1" }
     });
@@ -60,77 +66,137 @@ describe("function router", () => {
       reason: "function_disabled",
       provider: "ollama"
     });
-    expect(azure.completeJson).not.toHaveBeenCalled();
   });
 
   it("does not fallback when Qwen explicitly denies", async () => {
     const qwen = provider(JSON.stringify({ action: "deny", reason: "not_matched" }));
-    const azure = provider(
-      JSON.stringify({ action: "find_ppt_slides", arguments: { query: "should not run" } })
-    );
-    const router = createFunctionRouter({ primary: qwen, fallback: azure, fallbackEnabled: true });
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
 
     const result = await router.route({
       profileName: "main",
-      text: "今天天氣",
+      text: "小哈 查投影片",
       enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
       source: { type: "user", userId: "U1" }
     });
 
     expect(result).toMatchObject({ type: "deny", reason: "not_matched", provider: "ollama" });
-    expect(azure.completeJson).not.toHaveBeenCalled();
   });
 
-  it("falls back to Azure OpenAI when Qwen returns invalid JSON", async () => {
+  it("falls back to keyword routing when Qwen returns invalid JSON", async () => {
     const qwen = provider("not-json");
-    const azure = provider(
-      JSON.stringify({
-        action: "query_service_schedule",
-        confidence: 0.84,
-        arguments: { query: "主日司會" }
-      })
-    );
-    const router = createFunctionRouter({ primary: qwen, fallback: azure, fallbackEnabled: true });
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
 
     const result = await router.route({
       profileName: "main",
-      text: "查主日司會",
-      enabledFunctions: ["query_service_schedule"],
+      text: "小哈 查投影片 奇異恩典",
+      enabledFunctions: ["find_ppt_slides"],
       source: { type: "user", userId: "U1" }
     });
 
     expect(result).toMatchObject({
       type: "execute",
-      action: "query_service_schedule",
-      provider: "azure_openai",
-      arguments: { query: "主日司會" }
+      action: "find_ppt_slides",
+      provider: "keyword",
+      arguments: { query: "奇異恩典" }
     });
   });
 
-  it("falls back to Azure OpenAI when Qwen times out", async () => {
+  it("falls back to keyword routing when Qwen times out", async () => {
     const qwen: ChatProvider = {
       completeJson: vi.fn().mockRejectedValue(new ProviderResponseError("timeout"))
     };
-    const azure = provider(
-      JSON.stringify({
-        action: "find_ppt_slides",
-        confidence: 0.8,
-        arguments: { query: "青年聚會" }
-      })
-    );
-    const router = createFunctionRouter({ primary: qwen, fallback: azure, fallbackEnabled: true });
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
 
     const result = await router.route({
       profileName: "main",
-      text: "找青年聚會投影片",
-      enabledFunctions: ["find_ppt_slides"],
+      text: "小哈 查服事表",
+      enabledFunctions: ["query_service_schedule"],
       source: { type: "group", groupId: "C1", userId: "U1" }
     });
 
     expect(result).toMatchObject({
       type: "execute",
-      action: "find_ppt_slides",
-      provider: "azure_openai"
+      action: "query_service_schedule",
+      provider: "keyword",
+      arguments: { query: "服事表" }
+    });
+  });
+
+  it("does not treat poetry or pop-song keywords as PPT requests", async () => {
+    const qwen = provider("not-json");
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查詩歌 奇異恩典",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "deny",
+      reason: "keyword_no_match",
+      provider: "keyword"
+    });
+  });
+
+  it("denies ambiguous keyword fallback matches", async () => {
+    const qwen = provider("not-json");
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查服事投影片",
+      enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "deny",
+      reason: "keyword_ambiguous",
+      provider: "keyword"
+    });
+  });
+
+  it("denies keyword fallback matches for disabled functions", async () => {
+    const qwen = provider("not-json");
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查服事表",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "deny",
+      reason: "function_disabled",
+      provider: "keyword"
     });
   });
 });
