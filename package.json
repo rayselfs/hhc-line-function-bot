@@ -11,6 +11,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "check:notion": "tsx src/tools/check-notion-service-schedule.ts",
     "format:check": "prettier --check ."
   },
   "dependencies": {
