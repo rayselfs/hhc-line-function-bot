@@ -272,6 +272,60 @@ describe("query_service_schedule", () => {
     expect(result.replyText).not.toContain("2026-07-12");
   });
 
+  it("defaults generic service schedule requests to upcoming rows", async () => {
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi.fn().mockResolvedValue([
+        {
+          id: "page-old",
+          properties: {
+            Date: { type: "date", date: { start: "2026-01-04" } },
+            Meeting: { type: "select", select: { name: "主日聚會" } },
+            Role: { type: "title", title: [{ plain_text: "司會" }] },
+            Person: { type: "people", people: [{ name: "Old" }] }
+          }
+        },
+        {
+          id: "page-upcoming",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-05" } },
+            Meeting: { type: "select", select: { name: "主日聚會" } },
+            Role: { type: "title", title: [{ plain_text: "司會" }] },
+            Person: { type: "people", people: [{ name: "Ray" }] }
+          }
+        }
+      ])
+    };
+    const handler = createQueryServiceScheduleHandler({
+      notion,
+      databaseId: "notion-db",
+      properties: {
+        date: "Date",
+        meeting: "Meeting",
+        role: "Role",
+        person: "Person"
+      },
+      now: () => new Date("2026-07-04T12:00:00.000Z")
+    });
+
+    const result = await handler({ query: "主日服事" }, handlerContext());
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toContain("2026-07-05");
+    expect(result.replyText).toContain("Ray");
+    expect(result.replyText).not.toContain("2026-01-04");
+    expect(notion.queryDatabase).toHaveBeenCalledWith(
+      "notion-db",
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          and: expect.arrayContaining([
+            expect.objectContaining({ date: { on_or_after: "2026-07-04" } }),
+            expect.objectContaining({ date: { before: "2026-07-11" } })
+          ])
+        })
+      })
+    );
+  });
+
   it("returns a clear empty result with suggestions when Notion has no matching rows", async () => {
     const notion: NotionDatabaseClient = {
       queryDatabase: vi.fn().mockResolvedValue([])

@@ -86,6 +86,17 @@ Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. P
 
 Multi-result PPT search stores a short-lived in-memory session and replies with LINE postback Quick Replies. The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
 
+## Notion Service Schedule
+
+For the current HHC media service schedule database, use these property mappings:
+
+- `NOTION_DATE_PROPERTY=聚會日期`
+- `NOTION_MEETING_PROPERTY=聚會場次`
+- `NOTION_ROLE_PROPERTY=服事崗位`
+- `NOTION_PERSON_PROPERTY=服事人員`
+
+`NOTION_SERVICE_DATABASE_ID` can be the database id. The app resolves the queryable Notion data source internally.
+
 ## Runtime Secrets
 
 Do not commit real `.env` files. In Azure Container Apps, store runtime values in ACA secrets, especially:

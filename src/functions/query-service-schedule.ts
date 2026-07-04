@@ -46,7 +46,10 @@ export function createQueryServiceScheduleHandler(
   return async (rawArgs) => {
     const args = argsSchema.parse(rawArgs);
     const derivedFilters = deriveFilters(args, now());
-    const pages = await options.notion.queryDatabase(options.databaseId);
+    const pages = await options.notion.queryDatabase(
+      options.databaseId,
+      buildNotionQuery(derivedFilters, options.properties.date)
+    );
 
     const rows = pages.map((page) => ({
       date: propertyToText(page.properties[options.properties.date]),
@@ -86,6 +89,31 @@ export function createQueryServiceScheduleHandler(
   };
 }
 
+function buildNotionQuery(filters: DerivedFilters, dateProperty: string): JsonRecord {
+  if (!filters.range) {
+    return {};
+  }
+
+  return {
+    filter: {
+      and: [
+        {
+          property: dateProperty,
+          date: {
+            on_or_after: filters.range.start
+          }
+        },
+        {
+          property: dateProperty,
+          date: {
+            before: filters.range.endExclusive
+          }
+        }
+      ]
+    }
+  };
+}
+
 function deriveFilters(args: z.infer<typeof argsSchema>, now: Date): DerivedFilters {
   const query = args.query.trim();
   const filters: DerivedFilters = {
@@ -95,10 +123,7 @@ function deriveFilters(args: z.infer<typeof argsSchema>, now: Date): DerivedFilt
   };
 
   if (/(本週|本周|這週|这周)/.test(query)) {
-    filters.range = {
-      start: toDateKey(now),
-      endExclusive: toDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000))
-    };
+    filters.range = upcomingRange(now);
   }
 
   if (!filters.meeting && query.includes("主日")) {
@@ -109,7 +134,18 @@ function deriveFilters(args: z.infer<typeof argsSchema>, now: Date): DerivedFilt
     filters.role = extractRole(query);
   }
 
+  if (!filters.range && !filters.date && /服事/.test(query)) {
+    filters.range = upcomingRange(now);
+  }
+
   return filters;
+}
+
+function upcomingRange(now: Date): NonNullable<DerivedFilters["range"]> {
+  return {
+    start: toDateKey(now),
+    endExclusive: toDateKey(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000))
+  };
 }
 
 function extractRole(query: string): string | undefined {
@@ -155,9 +191,11 @@ function toDateKey(date: Date): string {
 }
 
 function formatRow(row: ServiceRow): string {
-  return `${row.date || "未填日期"} ${row.meeting || "未填聚會"} - ${row.role || "未填服事"}：${
-    row.person || "未填人員"
-  }`;
+  const heading = `${row.date || "未填日期"} ${row.meeting || "未填聚會"}`;
+  if (!row.role) {
+    return `${heading}\n${row.person || "未填人員"}`;
+  }
+  return `${heading} - ${row.role}：${row.person || "未填人員"}`;
 }
 
 function propertyToText(property: unknown): string {

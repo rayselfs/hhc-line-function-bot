@@ -14,20 +14,27 @@ const requiredEnvNames = [
   "NOTION_PERSON_PROPERTY"
 ] as const;
 
-const env = loadEnv();
-const missing = requiredEnvNames.filter((name) => !env[name]?.trim());
+const cli = parseCliArgs(process.argv.slice(2));
+const env = loadEnv(cli.envFile);
+const notionToken = env.NOTION_TOKEN?.trim() || env.NOTION_API_KEY?.trim() || "";
+const missing = requiredEnvNames.filter((name) => {
+  if (name === "NOTION_TOKEN") {
+    return !notionToken;
+  }
+  return !env[name]?.trim();
+});
 
 if (missing.length > 0) {
   console.error("Missing Notion configuration:");
   for (const name of missing) {
-    console.error(`- ${name}`);
+    console.error(name === "NOTION_TOKEN" ? "- NOTION_TOKEN or NOTION_API_KEY" : `- ${name}`);
   }
   console.error("Create a local .env or set these variables before running this check.");
   process.exit(2);
 }
 
 const config: NotionConfig = {
-  token: required("NOTION_TOKEN"),
+  token: notionToken,
   databaseId: required("NOTION_SERVICE_DATABASE_ID"),
   properties: {
     date: required("NOTION_DATE_PROPERTY"),
@@ -37,7 +44,7 @@ const config: NotionConfig = {
   }
 };
 
-const query = process.argv.slice(2).join(" ").trim() || "本週服事";
+const query = cli.query || "本週服事";
 const notion = createNotionDatabaseClient(config);
 const handler = createQueryServiceScheduleHandler({
   notion,
@@ -69,9 +76,38 @@ try {
   process.exit(1);
 }
 
-function loadEnv(): NodeJS.ProcessEnv {
+interface CliArgs {
+  envFile?: string;
+  query: string;
+}
+
+function parseCliArgs(args: string[]): CliArgs {
+  const queryParts: string[] = [];
+  let envFile: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--env-file") {
+      envFile = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--env-file=")) {
+      envFile = arg.slice("--env-file=".length);
+      continue;
+    }
+    queryParts.push(arg);
+  }
+
+  return {
+    envFile,
+    query: queryParts.join(" ").trim()
+  };
+}
+
+function loadEnv(envFile?: string): NodeJS.ProcessEnv {
   const loaded: Record<string, string> = {};
-  for (const fileName of [".env", ".env.local"]) {
+  for (const fileName of [envFile, ".env", ".env.local"].filter(Boolean) as string[]) {
     const filePath = resolve(process.cwd(), fileName);
     if (!existsSync(filePath)) {
       continue;

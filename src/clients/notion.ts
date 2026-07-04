@@ -1,4 +1,4 @@
-import { Client } from "@notionhq/client";
+import { Client, LogLevel } from "@notionhq/client";
 
 import type { JsonRecord, NotionConfig, NotionDatabaseClient, NotionPage } from "../types.js";
 
@@ -8,19 +8,23 @@ interface NotionQueryResponse {
 
 interface NotionQueryClient {
   databases?: {
-    query?: (args: JsonRecord) => Promise<NotionQueryResponse>;
+    retrieve?: (args: JsonRecord) => Promise<{
+      data_sources?: Array<{ id?: string }>;
+    }>;
   };
   dataSources?: {
+    retrieve?: (args: JsonRecord) => Promise<unknown>;
     query?: (args: JsonRecord) => Promise<NotionQueryResponse>;
   };
 }
 
 export function createNotionDatabaseClient(config: NotionConfig): NotionDatabaseClient {
-  const client = new Client({ auth: config.token });
+  const client = new Client({ auth: config.token, logLevel: LogLevel.ERROR });
+  const notion = client as unknown as NotionQueryClient;
+  const dataSourceIds = new Map<string, Promise<string>>();
 
   return {
     async queryDatabase(databaseId: string, query = {}): Promise<NotionPage[]> {
-      const notion = client as unknown as NotionQueryClient;
       const commonQuery = {
         page_size: 25,
         sorts: [
@@ -31,9 +35,11 @@ export function createNotionDatabaseClient(config: NotionConfig): NotionDatabase
         ],
         ...query
       };
-      const response = notion.databases?.query
-        ? await notion.databases.query({ database_id: databaseId, ...commonQuery })
-        : await notion.dataSources?.query?.({ data_source_id: databaseId, ...commonQuery });
+      const dataSourceId = await resolveDataSourceId(notion, dataSourceIds, databaseId);
+      const response = await notion.dataSources?.query?.({
+        data_source_id: dataSourceId,
+        ...commonQuery
+      });
 
       return (response?.results ?? []).filter(isNotionPage).map((page) => ({
         id: page.id,
@@ -41,6 +47,38 @@ export function createNotionDatabaseClient(config: NotionConfig): NotionDatabase
       }));
     }
   };
+}
+
+async function resolveDataSourceId(
+  notion: NotionQueryClient,
+  cache: Map<string, Promise<string>>,
+  databaseOrDataSourceId: string
+): Promise<string> {
+  const cached = cache.get(databaseOrDataSourceId);
+  if (cached) {
+    return cached;
+  }
+
+  const resolved = resolveDataSourceIdUncached(notion, databaseOrDataSourceId);
+  cache.set(databaseOrDataSourceId, resolved);
+  return resolved;
+}
+
+async function resolveDataSourceIdUncached(
+  notion: NotionQueryClient,
+  databaseOrDataSourceId: string
+): Promise<string> {
+  try {
+    await notion.dataSources?.retrieve?.({ data_source_id: databaseOrDataSourceId });
+    return databaseOrDataSourceId;
+  } catch {
+    const database = await notion.databases?.retrieve?.({ database_id: databaseOrDataSourceId });
+    const dataSourceId = database?.data_sources?.find((source) => source.id)?.id;
+    if (!dataSourceId) {
+      throw new Error("Notion database has no queryable data source");
+    }
+    return dataSourceId;
+  }
 }
 
 function isNotionPage(page: unknown): page is NotionPage {
