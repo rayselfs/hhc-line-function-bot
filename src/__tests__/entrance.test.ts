@@ -141,6 +141,64 @@ describe("LINE entrance", () => {
     });
   });
 
+  it("emits route and function observer events without raw message text", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "find_ppt_slides",
+      arguments: { query: "奇異恩典" },
+      confidence: 0.94,
+      provider: "ollama"
+    });
+    const findPptSlides = vi.fn().mockResolvedValue({
+      ok: true,
+      replyText: "已找到詩歌投影片"
+    });
+    const routeObserver = vi.fn().mockResolvedValue(undefined);
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      functionRegistry: { find_ppt_slides: findPptSlides },
+      routeObserver,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "小哈 查投影片 奇異恩典" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(routeObserver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "route",
+        profileName: "main",
+        sourceType: "group",
+        provider: "ollama",
+        outcome: "execute",
+        action: "find_ppt_slides",
+        confidence: 0.94
+      })
+    );
+    expect(routeObserver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "function_result",
+        profileName: "main",
+        action: "find_ppt_slides",
+        ok: true
+      })
+    );
+    const serializedEvents = JSON.stringify(routeObserver.mock.calls.map(([event]) => event));
+    expect(serializedEvents).not.toContain("小哈 查投影片 奇異恩典");
+  });
+
   it("ignores a group message without wake word before calling the router", async () => {
     const router: FunctionRouterPort = { route: vi.fn() };
     const app = createApp(testConfig(), { router });

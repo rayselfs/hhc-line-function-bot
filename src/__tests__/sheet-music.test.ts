@@ -143,6 +143,41 @@ describe("find_pop_sheet_music", () => {
     expect(graph.listFolderFilesRecursive).not.toHaveBeenCalled();
   });
 
+  it("offers recovery quick replies when no sheet music candidates match", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn(),
+      listFolderFilesRecursive: vi
+        .fn()
+        .mockResolvedValue([{ id: "pdf-1", driveId: "drive-id", name: "YESTERDAY.pdf" }]),
+      createSharingLink: vi.fn()
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPopSheetMusicHandler({
+      graph,
+      driveId: "drive-id",
+      folderItemId: "sheet-folder-id",
+      allowedExtensions: [".pdf", ".jpg", ".jpeg"],
+      cache: new MemoryCacheStore({ now: () => now }),
+      now: () => now
+    });
+
+    const result = await handler({ query: "No Such Song" }, handlerContext());
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toBe("找不到符合的流行歌曲樂譜，請提供更完整英文歌名或歌手。");
+    expect(result.quickReplies).toEqual([
+      {
+        label: "重新查歌譜",
+        action: { type: "message", label: "重新查歌譜", text: "小哈 查流行歌譜" }
+      },
+      {
+        label: "查圖片歌譜",
+        action: { type: "message", label: "查圖片歌譜", text: "小哈 查流行歌譜 圖片" }
+      }
+    ]);
+    expect(graph.createSharingLink).not.toHaveBeenCalled();
+  });
+
   it("stores multiple candidates in a generic selection session", async () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),

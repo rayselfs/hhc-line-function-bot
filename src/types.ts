@@ -137,6 +137,26 @@ export interface FunctionRouterPort {
   route(input: RouteInput): Promise<RouteResult>;
 }
 
+export interface RouteObserverEvent {
+  kind:
+    "route" | "function_result" | "function_error" | "text_handler" | "postback" | "admin_command";
+  profileName: string;
+  sourceType: string;
+  durationMs?: number;
+  provider?: RouteResult["provider"];
+  outcome?: RouteResult["type"];
+  action?: FunctionName | string;
+  reason?: string;
+  confidence?: number;
+  handler?: string;
+  command?: string;
+  authorized?: boolean;
+  ok?: boolean;
+  errorName?: string;
+}
+
+export type RouteObserver = (event: RouteObserverEvent) => void | Promise<void>;
+
 export interface ChatProviderRequest {
   prompt: string;
   profileName: string;

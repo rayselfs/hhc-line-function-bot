@@ -92,7 +92,24 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
     );
 
     if (candidates.length === 0) {
-      return { ok: true, replyText: "找不到符合的流行歌曲樂譜，請提供更完整英文歌名或歌手。" };
+      return {
+        ok: true,
+        replyText: "找不到符合的流行歌曲樂譜，請提供更完整英文歌名或歌手。",
+        quickReplies: [
+          {
+            label: "重新查歌譜",
+            action: { type: "message", label: "重新查歌譜", text: "小哈 查流行歌譜" }
+          },
+          {
+            label: "查圖片歌譜",
+            action: {
+              type: "message",
+              label: "查圖片歌譜",
+              text: "小哈 查流行歌譜 圖片"
+            }
+          }
+        ]
+      };
     }
 
     if (candidates.length === 1) {

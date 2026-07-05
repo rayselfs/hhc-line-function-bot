@@ -62,16 +62,25 @@ export function createPendingFunctionTextMessageHandler(
         return { ok: true, replyText: messages.functionNotConfigured };
       }
 
+      const answer = request.text.trim();
+      const query = normalizePendingFunctionAnswer(pending.action, answer);
       return handler(
         {
           ...pending.arguments,
-          query: request.text.trim(),
-          originalQuery: request.text.trim()
+          query,
+          originalQuery: answer
         },
         { profile: context.profile, event: context.event }
       );
     }
   };
+}
+
+function normalizePendingFunctionAnswer(action: FunctionName, answer: string): string {
+  if (action === "query_service_schedule" && answer === "主日") {
+    return "主日服事";
+  }
+  return answer;
 }
 
 function findPendingFunction(sessionStore: SessionStore, context: TextMessageContext) {

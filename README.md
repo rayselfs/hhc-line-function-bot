@@ -12,7 +12,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - LINE Quick Reply suggestions for supported functions.
 - Postback-based selection state for multi-result flows, currently used by PPT and sheet music search.
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
-- Clarification state for missing search terms, so users can ask `查投影片` or `查流行歌譜` and answer the follow-up with just the title.
+- Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Direct-chat admin commands for configured admin LINE user ids.
 - Function handlers:
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
@@ -101,6 +101,8 @@ Multi-result PPT and sheet music searches store short-lived in-memory sessions a
 
 If a PPT or sheet music request is missing the title keyword, the bot stores a short-lived pending function session and asks for the missing title. The user's next plain-text reply from the same LINE source and requester fills the missing `query` argument and runs the original function.
 
+If a service schedule request is too generic, such as `查服事表`, the bot asks which range to use and offers Quick Replies for `下一場`, `本週`, `明天`, and `主日`.
+
 The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
 
 Sheet music search uses a short-lived in-memory file index cache. Admins can clear it from a direct LINE chat:
@@ -113,6 +115,10 @@ Admin commands use slash syntax and are gated by each profile's `adminUserIds`.
 Available commands:
 
 - `/status`
+- `/functions`
+- `/sessions`
+- `/cache`
+- `/clear-sessions`
 - `/refresh-sheet-music-cache`
 
 ## OneDrive And Graph

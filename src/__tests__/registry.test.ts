@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MemoryCacheStore } from "../cache/cache-store.js";
 import { createFunctionRegistries } from "../functions/registry.js";
+import { InMemorySessionStore } from "../state/session-store.js";
 import type { AppConfig, BotProfileConfig, GraphDriveClient } from "../types.js";
 
 function profile(): BotProfileConfig {
@@ -89,5 +90,62 @@ describe("function registry", () => {
     expect(result.replyText).toBe("已清除流行歌譜 cache（1 筆），下次查詢會重新建立。");
     expect(await cache.get("sheet-music-index:drive-id:sheet-folder")).toBeUndefined();
     expect(await cache.get("other-cache-key")).toBe("kept");
+  });
+
+  it("registers debug admin handlers for functions, sessions, and cache", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn(),
+      listFolderFilesRecursive: vi.fn(),
+      createSharingLink: vi.fn()
+    };
+    const cache = new MemoryCacheStore();
+    const sessionStore = new InMemorySessionStore();
+    await cache.set("sheet-music-index:drive-id:sheet-folder", [{ id: "1", name: "A.pdf" }], 1000);
+    sessionStore.set({
+      id: "pending-1",
+      type: "pending_function",
+      action: "find_ppt_slides",
+      profileName: "helper",
+      requesterUserId: "Uadmin",
+      source: { type: "user", userId: "Uadmin" },
+      arguments: { query: "" },
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+
+    const registries = createFunctionRegistries(config(), { graph, cache, sessionStore });
+    const adminContext = {
+      profile: profile(),
+      event: {
+        type: "message",
+        source: { type: "user", userId: "Uadmin" },
+        message: { type: "text", text: "/functions" }
+      },
+      command: "functions",
+      args: []
+    };
+
+    const functionsResult = await registries.adminHandlers.functions(adminContext);
+    const sessionsResult = await registries.adminHandlers.sessions({
+      ...adminContext,
+      command: "sessions"
+    });
+    const cacheResult = await registries.adminHandlers.cache({ ...adminContext, command: "cache" });
+    const clearResult = await registries.adminHandlers["clear-sessions"]({
+      ...adminContext,
+      command: "clear-sessions"
+    });
+    const sessionsAfterClear = await registries.adminHandlers.sessions({
+      ...adminContext,
+      command: "sessions"
+    });
+
+    expect(functionsResult.replyText).toContain("- find_ppt_slides: configured");
+    expect(functionsResult.replyText).toContain("- query_service_schedule: not configured");
+    expect(functionsResult.replyText).toContain("- find_pop_sheet_music: configured");
+    expect(sessionsResult.replyText).toContain("total: 1");
+    expect(sessionsResult.replyText).toContain("- pending_function: 1");
+    expect(cacheResult.replyText).toBe("Cache\nentries: 1");
+    expect(clearResult.replyText).toBe("已清除 session（1 筆）。");
+    expect(sessionsAfterClear.replyText).toContain("total: 0");
   });
 });

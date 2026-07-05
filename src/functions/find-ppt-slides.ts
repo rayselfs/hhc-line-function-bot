@@ -92,7 +92,20 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
     const candidates = rankPptCandidates(allItems, rawQuery, extensions, args.matchMode ?? "fuzzy");
 
     if (candidates.length === 0) {
-      return { ok: true, replyText: "找不到符合的詩歌投影片，請再提供更完整歌名。" };
+      return {
+        ok: true,
+        replyText: "找不到符合的詩歌投影片，請再提供更完整歌名。",
+        quickReplies: [
+          {
+            label: "重新查投影片",
+            action: { type: "message", label: "重新查投影片", text: "小哈 查投影片" }
+          },
+          {
+            label: "查PDF投影片",
+            action: { type: "message", label: "查PDF投影片", text: "小哈 查投影片 pdf" }
+          }
+        ]
+      };
     }
 
     if (candidates.length === 1) {

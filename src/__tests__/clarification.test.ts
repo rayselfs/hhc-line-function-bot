@@ -4,7 +4,13 @@ import { createFunctionRegistries } from "../functions/registry.js";
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
 import { InMemorySessionStore } from "../state/session-store.js";
-import type { AppConfig, FunctionRouterPort, GraphDriveClient, LineReplyClient } from "../types.js";
+import type {
+  AppConfig,
+  FunctionRouterPort,
+  GraphDriveClient,
+  LineReplyClient,
+  NotionDatabaseClient
+} from "../types.js";
 
 function testConfig(): AppConfig {
   return {
@@ -216,5 +222,118 @@ describe("clarification flow", () => {
     );
     expect(replyText.mock.calls[1]?.[1]).toContain("YESTERDAY-The Beatles-001.pdf");
     expect(replyText.mock.calls[1]?.[1]).toContain("https://download.invalid/yesterday");
+  });
+
+  it("asks for a generic service schedule range and uses the next group reply", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn(),
+      listFolderFilesRecursive: vi.fn(),
+      createSharingLink: vi.fn()
+    };
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi.fn().mockResolvedValue([
+        {
+          id: "page-next-1",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-05" } },
+            Meeting: { type: "select", select: { name: "7月5日 主日" } },
+            Role: { type: "title", title: [] },
+            Person: {
+              type: "rich_text",
+              rich_text: [{ plain_text: "導播: 知樂\n投影電腦: 育圻" }]
+            }
+          }
+        },
+        {
+          id: "page-next-2",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-07" } },
+            Meeting: { type: "select", select: { name: "7月7日(二) 晨更" } },
+            Role: { type: "title", title: [{ plain_text: "音控" }] },
+            Person: { type: "people", people: [{ name: "資恆" }] }
+          }
+        }
+      ])
+    };
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.notion = {
+      token: "notion-token",
+      databaseId: "notion-db",
+      properties: {
+        date: "Date",
+        meeting: "Meeting",
+        role: "Role",
+        person: "Person"
+      }
+    };
+    const registries = createFunctionRegistries(config, {
+      graph,
+      notion,
+      sessionStore: new InMemorySessionStore({
+        now: () => new Date("2026-07-05T13:00:00.000Z")
+      }),
+      now: () => new Date("2026-07-05T13:00:00.000Z")
+    });
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "query_service_schedule",
+      arguments: { query: "服事表" },
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(config, {
+      router: { route },
+      functionRegistry: registries.functions,
+      postbackHandlers: registries.postbacks,
+      textMessageHandlers: registries.textMessages,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const firstBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "小哈 查服事表" }
+    });
+    const firstResponse = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(firstBody),
+      payload: firstBody
+    });
+
+    const secondBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "下一場" }
+    });
+    const secondResponse = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(secondBody),
+      payload: secondBody
+    });
+
+    expect(firstResponse.statusCode).toBe(200);
+    expect(secondResponse.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledOnce();
+    expect(replyText).toHaveBeenNthCalledWith(
+      1,
+      "reply-token-1",
+      "要查哪個服事表範圍？請選擇或直接回覆：下一場、本週、明天、主日。",
+      {
+        quickReplies: [
+          { label: "下一場", action: { type: "message", label: "下一場", text: "下一場" } },
+          { label: "本週", action: { type: "message", label: "本週", text: "本週" } },
+          { label: "明天", action: { type: "message", label: "明天", text: "明天" } },
+          { label: "主日", action: { type: "message", label: "主日", text: "主日服事" } }
+        ]
+      }
+    );
+    expect(replyText.mock.calls[1]?.[1]).toContain("下一場聚會服事表");
+    expect(replyText.mock.calls[1]?.[1]).toContain("- 導播：知樂");
+    expect(replyText.mock.calls[1]?.[1]).not.toContain("資恆");
   });
 });

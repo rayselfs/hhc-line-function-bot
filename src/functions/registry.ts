@@ -30,6 +30,8 @@ export interface RegistryClients {
   notion?: NotionDatabaseClient;
   sessionStore?: SessionStore;
   cache?: CacheStore;
+  now?: () => Date;
+  requestIdFactory?: () => string;
 }
 
 export interface FunctionRegistries {
@@ -47,28 +49,32 @@ export function createFunctionRegistries(
   const postbacks: PostbackHandlerRegistry = {};
   const textMessages: TextMessageHandlerRegistry = {};
   const adminHandlers: AdminHandlerRegistry = {};
-  let sharedSessionStore: SessionStore | undefined;
+  const sessionStore = clients.sessionStore ?? new InMemorySessionStore();
+  const cache = clients.cache ?? new MemoryCacheStore();
+  let usesSessionStore = false;
 
   if (config.graph) {
     const graph = clients.graph ?? createGraphDriveClient(config.graph);
-    const sessionStore = clients.sessionStore ?? new InMemorySessionStore();
-    sharedSessionStore = sessionStore;
-    const cache = clients.cache ?? new MemoryCacheStore();
+    usesSessionStore = true;
     functions.find_ppt_slides = createFindPptSlidesHandler({
       graph,
       driveId: config.graph.driveId,
       folderItemId: config.graph.pptFolderItemId,
       allowedExtensions: config.graph.allowedExtensions,
       defaultIncludePdf: config.graph.defaultIncludePdf,
-      sessionStore
+      sessionStore,
+      now: clients.now,
+      requestIdFactory: clients.requestIdFactory
     });
     postbacks.select_ppt = createFindPptSlidesPostbackHandler({
       graph,
-      sessionStore
+      sessionStore,
+      now: clients.now
     });
     textMessages.ppt_numeric_selection = createFindPptSlidesTextMessageHandler({
       graph,
-      sessionStore
+      sessionStore,
+      now: clients.now
     });
     functions.find_pop_sheet_music = createFindPopSheetMusicHandler({
       graph,
@@ -78,15 +84,19 @@ export function createFunctionRegistries(
       allowedExtensions: config.graph.sheetMusicAllowedExtensions,
       recursive: config.graph.sheetMusicRecursive,
       cache,
-      sessionStore
+      sessionStore,
+      now: clients.now,
+      requestIdFactory: clients.requestIdFactory
     });
     postbacks.select_sheet_music = createFindPopSheetMusicPostbackHandler({
       graph,
-      sessionStore
+      sessionStore,
+      now: clients.now
     });
     textMessages.sheet_music_numeric_selection = createFindPopSheetMusicTextMessageHandler({
       graph,
-      sessionStore
+      sessionStore,
+      now: clients.now
     });
     adminHandlers["refresh-sheet-music-cache"] = async () => {
       const removed = await cache.deleteByPrefix(SHEET_MUSIC_INDEX_CACHE_PREFIX);
@@ -99,20 +109,64 @@ export function createFunctionRegistries(
 
   if (config.notion) {
     const notion = clients.notion ?? createNotionDatabaseClient(config.notion);
+    usesSessionStore = true;
     functions.query_service_schedule = createQueryServiceScheduleHandler({
       notion,
       databaseId: config.notion.databaseId,
       properties: config.notion.properties,
-      timeZone: config.timeZone
+      timeZone: config.timeZone,
+      sessionStore,
+      now: clients.now,
+      requestIdFactory: clients.requestIdFactory
     });
   }
 
-  if (sharedSessionStore) {
+  if (usesSessionStore) {
     textMessages.pending_function_answer = createPendingFunctionTextMessageHandler({
-      sessionStore: sharedSessionStore,
+      sessionStore,
       functions
     });
   }
+
+  adminHandlers.functions = ({ profile }) => ({
+    ok: true,
+    replyText: [
+      "Enabled functions",
+      `profile: ${profile.name}`,
+      ...profile.enabledFunctions.map(
+        (name) => `- ${name}: ${functions[name] ? "configured" : "not configured"}`
+      )
+    ].join("\n")
+  });
+
+  adminHandlers.sessions = () => {
+    const summary = sessionStore.summary();
+    const byType = Object.entries(summary.byType).map(([type, count]) => `- ${type}: ${count}`);
+    return {
+      ok: true,
+      replyText: [
+        "Sessions",
+        `total: ${summary.total}`,
+        ...(byType.length ? byType : ["- none"])
+      ].join("\n")
+    };
+  };
+
+  adminHandlers["clear-sessions"] = () => {
+    const removed = sessionStore.clear();
+    return {
+      ok: true,
+      replyText: `已清除 session（${removed} 筆）。`
+    };
+  };
+
+  adminHandlers.cache = async () => {
+    const stats = await cache.stats();
+    return {
+      ok: true,
+      replyText: ["Cache", `entries: ${stats.totalEntries}`].join("\n")
+    };
+  };
 
   return { functions, postbacks, textMessages, adminHandlers };
 }

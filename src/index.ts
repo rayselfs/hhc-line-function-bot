@@ -2,6 +2,7 @@ import { createOllamaProvider } from "./clients/ollama.js";
 import { loadConfigFromEnv } from "./config.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
+import { createConsoleRouteObserver } from "./observability/route-observer.js";
 import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
 
@@ -24,7 +25,8 @@ const app = createApp(config, {
   functionRegistry: registries.functions,
   postbackHandlers: registries.postbacks,
   textMessageHandlers: registries.textMessages,
-  adminHandlers: registries.adminHandlers
+  adminHandlers: registries.adminHandlers,
+  routeObserver: createConsoleRouteObserver()
 });
 
 await app.listen({ host: config.host, port: config.port });

@@ -34,6 +34,12 @@ export interface PendingFunctionSession {
 }
 
 export type ConversationSession = PptSelectionSession | SelectionSession | PendingFunctionSession;
+export type ConversationSessionType = ConversationSession["type"];
+
+export interface SessionStoreSummary {
+  total: number;
+  byType: Partial<Record<ConversationSessionType, number>>;
+}
 
 export interface PptSelectionLookup {
   profileName: string;
@@ -56,6 +62,8 @@ export interface SessionStore {
   findPptSelection(lookup: PptSelectionLookup): PptSelectionSession | undefined;
   findSelection(lookup: SelectionLookup): SelectionSession | undefined;
   findPendingFunction(lookup: PendingFunctionLookup): PendingFunctionSession | undefined;
+  summary(): SessionStoreSummary;
+  clear(): number;
 }
 
 export interface InMemorySessionStoreOptions {
@@ -157,6 +165,28 @@ export class InMemorySessionStore implements SessionStore {
 
   delete(id: string): void {
     this.sessions.delete(id);
+  }
+
+  summary(): SessionStoreSummary {
+    const byType: SessionStoreSummary["byType"] = {};
+    const liveSessions = Array.from(this.sessions.values())
+      .map((session) => this.liveSession(session))
+      .filter((session): session is ConversationSession => Boolean(session));
+
+    for (const session of liveSessions) {
+      byType[session.type] = (byType[session.type] ?? 0) + 1;
+    }
+
+    return {
+      total: liveSessions.length,
+      byType
+    };
+  }
+
+  clear(): number {
+    const count = this.sessions.size;
+    this.sessions.clear();
+    return count;
   }
 }
 

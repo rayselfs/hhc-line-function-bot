@@ -153,6 +153,43 @@ describe("find_ppt_slides", () => {
     );
   });
 
+  it("offers recovery quick replies when no PPT candidates match", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi
+        .fn()
+        .mockResolvedValue([
+          { id: "1", name: "主日報告.pptx", webUrl: "https://example.invalid/1" }
+        ]),
+      createSharingLink: vi.fn()
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPptSlidesHandler({
+      graph,
+      driveId: "drive-id",
+      folderItemId: "folder-id",
+      allowedExtensions: [".ppt", ".pptx", ".pdf"],
+      defaultIncludePdf: false,
+      sessionStore: new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 }),
+      now: () => now
+    });
+
+    const result = await handler({ query: "不存在的歌名" }, handlerContext());
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toBe("找不到符合的詩歌投影片，請再提供更完整歌名。");
+    expect(result.quickReplies).toEqual([
+      {
+        label: "重新查投影片",
+        action: { type: "message", label: "重新查投影片", text: "小哈 查投影片" }
+      },
+      {
+        label: "查PDF投影片",
+        action: { type: "message", label: "查PDF投影片", text: "小哈 查投影片 pdf" }
+      }
+    ]);
+    expect(graph.createSharingLink).not.toHaveBeenCalled();
+  });
+
   it("stores multiple PPT candidates and returns postback quick replies without creating links", async () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn().mockResolvedValue([

@@ -18,6 +18,8 @@ import type {
   LineWebhookPayload,
   PostbackHandlerRegistry,
   PostbackRequest,
+  RouteObserver,
+  RouteObserverEvent,
   TextMessageHandlerRegistry
 } from "./types.js";
 
@@ -28,6 +30,7 @@ export interface AppDependencies {
   textMessageHandlers?: TextMessageHandlerRegistry;
   adminHandlers?: AdminHandlerRegistry;
   createLineReplyClient?: (profile: BotProfileConfig) => LineReplyClient;
+  routeObserver?: RouteObserver;
 }
 
 interface AllowResult {
@@ -79,7 +82,8 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         deps.postbackHandlers ?? {},
         deps.textMessageHandlers ?? {},
         deps.adminHandlers ?? {},
-        createReplyClient
+        createReplyClient,
+        deps.routeObserver
       );
     });
   }
@@ -96,7 +100,8 @@ async function handleWebhook(
   postbackHandlers: PostbackHandlerRegistry,
   textMessageHandlers: TextMessageHandlerRegistry,
   adminHandlers: AdminHandlerRegistry,
-  createReplyClient: (profile: BotProfileConfig) => LineReplyClient
+  createReplyClient: (profile: BotProfileConfig) => LineReplyClient,
+  routeObserver?: RouteObserver
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -139,7 +144,16 @@ async function handleWebhook(
       if (!event.replyToken) {
         continue;
       }
+      const startedAt = Date.now();
       const result = await handlePostbackEvent(event, profile, postbackHandlers);
+      await emitRouteEvent(routeObserver, {
+        kind: "postback",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        action: parsePostbackData(event.postback?.data ?? "")?.action,
+        ok: result.ok,
+        durationMs: elapsedMs(startedAt)
+      });
       await line.replyText(
         event.replyToken,
         result.replyText,
@@ -157,22 +171,42 @@ async function handleWebhook(
     }
 
     if (isAdminCommand(event.message.text)) {
+      const parsedAdminCommand = parseAdminCommand(event.message.text);
+      const adminStartedAt = Date.now();
       const adminResult = await handleAdminCommand(
         event.message.text,
         profile,
         event,
         adminHandlers
       );
+      await emitRouteEvent(routeObserver, {
+        kind: "admin_command",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        command: parsedAdminCommand?.command ?? "unknown",
+        authorized: adminAllowed(profile, event),
+        ok: adminResult.ok,
+        durationMs: elapsedMs(adminStartedAt)
+      });
       await line.replyText(event.replyToken, adminResult.replyText, undefined);
       continue;
     }
 
     const textMessageHandler = matchingTextMessageHandler(event, profile, textMessageHandlers);
     if (textMessageHandler) {
-      const result = await textMessageHandler.handle(
+      const handlerStartedAt = Date.now();
+      const result = await textMessageHandler.handler.handle(
         { text: event.message.text },
         { profile, event }
       );
+      await emitRouteEvent(routeObserver, {
+        kind: "text_handler",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        handler: textMessageHandler.name,
+        ok: result?.ok,
+        durationMs: elapsedMs(handlerStartedAt)
+      });
       if (result) {
         await line.replyText(
           event.replyToken,
@@ -183,11 +217,23 @@ async function handleWebhook(
       continue;
     }
 
+    const routeStartedAt = Date.now();
     const route = await router.route({
       profileName: profile.name,
       text: event.message.text,
       enabledFunctions: profile.enabledFunctions,
       source: event.source
+    });
+    await emitRouteEvent(routeObserver, {
+      kind: "route",
+      profileName: profile.name,
+      sourceType: event.source.type,
+      provider: route.provider,
+      outcome: route.type,
+      action: route.type === "execute" ? route.action : undefined,
+      reason: route.type === "deny" ? route.reason : undefined,
+      confidence: route.type === "execute" ? route.confidence : undefined,
+      durationMs: elapsedMs(routeStartedAt)
     });
 
     if (route.type === "deny") {
@@ -206,14 +252,32 @@ async function handleWebhook(
       continue;
     }
 
+    const functionStartedAt = Date.now();
     try {
       const result = await handler(route.arguments, { profile, event });
+      await emitRouteEvent(routeObserver, {
+        kind: "function_result",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        action: route.action,
+        ok: result.ok,
+        durationMs: elapsedMs(functionStartedAt)
+      });
       await line.replyText(
         event.replyToken,
         result.replyText,
         result.quickReplies ? { quickReplies: result.quickReplies } : undefined
       );
-    } catch {
+    } catch (error) {
+      await emitRouteEvent(routeObserver, {
+        kind: "function_error",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        action: route.action,
+        ok: false,
+        errorName: error instanceof Error ? error.name : typeof error,
+        durationMs: elapsedMs(functionStartedAt)
+      });
       await line.replyText(event.replyToken, messages.requestFailed);
     }
   }
@@ -412,12 +476,30 @@ function matchingTextMessageHandler(
   if (event.type !== "message" || event.message?.type !== "text" || !text) {
     return undefined;
   }
-  for (const handler of Object.values(textMessageHandlers)) {
+  for (const [name, handler] of Object.entries(textMessageHandlers)) {
     if (handler.matches({ text }, { profile, event })) {
-      return handler;
+      return { name, handler };
     }
   }
   return undefined;
+}
+
+async function emitRouteEvent(
+  observer: RouteObserver | undefined,
+  event: RouteObserverEvent
+): Promise<void> {
+  if (!observer) {
+    return;
+  }
+  try {
+    await observer(event);
+  } catch {
+    // Observability must not change LINE webhook behavior.
+  }
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
 }
 
 function matchesWakeRule(profile: BotProfileConfig, message?: LineMessage): boolean {

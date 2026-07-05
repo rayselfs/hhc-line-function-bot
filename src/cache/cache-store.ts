@@ -8,6 +8,11 @@ export interface CacheStore {
   set<T>(key: string, value: T, ttlMs: number): Promise<void>;
   delete(key: string): Promise<void>;
   deleteByPrefix(prefix: string): Promise<number>;
+  stats(): Promise<CacheStoreStats>;
+}
+
+export interface CacheStoreStats {
+  totalEntries: number;
 }
 
 export interface MemoryCacheStoreOptions {
@@ -54,5 +59,21 @@ export class MemoryCacheStore implements CacheStore {
       }
     }
     return deleted;
+  }
+
+  async stats(): Promise<CacheStoreStats> {
+    this.pruneExpired();
+    return {
+      totalEntries: this.entries.size
+    };
+  }
+
+  private pruneExpired(): void {
+    const now = this.now().getTime();
+    for (const [key, entry] of this.entries.entries()) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(key);
+      }
+    }
   }
 }
