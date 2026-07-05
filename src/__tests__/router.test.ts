@@ -83,6 +83,34 @@ describe("function router", () => {
     });
   });
 
+  it("keeps the original text for schedule parsing when Qwen omits metadata", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "query_service_schedule",
+        arguments: { query: "" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈，下一場聚會服事表。",
+      enabledFunctions: ["query_service_schedule"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "query_service_schedule",
+      provider: "ollama",
+      arguments: { query: "小哈，下一場聚會服事表。" }
+    });
+  });
+
   it("passes structured PPT metadata from Qwen", async () => {
     const qwen = provider(
       JSON.stringify({

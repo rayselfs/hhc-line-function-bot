@@ -101,11 +101,12 @@ function parseProviderDecision(
   if (!parsedArguments) {
     return { type: "deny", reason: "invalid_arguments", provider };
   }
+  const argumentsWithFallbacks = applyArgumentFallbacks(action, parsedArguments, input);
 
   return {
     type: "execute",
     action,
-    arguments: parsedArguments,
+    arguments: argumentsWithFallbacks,
     confidence: parsed.data.confidence,
     provider
   };
@@ -144,7 +145,7 @@ const functionDescriptions: Record<FunctionName, string> = {
   find_ppt_slides:
     '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "fileType":"ppt|pdf|any optional", "includePdf": boolean optional, "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
   query_service_schedule:
-    '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.'
+    '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"original user request text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.'
 };
 
 export function coerceFunctionArguments(args: unknown): JsonRecord {
@@ -152,6 +153,31 @@ export function coerceFunctionArguments(args: unknown): JsonRecord {
     return args as JsonRecord;
   }
   return {};
+}
+
+function applyArgumentFallbacks(
+  action: FunctionName,
+  args: JsonRecord,
+  input: RouteInput
+): JsonRecord {
+  if (action !== "query_service_schedule") {
+    return args;
+  }
+
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const hasStructuredMetadata = [
+    args.date,
+    args.dateIntent,
+    args.specificDate,
+    args.meeting,
+    args.role
+  ].some((value) => typeof value === "string" && value.trim());
+
+  if (query || hasStructuredMetadata) {
+    return args;
+  }
+
+  return { ...args, query: input.text };
 }
 
 export { FUNCTION_NAMES };
