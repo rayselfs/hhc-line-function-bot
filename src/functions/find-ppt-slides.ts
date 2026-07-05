@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 
+import {
+  findPptSlidesArgumentsSchema,
+  type FindPptSlidesArguments
+} from "../function-arguments.js";
 import { buildPostbackQuickReply } from "../line-reply.js";
 import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
 import type {
@@ -12,11 +15,6 @@ import type {
   TextMessageHandler,
   TextMessageContext
 } from "../types.js";
-
-const argsSchema = z.object({
-  query: z.string().optional().default(""),
-  includePdf: z.boolean().optional()
-});
 
 const POSTBACK_ACTION = "select_ppt";
 const MAX_CANDIDATES = 5;
@@ -56,6 +54,8 @@ interface ScoredItem {
   score: number;
 }
 
+type PptMatchMode = NonNullable<FindPptSlidesArguments["matchMode"]>;
+
 export function createFindPptSlidesHandler(options: FindPptSlidesOptions): FunctionHandler {
   const now = options.now ?? (() => new Date());
   const configuredExtensions = normalizeExtensions(options.allowedExtensions);
@@ -64,7 +64,7 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
   return async (rawArgs, context) => {
-    const args = argsSchema.parse(rawArgs);
+    const args = findPptSlidesArgumentsSchema.parse(rawArgs);
     const rawQuery = args.query.trim();
 
     if (!rawQuery) {
@@ -74,12 +74,13 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
       };
     }
 
-    const includePdf = args.includePdf ?? options.defaultIncludePdf;
-    const extensions = configuredExtensions.filter(
-      (extension) => includePdf || extension !== ".pdf"
+    const extensions = resolveSearchExtensions(
+      configuredExtensions,
+      args,
+      options.defaultIncludePdf
     );
     const allItems = await options.graph.listFolderChildren(options.driveId, options.folderItemId);
-    const candidates = rankPptCandidates(allItems, rawQuery, extensions);
+    const candidates = rankPptCandidates(allItems, rawQuery, extensions, args.matchMode ?? "fuzzy");
 
     if (candidates.length === 0) {
       return { ok: true, replyText: "找不到符合的詩歌投影片，請再提供更完整歌名。" };
@@ -250,7 +251,8 @@ async function createSharingLinkReply(
 function rankPptCandidates(
   items: DriveItem[],
   rawQuery: string,
-  extensions: string[]
+  extensions: string[],
+  matchMode: PptMatchMode
 ): ScoredItem[] {
   const query = normalizeSearchText(rawQuery);
   const queryWithAliases = normalizeKnownAliases(query);
@@ -259,7 +261,7 @@ function rankPptCandidates(
     .filter((item) => extensions.some((extension) => item.name.toLowerCase().endsWith(extension)))
     .map((item) => ({
       item,
-      score: scoreCandidate(query, queryWithAliases, item)
+      score: scoreCandidate(query, queryWithAliases, item, matchMode)
     }))
     .filter(({ score }) => score >= MIN_FUZZY_SCORE)
     .sort((left, right) => {
@@ -271,7 +273,12 @@ function rankPptCandidates(
     .slice(0, MAX_CANDIDATES);
 }
 
-function scoreCandidate(query: string, queryWithAliases: string, item: DriveItem): number {
+function scoreCandidate(
+  query: string,
+  queryWithAliases: string,
+  item: DriveItem,
+  matchMode: PptMatchMode
+): number {
   const normalizedName = normalizeSearchText(item.name);
   const normalizedNameWithAliases = normalizeKnownAliases(normalizedName);
 
@@ -282,10 +289,35 @@ function scoreCandidate(query: string, queryWithAliases: string, item: DriveItem
     return 0.92;
   }
 
+  if (matchMode === "exact") {
+    return 0;
+  }
+
   return Math.max(
     diceCoefficient(query, normalizedName),
     diceCoefficient(queryWithAliases, normalizedNameWithAliases)
   );
+}
+
+function resolveSearchExtensions(
+  configuredExtensions: string[],
+  args: FindPptSlidesArguments,
+  defaultIncludePdf: boolean
+): string[] {
+  switch (args.fileType) {
+    case "pdf":
+      return configuredExtensions.filter((extension) => extension === ".pdf");
+    case "ppt":
+      return configuredExtensions.filter(
+        (extension) => extension === ".ppt" || extension === ".pptx"
+      );
+    case "any":
+      return configuredExtensions;
+    default: {
+      const includePdf = args.includePdf ?? defaultIncludePdf;
+      return configuredExtensions.filter((extension) => includePdf || extension !== ".pdf");
+    }
+  }
 }
 
 function normalizeExtensions(extensions: string[]): string[] {

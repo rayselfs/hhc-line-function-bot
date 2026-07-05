@@ -83,6 +83,76 @@ describe("find_ppt_slides", () => {
     );
   });
 
+  it("uses file type metadata to search PDF slide exports", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn().mockResolvedValue([
+        { id: "1", name: "主日報告.pptx", webUrl: "https://example.invalid/1" },
+        { id: "2", name: "主日報告.pdf", webUrl: "https://example.invalid/2" }
+      ]),
+      createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/report-pdf")
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPptSlidesHandler({
+      graph,
+      driveId: "drive-id",
+      folderItemId: "folder-id",
+      allowedExtensions: [".ppt", ".pptx", ".pdf"],
+      defaultIncludePdf: false,
+      sessionStore: new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 }),
+      now: () => now
+    });
+
+    const result = await handler(
+      {
+        query: "主日報告",
+        originalQuery: "小哈 查投影片 主日報告 pdf",
+        fileType: "pdf",
+        matchMode: "exact"
+      },
+      handlerContext()
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toContain("主日報告.pdf");
+    expect(result.replyText).not.toContain("主日報告.pptx");
+    expect(graph.createSharingLink).toHaveBeenCalledWith(
+      "drive-id",
+      "2",
+      "2026-07-05T10:00:00.000Z"
+    );
+  });
+
+  it("lets file type metadata override the default PDF setting", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn().mockResolvedValue([
+        { id: "1", name: "主日報告.pptx", webUrl: "https://example.invalid/1" },
+        { id: "2", name: "主日報告.pdf", webUrl: "https://example.invalid/2" }
+      ]),
+      createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/report-ppt")
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPptSlidesHandler({
+      graph,
+      driveId: "drive-id",
+      folderItemId: "folder-id",
+      allowedExtensions: [".ppt", ".pptx", ".pdf"],
+      defaultIncludePdf: true,
+      sessionStore: new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 }),
+      now: () => now
+    });
+
+    const result = await handler({ query: "主日報告", fileType: "ppt" }, handlerContext());
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toContain("主日報告.pptx");
+    expect(result.replyText).not.toContain("主日報告.pdf");
+    expect(graph.createSharingLink).toHaveBeenCalledWith(
+      "drive-id",
+      "1",
+      "2026-07-05T10:00:00.000Z"
+    );
+  });
+
   it("stores multiple PPT candidates and returns postback quick replies without creating links", async () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn().mockResolvedValue([
@@ -466,6 +536,139 @@ describe("query_service_schedule", () => {
     );
     expect(result.replyText).not.toContain("7月7日");
     expect(result.replyText).not.toContain("資恆");
+  });
+
+  it("uses structured next-meeting metadata even when the query text is generic", async () => {
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi.fn().mockResolvedValue([
+        {
+          id: "page-next-1",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-05" } },
+            Meeting: { type: "select", select: { name: "7月5日 主日" } },
+            Role: { type: "title", title: [] },
+            Person: {
+              type: "rich_text",
+              rich_text: [{ plain_text: "導播: 知樂\n投影電腦: 育圻" }]
+            }
+          }
+        },
+        {
+          id: "page-next-2",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-07" } },
+            Meeting: { type: "select", select: { name: "7月7日(二) 晨更" } },
+            Role: { type: "title", title: [{ plain_text: "音控" }] },
+            Person: { type: "people", people: [{ name: "資恆" }] }
+          }
+        }
+      ])
+    };
+    const handler = createQueryServiceScheduleHandler({
+      notion,
+      databaseId: "notion-db",
+      properties: {
+        date: "Date",
+        meeting: "Meeting",
+        role: "Role",
+        person: "Person"
+      },
+      now: () => new Date("2026-07-05T13:00:00.000Z")
+    });
+
+    const result = await handler(
+      { query: "服事表", dateIntent: "next_meeting", limit: 1 },
+      handlerContext()
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toBe(
+      [
+        "下一場聚會服事表",
+        "7月5日",
+        "",
+        "【7月5日 主日】",
+        "服事同工：",
+        "- 導播：知樂",
+        "- 投影電腦：育圻"
+      ].join("\n")
+    );
+    expect(result.replyText).not.toContain("7月7日");
+    expect(result.replyText).not.toContain("資恆");
+  });
+
+  it("uses structured date, meeting, and role metadata as filters", async () => {
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi.fn().mockResolvedValue([
+        {
+          id: "page-target",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-10" } },
+            Meeting: { type: "select", select: { name: "晨更" } },
+            Role: { type: "title", title: [{ plain_text: "音控" }] },
+            Person: { type: "people", people: [{ name: "家睿" }] }
+          }
+        },
+        {
+          id: "page-wrong-role",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-10" } },
+            Meeting: { type: "select", select: { name: "晨更" } },
+            Role: { type: "title", title: [{ plain_text: "投影電腦" }] },
+            Person: { type: "people", people: [{ name: "Peggy" }] }
+          }
+        },
+        {
+          id: "page-wrong-meeting",
+          properties: {
+            Date: { type: "date", date: { start: "2026-07-10" } },
+            Meeting: { type: "select", select: { name: "門訓禱告會" } },
+            Role: { type: "title", title: [{ plain_text: "音控" }] },
+            Person: { type: "people", people: [{ name: "資恆" }] }
+          }
+        }
+      ])
+    };
+    const handler = createQueryServiceScheduleHandler({
+      notion,
+      databaseId: "notion-db",
+      properties: {
+        date: "Date",
+        meeting: "Meeting",
+        role: "Role",
+        person: "Person"
+      },
+      now: () => new Date("2026-07-04T12:00:00.000Z")
+    });
+
+    const result = await handler(
+      {
+        query: "服事表",
+        dateIntent: "specific_date",
+        specificDate: "2026-07-10",
+        meeting: "晨更",
+        role: "音控"
+      },
+      handlerContext()
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.replyText).toContain("7月10日");
+    expect(result.replyText).toContain("【晨更】");
+    expect(result.replyText).toContain("- 音控：家睿");
+    expect(result.replyText).not.toContain("Peggy");
+    expect(result.replyText).not.toContain("資恆");
+    expect(notion.queryDatabase).toHaveBeenCalledWith(
+      "notion-db",
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          and: expect.arrayContaining([
+            expect.objectContaining({ date: { on_or_after: "2026-07-10" } }),
+            expect.objectContaining({ date: { before: "2026-07-11" } })
+          ])
+        })
+      })
+    );
   });
 
   it("filters tomorrow service schedule requests to the next calendar day", async () => {

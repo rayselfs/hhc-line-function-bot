@@ -65,7 +65,14 @@ function includesKeyword(text: string, keyword: string): boolean {
 
 function extractArguments(rule: KeywordRule, text: string): JsonRecord {
   const query = cleanupQuery(text, rule.stripWords);
-  return { query: query || text.trim() };
+  const argumentsRecord: JsonRecord = { query: query || text.trim() };
+  if (rule.action === "find_ppt_slides") {
+    argumentsRecord.matchMode = "fuzzy";
+    if (includesKeyword(text, "pdf")) {
+      argumentsRecord.fileType = "pdf";
+    }
+  }
+  return argumentsRecord;
 }
 
 function cleanupQuery(text: string, stripWords: string[]): string {

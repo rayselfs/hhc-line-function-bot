@@ -40,6 +40,117 @@ describe("function router", () => {
     });
   });
 
+  it("passes structured service schedule metadata from Qwen", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "query_service_schedule",
+        confidence: 0.91,
+        arguments: {
+          query: "下一場聚會服事表",
+          dateIntent: "next_meeting",
+          meeting: "主日",
+          role: "音控",
+          limit: "1",
+          ignored: "drop me"
+        }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 下一場主日音控是誰",
+      enabledFunctions: ["query_service_schedule"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
+
+    expect(result).toEqual({
+      type: "execute",
+      action: "query_service_schedule",
+      provider: "ollama",
+      confidence: 0.91,
+      arguments: {
+        query: "下一場聚會服事表",
+        dateIntent: "next_meeting",
+        meeting: "主日",
+        role: "音控",
+        limit: 1
+      }
+    });
+  });
+
+  it("passes structured PPT metadata from Qwen", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "find_ppt_slides",
+        confidence: 0.88,
+        arguments: {
+          query: "奇易恩點",
+          originalQuery: "小哈 查投影片 奇易恩點",
+          fileType: "any",
+          includePdf: true,
+          matchMode: "fuzzy"
+        }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查投影片 奇易恩點",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "find_ppt_slides",
+      provider: "ollama",
+      arguments: {
+        query: "奇易恩點",
+        originalQuery: "小哈 查投影片 奇易恩點",
+        fileType: "any",
+        includePdf: true,
+        matchMode: "fuzzy"
+      }
+    });
+  });
+
+  it("denies invalid Qwen arguments without falling back to keywords", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "find_ppt_slides",
+        arguments: { query: "奇異恩典", includePdf: "yes" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查投影片 奇異恩典",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "deny",
+      reason: "invalid_arguments",
+      provider: "ollama"
+    });
+  });
+
   it("denies disabled functions without calling keyword fallback", async () => {
     const qwen = provider(
       JSON.stringify({

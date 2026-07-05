@@ -1,14 +1,9 @@
-import { z } from "zod";
-
+import {
+  queryServiceScheduleArgumentsSchema,
+  type QueryServiceScheduleArguments
+} from "../function-arguments.js";
 import { readTimeZone } from "../time-zone.js";
 import type { FunctionHandler, JsonRecord, NotionDatabaseClient } from "../types.js";
-
-const argsSchema = z.object({
-  query: z.string().optional().default(""),
-  date: z.string().optional(),
-  meeting: z.string().optional(),
-  role: z.string().optional()
-});
 
 export interface QueryServiceScheduleOptions {
   notion: NotionDatabaseClient;
@@ -34,6 +29,7 @@ interface DerivedFilters {
   date?: string;
   meeting?: string;
   role?: string;
+  limit?: number;
   nextMeetingOnly?: boolean;
   range?: {
     start: string;
@@ -48,7 +44,7 @@ export function createQueryServiceScheduleHandler(
   const timeZone = readTimeZone(options.timeZone, "timeZone");
 
   return async (rawArgs) => {
-    const args = argsSchema.parse(rawArgs);
+    const args = queryServiceScheduleArgumentsSchema.parse(rawArgs);
     const derivedFilters = deriveFilters(args, now(), timeZone);
     const pages = await options.notion.queryDatabase(
       options.databaseId,
@@ -66,11 +62,10 @@ export function createQueryServiceScheduleHandler(
       .filter((row) => matchesOptional(row.date, derivedFilters.date))
       .filter((row) => matchesOptional(row.meeting, derivedFilters.meeting))
       .filter((row) => matchesOptional(row.role, derivedFilters.role))
-      .filter((row) => matchesDateRange(row.date, derivedFilters.range))
-      .slice(0, 10);
+      .filter((row) => matchesDateRange(row.date, derivedFilters.range));
     const filtered = derivedFilters.nextMeetingOnly
       ? limitToFirstGroup(filteredRows)
-      : filteredRows;
+      : filteredRows.slice(0, derivedFilters.limit ?? 10);
 
     if (filtered.length === 0) {
       return {
@@ -91,7 +86,7 @@ export function createQueryServiceScheduleHandler(
 
     return {
       ok: true,
-      replyText: formatServiceScheduleReply(filtered, args.query)
+      replyText: formatServiceScheduleReply(filtered, args, derivedFilters)
     };
   };
 }
@@ -122,30 +117,37 @@ function buildNotionQuery(filters: DerivedFilters, dateProperty: string): JsonRe
 }
 
 function deriveFilters(
-  args: z.infer<typeof argsSchema>,
+  args: QueryServiceScheduleArguments,
   now: Date,
   timeZone: string
 ): DerivedFilters {
   const query = args.query.trim();
   const filters: DerivedFilters = {
     date: args.date,
-    meeting: args.meeting,
-    role: args.role
+    meeting: cleanOptionalText(args.meeting),
+    role: cleanOptionalText(args.role),
+    limit: args.limit
   };
 
-  if (query.includes("今天")) {
+  applyStructuredDateIntent(filters, args, now, timeZone);
+
+  if (!filters.range && isDateKey(args.date)) {
+    filters.range = dateKeyRange(args.date);
+  }
+
+  if (!filters.range && query.includes("今天")) {
     filters.range = dayRange(now, 0, timeZone);
-  } else if (query.includes("明天")) {
+  } else if (!filters.range && query.includes("明天")) {
     filters.range = dayRange(now, 1, timeZone);
-  } else if (query.includes("後天") || query.includes("后天")) {
+  } else if (!filters.range && (query.includes("後天") || query.includes("后天"))) {
     filters.range = dayRange(now, 2, timeZone);
   }
 
-  if (/(本週|本周|這週|这周)/.test(query)) {
+  if (!filters.range && /(本週|本周|這週|这周)/.test(query)) {
     filters.range = upcomingRange(now, timeZone);
   }
 
-  if (/(下一場|下場|最近一場|下一次|下次)/.test(query)) {
+  if (!args.dateIntent && /(下一場|下場|最近一場|下一次|下次)/.test(query)) {
     filters.nextMeetingOnly = true;
     filters.range ??= upcomingRange(now, timeZone);
   }
@@ -163,6 +165,43 @@ function deriveFilters(
   }
 
   return filters;
+}
+
+function applyStructuredDateIntent(
+  filters: DerivedFilters,
+  args: QueryServiceScheduleArguments,
+  now: Date,
+  timeZone: string
+): void {
+  switch (args.dateIntent) {
+    case "today":
+      filters.range = dayRange(now, 0, timeZone);
+      break;
+    case "tomorrow":
+      filters.range = dayRange(now, 1, timeZone);
+      break;
+    case "day_after_tomorrow":
+      filters.range = dayRange(now, 2, timeZone);
+      break;
+    case "this_week":
+    case "upcoming":
+      filters.range = upcomingRange(now, timeZone);
+      break;
+    case "next_meeting":
+      filters.nextMeetingOnly = true;
+      filters.range = upcomingRange(now, timeZone);
+      break;
+    case "specific_date": {
+      const date = args.specificDate ?? args.date;
+      if (date) {
+        filters.date = date;
+        filters.range = dateKeyRange(date);
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 function limitToFirstGroup(rows: ServiceRow[]): ServiceRow[] {
@@ -184,10 +223,23 @@ function dayRange(
   timeZone: string
 ): NonNullable<DerivedFilters["range"]> {
   const start = addDaysToDateKey(toDateKey(now, timeZone), offsetDays);
+  return dateKeyRange(start);
+}
+
+function dateKeyRange(dateKey: string): NonNullable<DerivedFilters["range"]> {
   return {
-    start,
-    endExclusive: addDaysToDateKey(start, 1)
+    start: dateKey,
+    endExclusive: addDaysToDateKey(dateKey, 1)
   };
+}
+
+function isDateKey(value: string | undefined): value is string {
+  return Boolean(value?.match(/^\d{4}-\d{2}-\d{2}$/));
+}
+
+function cleanOptionalText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
 }
 
 function extractRole(query: string): string | undefined {
@@ -250,8 +302,12 @@ function addDaysToDateKey(dateKey: string, days: number): string {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
-function formatServiceScheduleReply(rows: ServiceRow[], query: string): string {
-  const title = scheduleTitle(query);
+function formatServiceScheduleReply(
+  rows: ServiceRow[],
+  args: QueryServiceScheduleArguments,
+  filters: DerivedFilters
+): string {
+  const title = scheduleTitle(args, filters);
   const firstDateKey = extractDateKey(rows[0]?.date ?? "");
   const dateLine = firstDateKey ? formatMonthDay(firstDateKey) : rows[0]?.date || "未填日期";
   const lines = [title, dateLine, ""];
@@ -271,17 +327,22 @@ function formatServiceScheduleReply(rows: ServiceRow[], query: string): string {
   return lines.join("\n");
 }
 
-function scheduleTitle(query: string): string {
-  if (/(下一場|下場|最近一場|下一次|下次)/.test(query)) {
+function scheduleTitle(args: QueryServiceScheduleArguments, filters: DerivedFilters): string {
+  const query = args.query.trim();
+  if (filters.nextMeetingOnly || args.dateIntent === "next_meeting") {
     return "下一場聚會服事表";
   }
-  if (query.includes("明天")) {
+  if (args.dateIntent === "tomorrow" || query.includes("明天")) {
     return "明天聚會服事表";
   }
-  if (query.includes("今天")) {
+  if (args.dateIntent === "today" || query.includes("今天")) {
     return "今天聚會服事表";
   }
-  if (query.includes("後天") || query.includes("后天")) {
+  if (
+    args.dateIntent === "day_after_tomorrow" ||
+    query.includes("後天") ||
+    query.includes("后天")
+  ) {
     return "後天聚會服事表";
   }
   return "聚會服事表";

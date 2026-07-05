@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { parseFunctionArguments } from "./function-arguments.js";
 import { FUNCTION_NAMES, isFunctionName } from "./types.js";
 import type {
   ChatProvider,
@@ -15,7 +16,7 @@ const modelDecisionSchema = z.object({
   action: z.string(),
   confidence: z.number().min(0).max(1).optional(),
   reason: z.string().optional(),
-  arguments: z.record(z.string(), z.unknown()).optional()
+  arguments: z.unknown().optional()
 });
 
 export class ProviderResponseError extends Error {
@@ -96,10 +97,15 @@ function parseProviderDecision(
     return { type: "deny", reason: "function_disabled", provider };
   }
 
+  const parsedArguments = parseFunctionArguments(action, parsed.data.arguments);
+  if (!parsedArguments) {
+    return { type: "deny", reason: "invalid_arguments", provider };
+  }
+
   return {
     type: "execute",
     action,
-    arguments: parsed.data.arguments ?? {},
+    arguments: parsedArguments,
     confidence: parsed.data.confidence,
     provider
   };
@@ -136,9 +142,9 @@ function buildRouterPrompt(enabledFunctions: FunctionName[]): string {
 
 const functionDescriptions: Record<FunctionName, string> = {
   find_ppt_slides:
-    '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"text", "includePdf": boolean}.',
+    '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "fileType":"ppt|pdf|any optional", "includePdf": boolean optional, "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
   query_service_schedule:
-    '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"text", "date":"YYYY-MM-DD optional", "meeting":"text optional", "role":"text optional"}.'
+    '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.'
 };
 
 export function coerceFunctionArguments(args: unknown): JsonRecord {
