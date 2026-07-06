@@ -20,6 +20,9 @@ variables:
   imageRepository: "alive/hhc-line-function-bot"
   dockerfilePath: "$(Build.SourcesDirectory)/Dockerfile"
   imageTag: "$(Build.SourceBranchName)-$(Build.BuildId)"
+  resourceGroup: "alive"
+  containerAppName: "hhc-line-function-bot"
+  healthUrl: "https://hhc-line-function-bot.gentleriver-81abd7bc.eastasia.azurecontainerapps.io/healthz"
 
 stages:
   - stage: Validate
@@ -88,3 +91,83 @@ stages:
               echo "Pushed $(acrLoginServer)/$(imageRepository):$(imageTag)"
               echo "Pushed $(acrLoginServer)/$(imageRepository):latest"
             displayName: Show pushed image refs
+
+  - stage: Deploy
+    displayName: Deploy to Azure Container Apps
+    dependsOn: BuildAndPush
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: deploy_aca
+        displayName: Update ACA image
+        steps:
+          - task: AzureCLI@2
+            displayName: Deploy image to ACA
+            inputs:
+              azureSubscription: "$(azureSubscription)"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                image_ref="$(acrLoginServer)/$(imageRepository):$(imageTag)"
+                echo "Deploying ${image_ref} to $(containerAppName)"
+
+                az containerapp update \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(containerAppName)" \
+                  --image "${image_ref}" \
+                  --only-show-errors \
+                  --output none
+
+                target_revision="$(az containerapp show \
+                  --resource-group "$(resourceGroup)" \
+                  --name "$(containerAppName)" \
+                  --query "properties.latestRevisionName" \
+                  --output tsv)"
+
+                echo "Waiting for revision ${target_revision} to become ready"
+                revision_ready=false
+                for attempt in {1..30}; do
+                  app_state="$(az containerapp show \
+                    --resource-group "$(resourceGroup)" \
+                    --name "$(containerAppName)" \
+                    --query "[properties.latestRevisionName, properties.latestReadyRevisionName, properties.runningStatus, properties.template.containers[0].image]" \
+                    --output tsv)"
+
+                  read -r latest_revision latest_ready_revision running_status deployed_image <<< "${app_state}"
+                  echo "Attempt ${attempt}: latest=${latest_revision}, ready=${latest_ready_revision}, status=${running_status}, image=${deployed_image}"
+
+                  if [[ "${latest_revision}" == "${target_revision}" \
+                    && "${latest_ready_revision}" == "${target_revision}" \
+                    && "${running_status}" == "Running" \
+                    && "${deployed_image}" == "${image_ref}" ]]; then
+                    revision_ready=true
+                    break
+                  fi
+
+                  sleep 10
+                done
+
+                if [[ "${revision_ready}" != "true" ]]; then
+                  echo "Revision ${target_revision} did not become ready in time"
+                  exit 1
+                fi
+
+                echo "Checking health endpoint"
+                health_ok=false
+                for attempt in {1..12}; do
+                  if curl -fsS "$(healthUrl)"; then
+                    health_ok=true
+                    break
+                  fi
+
+                  echo "Health check attempt ${attempt} failed; retrying"
+                  sleep 10
+                done
+
+                if [[ "${health_ok}" != "true" ]]; then
+                  echo "Health endpoint did not return success"
+                  exit 1
+                fi
+
+                echo "Deployed ${image_ref} to revision ${target_revision}"
