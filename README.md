@@ -109,7 +109,7 @@ Users and groups register with the same command:
 /register <inviteCode> <name>
 ```
 
-In a direct chat this creates a pending user request. In a group this creates a pending group request. If an admin sends `/register <name>` from inside a group, the current group is opened immediately without a pending review.
+In a direct chat this creates a pending user request. In a group this creates a pending group request. If `<name>` is omitted, the bot tries to fill it from the LINE user profile or group summary. If an admin sends `/register <name>` from inside a group, the current group is opened immediately without a pending review.
 
 When any profile enables registration, configure:
 

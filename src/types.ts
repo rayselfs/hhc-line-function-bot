@@ -237,6 +237,11 @@ export interface LineReplyClient {
   replyText(replyToken: string, text: string, options?: LineReplyOptions): Promise<void>;
 }
 
+export interface LineIdentityClient {
+  getUserDisplayName(userId: string): Promise<string | undefined>;
+  getGroupDisplayName(groupId: string): Promise<string | undefined>;
+}
+
 export interface FunctionExecutionResult {
   ok: boolean;
   replyText: string;

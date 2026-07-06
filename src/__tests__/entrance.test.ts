@@ -7,6 +7,7 @@ import { createApp } from "../server.js";
 import type {
   AppConfig,
   FunctionRouterPort,
+  LineIdentityClient,
   LineReplyClient,
   TextMessageHandlerRegistry,
   PostbackHandlerRegistry
@@ -1116,6 +1117,112 @@ describe("LINE entrance", () => {
     await expect(accessStore.countPendingRequests("helper")).resolves.toBe(1);
   });
 
+  it("uses the LINE profile display name for direct registration when no name is provided", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const identityClient: LineIdentityClient = {
+      getUserDisplayName: vi.fn().mockResolvedValue("Ray from LINE"),
+      getGroupDisplayName: vi.fn()
+    };
+    const accessStore = new InMemoryAccessStore({
+      inviteCodes: [
+        {
+          id: "invite-1",
+          profileName: "helper",
+          codeHash: hashInviteCode("HHCTEST", "invite-secret"),
+          maxUses: 10,
+          usedCount: 0,
+          expiresAt: undefined,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          createdBy: "Uroot",
+          disabledAt: undefined
+        }
+      ]
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText }),
+      createLineIdentityClient: () => identityClient
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Unew" },
+      message: { type: "text", text: "/register HHCTEST" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityClient.getUserDisplayName).toHaveBeenCalledWith("Unew");
+    await expect(accessStore.listPendingRequests("helper")).resolves.toMatchObject([
+      {
+        sourceType: "user",
+        sourceId: "Unew",
+        displayName: "Ray from LINE"
+      }
+    ]);
+  });
+
+  it("keeps an explicitly provided direct registration name before the LINE profile name", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const identityClient: LineIdentityClient = {
+      getUserDisplayName: vi.fn().mockResolvedValue("Ray from LINE"),
+      getGroupDisplayName: vi.fn()
+    };
+    const accessStore = new InMemoryAccessStore({
+      inviteCodes: [
+        {
+          id: "invite-1",
+          profileName: "helper",
+          codeHash: hashInviteCode("HHCTEST", "invite-secret"),
+          maxUses: 10,
+          usedCount: 0,
+          expiresAt: undefined,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          createdBy: "Uroot",
+          disabledAt: undefined
+        }
+      ]
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText }),
+      createLineIdentityClient: () => identityClient
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Unew" },
+      message: { type: "text", text: "/register HHCTEST Manual Ray" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityClient.getUserDisplayName).not.toHaveBeenCalled();
+    await expect(accessStore.listPendingRequests("helper")).resolves.toMatchObject([
+      {
+        sourceType: "user",
+        sourceId: "Unew",
+        displayName: "Manual Ray"
+      }
+    ]);
+  });
+
   it("creates a pending group registration request from an unregistered group", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
@@ -1162,6 +1269,98 @@ describe("LINE entrance", () => {
         sourceId: "Cnew",
         displayName: "影音同工群",
         requestedBy: "Unew"
+      }
+    ]);
+  });
+
+  it("uses the LINE group summary name for group registration when no name is provided", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const identityClient: LineIdentityClient = {
+      getUserDisplayName: vi.fn(),
+      getGroupDisplayName: vi.fn().mockResolvedValue("LINE 影音同工群")
+    };
+    const accessStore = new InMemoryAccessStore({
+      inviteCodes: [
+        {
+          id: "invite-1",
+          profileName: "helper",
+          codeHash: hashInviteCode("HHCGROUP", "invite-secret"),
+          maxUses: 10,
+          usedCount: 0,
+          expiresAt: undefined,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          createdBy: "Uroot",
+          disabledAt: undefined
+        }
+      ]
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText }),
+      createLineIdentityClient: () => identityClient
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cnew", userId: "Unew" },
+      message: { type: "text", text: "/register HHCGROUP" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityClient.getGroupDisplayName).toHaveBeenCalledWith("Cnew");
+    await expect(accessStore.listPendingRequests("helper")).resolves.toMatchObject([
+      {
+        sourceType: "group",
+        sourceId: "Cnew",
+        displayName: "LINE 影音同工群"
+      }
+    ]);
+  });
+
+  it("uses the LINE group summary name when an admin registers a group without a name", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const identityClient: LineIdentityClient = {
+      getUserDisplayName: vi.fn(),
+      getGroupDisplayName: vi.fn().mockResolvedValue("LINE Admin Group")
+    };
+    const accessStore = new InMemoryAccessStore();
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText }),
+      createLineIdentityClient: () => identityClient
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cadmin", userId: "Uroot" },
+      message: { type: "text", text: "/register" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(identityClient.getGroupDisplayName).toHaveBeenCalledWith("Cadmin");
+    await expect(accessStore.listPrincipals("helper")).resolves.toMatchObject([
+      {
+        type: "group",
+        principalId: "Cadmin",
+        displayName: "LINE Admin Group"
       }
     ]);
   });

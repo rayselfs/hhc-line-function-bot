@@ -7,7 +7,7 @@ import { hashInviteCode } from "./access/invite-code.js";
 import { InMemoryAccessStore } from "./access/memory-access-store.js";
 import type { AccessPrincipalType, AccessStore } from "./access/types.js";
 import type { AccessRequest } from "./access/types.js";
-import { createLineSdkReplyClient } from "./clients/line.js";
+import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
@@ -31,6 +31,7 @@ import type {
   FunctionExecutionResult,
   FunctionRegistry,
   FunctionRouterPort,
+  LineIdentityClient,
   LineEvent,
   LineMessage,
   LineReplyClient,
@@ -50,6 +51,7 @@ export interface AppDependencies {
   textMessageHandlers?: TextMessageHandlerRegistry;
   adminHandlers?: AdminHandlerRegistry;
   createLineReplyClient?: (profile: BotProfileConfig) => LineReplyClient;
+  createLineIdentityClient?: (profile: BotProfileConfig) => LineIdentityClient;
   routeObserver?: RouteObserver;
   requestIdFactory?: () => string;
   lastErrorStore?: LastErrorStore;
@@ -146,6 +148,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   });
   const functionRegistry = deps.functionRegistry ?? {};
   const createReplyClient = deps.createLineReplyClient ?? createLineSdkReplyClient;
+  const createIdentityClient = deps.createLineIdentityClient ?? createLineSdkIdentityClient;
   const requestIdFactory = deps.requestIdFactory ?? randomUUID;
   const accessStore = deps.accessStore ?? new InMemoryAccessStore();
   const lastErrorStore =
@@ -190,6 +193,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         deps.textMessageHandlers ?? {},
         deps.adminHandlers ?? {},
         createReplyClient,
+        createIdentityClient,
         deps.routeObserver,
         requestIdFactory,
         lastErrorStore,
@@ -214,6 +218,7 @@ async function handleWebhook(
   textMessageHandlers: TextMessageHandlerRegistry,
   adminHandlers: AdminHandlerRegistry,
   createReplyClient: (profile: BotProfileConfig) => LineReplyClient,
+  createIdentityClient: (profile: BotProfileConfig) => LineIdentityClient,
   routeObserver: RouteObserver | undefined,
   requestIdFactory: () => string,
   lastErrorStore: LastErrorStore,
@@ -258,6 +263,7 @@ async function handleWebhook(
   }
 
   const line = createReplyClient(profile);
+  const lineIdentity = createIdentityClient(profile);
   for (const event of allowedEvents) {
     const requestId = requestIdFactory();
 
@@ -318,7 +324,8 @@ async function handleWebhook(
         profile,
         event,
         accessStore,
-        inviteCodeSecret
+        inviteCodeSecret,
+        lineIdentity
       );
       if (accessCommandResult) {
         await line.replyText(event.replyToken, accessCommandResult.replyText, undefined);
@@ -759,7 +766,8 @@ async function handlePublicAccessCommand(
   profile: BotProfileConfig,
   event: LineEvent,
   accessStore: AccessStore,
-  inviteCodeSecret: string | undefined
+  inviteCodeSecret: string | undefined,
+  lineIdentity: LineIdentityClient
 ): Promise<FunctionExecutionResult | undefined> {
   const parsed = parseAdminCommand(text);
   if (!parsed) {
@@ -771,7 +779,14 @@ async function handlePublicAccessCommand(
   if (parsed.command !== "register") {
     return undefined;
   }
-  return handleRegisterCommand(parsed.args, profile, event, accessStore, inviteCodeSecret);
+  return handleRegisterCommand(
+    parsed.args,
+    profile,
+    event,
+    accessStore,
+    inviteCodeSecret,
+    lineIdentity
+  );
 }
 
 async function handleWhoamiCommand(
@@ -804,14 +819,22 @@ async function handleRegisterCommand(
   profile: BotProfileConfig,
   event: LineEvent,
   accessStore: AccessStore,
-  inviteCodeSecret: string | undefined
+  inviteCodeSecret: string | undefined,
+  lineIdentity: LineIdentityClient
 ): Promise<FunctionExecutionResult> {
   if (!profile.registration?.enabled) {
     return { ok: true, replyText: "這個 bot 目前沒有開放自行申請。" };
   }
 
   if (event.source.type === "group") {
-    return handleGroupRegisterCommand(args, profile, event, accessStore, inviteCodeSecret);
+    return handleGroupRegisterCommand(
+      args,
+      profile,
+      event,
+      accessStore,
+      inviteCodeSecret,
+      lineIdentity
+    );
   }
 
   if (event.source.type !== "user" || !event.source.userId) {
@@ -827,6 +850,11 @@ async function handleRegisterCommand(
     .slice(inviteCodeRequired ? 1 : 0)
     .join(" ")
     .trim();
+  const registrationDisplayName = await resolveUserRegistrationDisplayName(
+    lineIdentity,
+    event.source.userId,
+    displayName
+  );
   if (inviteCodeRequired && !inviteCode) {
     return { ok: true, replyText: "請輸入 /register <邀請碼> <你的名字>。" };
   }
@@ -845,7 +873,7 @@ async function handleRegisterCommand(
       accessStore,
       profile,
       event.source.userId,
-      displayName || undefined
+      registrationDisplayName
     );
     if (created.created) {
       await accessStore.incrementInviteCodeUse(matchedInviteCode.id);
@@ -857,7 +885,7 @@ async function handleRegisterCommand(
     accessStore,
     profile,
     event.source.userId,
-    displayName || undefined
+    registrationDisplayName
   );
   return formatRegistrationResult(created.request.id, created.created);
 }
@@ -867,7 +895,8 @@ async function handleGroupRegisterCommand(
   profile: BotProfileConfig,
   event: LineEvent,
   accessStore: AccessStore,
-  inviteCodeSecret: string | undefined
+  inviteCodeSecret: string | undefined,
+  lineIdentity: LineIdentityClient
 ) {
   const groupId = event.source.groupId;
   const actorUserId = event.source.userId;
@@ -879,7 +908,11 @@ async function handleGroupRegisterCommand(
   }
 
   if (await isAdminUser(profile, actorUserId, accessStore)) {
-    const displayName = args.join(" ").trim() || undefined;
+    const displayName = await resolveGroupRegistrationDisplayName(
+      lineIdentity,
+      groupId,
+      args.join(" ").trim()
+    );
     await accessStore.addPrincipal({
       profileName: profile.name,
       type: "group",
@@ -906,6 +939,11 @@ async function handleGroupRegisterCommand(
     .slice(inviteCodeRequired ? 1 : 0)
     .join(" ")
     .trim();
+  const registrationDisplayName = await resolveGroupRegistrationDisplayName(
+    lineIdentity,
+    groupId,
+    displayName
+  );
   if (inviteCodeRequired && !inviteCode) {
     return { ok: true, replyText: "請輸入 /register <邀請碼> <名稱>。" };
   }
@@ -926,7 +964,7 @@ async function handleGroupRegisterCommand(
       "group",
       groupId,
       actorUserId,
-      displayName || undefined
+      registrationDisplayName
     );
     if (created.created) {
       await accessStore.incrementInviteCodeUse(matchedInviteCode.id);
@@ -940,9 +978,46 @@ async function handleGroupRegisterCommand(
     "group",
     groupId,
     actorUserId,
-    displayName || undefined
+    registrationDisplayName
   );
   return formatRegistrationResult(created.request.id, created.created);
+}
+
+async function resolveUserRegistrationDisplayName(
+  lineIdentity: LineIdentityClient,
+  userId: string,
+  explicitDisplayName: string
+): Promise<string | undefined> {
+  const explicit = nonBlank(explicitDisplayName);
+  if (explicit) {
+    return explicit;
+  }
+  try {
+    return nonBlank(await lineIdentity.getUserDisplayName(userId));
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveGroupRegistrationDisplayName(
+  lineIdentity: LineIdentityClient,
+  groupId: string,
+  explicitDisplayName: string
+): Promise<string | undefined> {
+  const explicit = nonBlank(explicitDisplayName);
+  if (explicit) {
+    return explicit;
+  }
+  try {
+    return nonBlank(await lineIdentity.getGroupDisplayName(groupId));
+  } catch {
+    return undefined;
+  }
+}
+
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function createAccessRequest(
