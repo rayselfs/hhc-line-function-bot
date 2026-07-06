@@ -238,7 +238,9 @@ The app assigns a request id to each handled LINE event and includes it in route
 
 `azure-pipelines.yml` runs install, format check, typecheck, lint, tests, router eval replay, app build, and Docker image build for PRs and pushes to `main`.
 
-On successful `main` builds, the pipeline uses Azure Resource Manager service connection `alive-azure-rm` and `az acr build` to publish images to ACR:
+The pipeline uses path filters so docs-only or agent-instruction-only changes do not trigger builds or deployments. It runs only when app, build, or deployment inputs change, such as `src/**`, package files, TypeScript/test config, Docker files, `azure-pipelines.yml`, or `aca.containerapp.yaml`.
+
+On successful deploy-triggering `main` builds, the pipeline uses Azure Resource Manager service connection `alive-azure-rm` and `az acr build` to publish images to ACR:
 
 ```text
 alive.azurecr.io/alive/hhc-line-function-bot:<branch>-<buildId>

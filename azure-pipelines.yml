@@ -2,11 +2,37 @@ trigger:
   branches:
     include:
       - main
+  paths:
+    include:
+      - azure-pipelines.yml
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
+      - eslint.config.js
+      - vitest.config.ts
+      - src/**
+      - aca.containerapp.yaml
 
 pr:
   branches:
     include:
       - main
+  paths:
+    include:
+      - azure-pipelines.yml
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.json
+      - eslint.config.js
+      - vitest.config.ts
+      - src/**
+      - aca.containerapp.yaml
 
 pool:
   vmImage: ubuntu-latest
