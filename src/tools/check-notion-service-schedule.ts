@@ -187,8 +187,6 @@ function handlerContext(): FunctionHandlerContext {
     webhookPath: "/line/check/webhook",
     channelSecret: "placeholder",
     channelAccessToken: "placeholder",
-    allowedGroupIds: [],
-    allowedUserIds: [],
     allowDirectUser: true,
     allowRooms: false,
     allowedMessageTypes: ["text"],

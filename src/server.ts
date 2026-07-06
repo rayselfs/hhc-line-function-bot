@@ -1263,7 +1263,7 @@ function isBootstrapSuperAdmin(profile: BotProfileConfig, userId: string | undef
   if (!userId) {
     return false;
   }
-  return profile.adminUserId === userId || (profile.adminUserIds ?? []).includes(userId);
+  return profile.adminUserId === userId;
 }
 
 async function isDirectUserAllowed(
@@ -1276,7 +1276,6 @@ async function isDirectUserAllowed(
   }
   return (
     directAccessPolicy(profile) === "public" ||
-    isAllowedId(profile.allowedUserIds, userId) ||
     isBootstrapSuperAdmin(profile, userId) ||
     (await accessStore.hasActivePrincipal(profile.name, "admin", userId)) ||
     (await accessStore.hasActivePrincipal(profile.name, "user", userId))
@@ -1291,10 +1290,7 @@ async function isGroupAllowed(
   if (!groupId) {
     return false;
   }
-  return (
-    isAllowedId(profile.allowedGroupIds, groupId) ||
-    (await accessStore.hasActivePrincipal(profile.name, "group", groupId))
-  );
+  return accessStore.hasActivePrincipal(profile.name, "group", groupId);
 }
 
 function directAccessPolicy(profile: BotProfileConfig) {
@@ -1302,7 +1298,7 @@ function directAccessPolicy(profile: BotProfileConfig) {
 }
 
 function groupAccessPolicy(profile: BotProfileConfig) {
-  return profile.groupAccessPolicy ?? (profile.allowedGroupIds.length > 0 ? "managed" : "blocked");
+  return profile.groupAccessPolicy ?? "blocked";
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {
@@ -1364,13 +1360,6 @@ function matchesWakeRule(profile: BotProfileConfig, message?: LineMessage): bool
   return Boolean(
     profile.acceptMention && message?.mention?.mentionees?.some((mentionee) => mentionee.isSelf)
   );
-}
-
-function isAllowedId(allowedIds: string[], actual?: string): boolean {
-  if (!actual) {
-    return false;
-  }
-  return allowedIds.includes("*") || allowedIds.includes(actual);
 }
 
 function formatIgnoredSummary(counts: Map<string, number>): string {

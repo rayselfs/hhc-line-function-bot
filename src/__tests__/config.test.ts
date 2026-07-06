@@ -54,7 +54,7 @@ describe("config", () => {
     });
   });
 
-  it("loads profile admin allowlist settings", () => {
+  it("loads profile admin settings from adminUserId only", () => {
     const config = loadConfigFromEnv({
       BOT_PROFILES_JSON: JSON.stringify([
         {
@@ -63,7 +63,7 @@ describe("config", () => {
           channelSecret: "secret",
           channelAccessToken: "token",
           enabledFunctions: ["query_service_schedule"],
-          adminUserIds: ["Uadmin"],
+          adminUserId: "Uadmin",
           adminDirectOnly: true
         }
       ])
@@ -71,9 +71,9 @@ describe("config", () => {
 
     expect(config.profiles[0]).toMatchObject({
       adminUserId: "Uadmin",
-      adminUserIds: ["Uadmin"],
       adminDirectOnly: true
     });
+    expect(config.profiles[0]).not.toHaveProperty("adminUserIds");
   });
 
   it("loads a single bootstrap admin user id", () => {
@@ -91,12 +91,12 @@ describe("config", () => {
     });
 
     expect(config.profiles[0]).toMatchObject({
-      adminUserId: "Uadmin",
-      adminUserIds: ["Uadmin"]
+      adminUserId: "Uadmin"
     });
+    expect(config.profiles[0]).not.toHaveProperty("adminUserIds");
   });
 
-  it("rejects multiple legacy admin user ids", () => {
+  it("rejects legacy adminUserIds profile settings", () => {
     expect(() =>
       loadConfigFromEnv({
         BOT_PROFILES_JSON: JSON.stringify([
@@ -105,11 +105,41 @@ describe("config", () => {
             webhookPath: "/line/helper/webhook",
             channelSecret: "secret",
             channelAccessToken: "token",
-            adminUserIds: ["U1", "U2"]
+            adminUserIds: ["U1"]
           }
         ])
       })
-    ).toThrow("Only one bootstrap adminUserId is supported");
+    ).toThrow("adminUserIds is no longer supported");
+  });
+
+  it("rejects legacy static user and group allowlists", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            allowedUserIds: ["U1"]
+          }
+        ])
+      })
+    ).toThrow("allowedUserIds is no longer supported");
+
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            allowedGroupIds: ["C1"]
+          }
+        ])
+      })
+    ).toThrow("allowedGroupIds is no longer supported");
   });
 
   it("loads profile access policy and registration settings", () => {

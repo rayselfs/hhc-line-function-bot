@@ -11,8 +11,6 @@ const profileSchema = z.object({
   webhookPath: z.string().startsWith("/"),
   channelSecret: z.string().min(1),
   channelAccessToken: z.string().min(1),
-  allowedGroupIds: z.array(z.string()).default([]),
-  allowedUserIds: z.array(z.string()).default([]),
   allowDirectUser: z.boolean().default(false),
   allowRooms: z.boolean().default(false),
   allowedMessageTypes: z.array(z.string()).default(["text"]),
@@ -21,7 +19,6 @@ const profileSchema = z.object({
   acceptMention: z.boolean().default(true),
   enabledFunctions: z.array(z.enum(FUNCTION_NAMES)).default([]),
   adminUserId: z.string().optional(),
-  adminUserIds: z.array(z.string()).default([]),
   adminDirectOnly: z.boolean().default(true),
   directAccessPolicy: z.enum(["managed", "public", "blocked"]).optional(),
   groupAccessPolicy: z.enum(["managed", "blocked"]).optional(),
@@ -35,7 +32,9 @@ const profileSchema = z.object({
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   const profilesJson = readProfilesJson(env);
-  const profiles = z.array(profileSchema).min(1).parse(JSON.parse(profilesJson));
+  const parsedProfiles = JSON.parse(profilesJson) as unknown;
+  assertNoLegacyProfileFields(parsedProfiles);
+  const profiles = z.array(profileSchema).min(1).parse(parsedProfiles);
   assertUniqueValues(
     profiles.map((profile) => profile.webhookPath),
     "Duplicate profile webhookPath"
@@ -136,23 +135,41 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
 type ParsedProfile = z.infer<typeof profileSchema>;
 
 function normalizeProfile(profile: ParsedProfile): ParsedProfile {
-  if (profile.adminUserIds.length > 1) {
-    throw new Error("Only one bootstrap adminUserId is supported per profile");
-  }
-  const legacyAdminUserId = profile.adminUserIds[0];
-  if (profile.adminUserId && legacyAdminUserId && profile.adminUserId !== legacyAdminUserId) {
-    throw new Error("adminUserId and adminUserIds[0] must match");
-  }
-  const adminUserId = profile.adminUserId ?? legacyAdminUserId;
   return {
     ...profile,
-    adminUserId,
-    adminUserIds: adminUserId ? [adminUserId] : [],
     directAccessPolicy:
       profile.directAccessPolicy ?? (profile.allowDirectUser ? "managed" : "blocked"),
-    groupAccessPolicy:
-      profile.groupAccessPolicy ?? (profile.allowedGroupIds.length > 0 ? "managed" : "blocked")
+    groupAccessPolicy: profile.groupAccessPolicy ?? "blocked"
   };
+}
+
+function assertNoLegacyProfileFields(parsedProfiles: unknown): void {
+  if (!Array.isArray(parsedProfiles)) {
+    return;
+  }
+  for (const profile of parsedProfiles) {
+    if (
+      profile &&
+      typeof profile === "object" &&
+      Object.prototype.hasOwnProperty.call(profile, "adminUserIds")
+    ) {
+      throw new Error("adminUserIds is no longer supported; use adminUserId");
+    }
+    if (
+      profile &&
+      typeof profile === "object" &&
+      Object.prototype.hasOwnProperty.call(profile, "allowedUserIds")
+    ) {
+      throw new Error("allowedUserIds is no longer supported; use registration and access DB");
+    }
+    if (
+      profile &&
+      typeof profile === "object" &&
+      Object.prototype.hasOwnProperty.call(profile, "allowedGroupIds")
+    ) {
+      throw new Error("allowedGroupIds is no longer supported; use access DB");
+    }
+  }
 }
 
 function validateAccessConfig(profiles: ParsedProfile[], env: NodeJS.ProcessEnv): void {

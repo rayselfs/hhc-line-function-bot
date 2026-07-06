@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { createFunctionRegistries } from "../functions/registry.js";
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
@@ -26,15 +27,15 @@ function testConfig(): AppConfig {
         webhookPath: "/line/helper/webhook",
         channelSecret: "channel-secret",
         channelAccessToken: "channel-token",
-        allowedGroupIds: ["Cmain"],
-        allowedUserIds: ["Uallowed"],
         allowDirectUser: true,
         allowRooms: false,
         allowedMessageTypes: ["text"],
         groupRequireWakeWord: true,
         wakeKeywords: ["小哈"],
         acceptMention: true,
-        enabledFunctions: ["find_ppt_slides", "find_pop_sheet_music"]
+        enabledFunctions: ["find_ppt_slides", "find_pop_sheet_music"],
+        directAccessPolicy: "managed",
+        groupAccessPolicy: "managed"
       }
     ],
     llm: {
@@ -72,6 +73,29 @@ function signedHeaders(body: string) {
   };
 }
 
+function accessStore(): InMemoryAccessStore {
+  return new InMemoryAccessStore({
+    principals: [
+      {
+        id: "principal-user",
+        profileName: "helper",
+        type: "user",
+        principalId: "Uallowed",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        createdBy: "test"
+      },
+      {
+        id: "principal-group",
+        profileName: "helper",
+        type: "group",
+        principalId: "Cmain",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        createdBy: "test"
+      }
+    ]
+  });
+}
+
 describe("clarification flow", () => {
   it("asks for a missing PPT keyword and uses the next group reply without a wake word", async () => {
     const graph: GraphDriveClient = {
@@ -99,6 +123,7 @@ describe("clarification flow", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
       router: { route },
+      accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
       textMessageHandlers: registries.textMessages,
@@ -179,6 +204,7 @@ describe("clarification flow", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
       router: { route },
+      accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
       textMessageHandlers: registries.textMessages,
@@ -244,6 +270,7 @@ describe("clarification flow", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
       router: { route },
+      accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
       textMessageHandlers: registries.textMessages,
@@ -315,6 +342,7 @@ describe("clarification flow", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
       router: { route },
+      accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
       textMessageHandlers: registries.textMessages,
@@ -414,6 +442,7 @@ describe("clarification flow", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
       router: { route },
+      accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
       textMessageHandlers: registries.textMessages,

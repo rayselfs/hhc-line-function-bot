@@ -11,8 +11,6 @@ function profile(): BotProfileConfig {
     webhookPath: "/line/helper/webhook",
     channelSecret: "secret",
     channelAccessToken: "token",
-    allowedGroupIds: ["Cgroup"],
-    allowedUserIds: ["Uadmin"],
     allowDirectUser: true,
     allowRooms: false,
     allowedMessageTypes: ["text"],
@@ -20,7 +18,7 @@ function profile(): BotProfileConfig {
     wakeKeywords: ["小哈"],
     acceptMention: true,
     enabledFunctions: ["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"],
-    adminUserIds: ["Uadmin"],
+    adminUserId: "Uadmin",
     adminDirectOnly: true
   };
 }

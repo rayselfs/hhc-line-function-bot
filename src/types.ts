@@ -22,8 +22,6 @@ export interface BotProfileConfig {
   webhookPath: string;
   channelSecret: string;
   channelAccessToken: string;
-  allowedGroupIds: string[];
-  allowedUserIds: string[];
   allowDirectUser: boolean;
   allowRooms: boolean;
   allowedMessageTypes: string[];
@@ -32,7 +30,6 @@ export interface BotProfileConfig {
   acceptMention: boolean;
   enabledFunctions: FunctionName[];
   adminUserId?: string;
-  adminUserIds?: string[];
   adminDirectOnly?: boolean;
   directAccessPolicy?: DirectAccessPolicy;
   groupAccessPolicy?: GroupAccessPolicy;

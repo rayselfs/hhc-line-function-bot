@@ -52,7 +52,6 @@ Each profile controls:
 
 - LINE channel secret and access token.
 - Webhook path.
-- Allowed LINE group/user ids.
 - Direct and group access policy.
 - Optional registration flow.
 - Wake keywords and mention handling.
@@ -68,8 +67,6 @@ Example shape:
     "webhookPath": "/line/helper/webhook",
     "channelSecret": "PLACEHOLDER",
     "channelAccessToken": "PLACEHOLDER",
-    "allowedGroupIds": ["PLACEHOLDER_GROUP_ID"],
-    "allowedUserIds": ["PLACEHOLDER_USER_ID"],
     "allowDirectUser": true,
     "allowRooms": false,
     "allowedMessageTypes": ["text"],
@@ -89,18 +86,16 @@ Example shape:
 ]
 ```
 
-Use `*` in an allowlist only when you intentionally want to allow every id for that source type.
-
-`adminUserIds` is kept only for backward compatibility and may contain at most one id. Prefer `adminUserId`.
+Use `adminUserId` for the single bootstrap superadmin. Legacy `adminUserIds`, `allowedUserIds`, and `allowedGroupIds` are rejected.
 
 ## Access Control
 
 Profiles can choose separate policies for direct chat and groups:
 
-- `directAccessPolicy: "managed"`: only static allowlist users, DB users/admins, or the bootstrap superadmin can use functions. If `registration.enabled=true`, unknown direct users receive a registration prompt.
+- `directAccessPolicy: "managed"`: only DB users/admins or the bootstrap superadmin can use functions. If `registration.enabled=true`, unknown direct users receive a registration prompt.
 - `directAccessPolicy: "public"`: any direct user can use the profile. This is suitable for a future official one-to-one bot.
 - `directAccessPolicy: "blocked"`: direct users are blocked except slash diagnostics such as `/whoami` and admin authorization checks.
-- `groupAccessPolicy: "managed"`: groups must be static allowlisted or added through DB access management.
+- `groupAccessPolicy: "managed"`: groups must be added through DB access management.
 - `groupAccessPolicy: "blocked"`: group events are ignored.
 
 Registration is profile-scoped. The current intended split is:

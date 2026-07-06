@@ -20,8 +20,6 @@ function profile(): BotProfileConfig {
     webhookPath: "/line/main/webhook",
     channelSecret: "secret",
     channelAccessToken: "token",
-    allowedGroupIds: ["Cgroup"],
-    allowedUserIds: ["Uallowed"],
     allowDirectUser: true,
     allowRooms: false,
     allowedMessageTypes: ["text"],

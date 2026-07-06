@@ -26,8 +26,6 @@ function testConfig(): AppConfig {
         webhookPath: "/line/main/webhook",
         channelSecret: "main-secret",
         channelAccessToken: "main-token",
-        allowedGroupIds: ["Cmain"],
-        allowedUserIds: ["Uallowed"],
         allowDirectUser: true,
         allowRooms: false,
         allowedMessageTypes: ["text"],
@@ -35,16 +33,16 @@ function testConfig(): AppConfig {
         wakeKeywords: ["小哈"],
         acceptMention: true,
         enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
-        adminUserIds: ["Uadmin"],
-        adminDirectOnly: true
+        adminUserId: "Uadmin",
+        adminDirectOnly: true,
+        directAccessPolicy: "managed",
+        groupAccessPolicy: "managed"
       },
       {
         name: "slides",
         webhookPath: "/line/slides/webhook",
         channelSecret: "slides-secret",
         channelAccessToken: "slides-token",
-        allowedGroupIds: ["Cslides"],
-        allowedUserIds: [],
         allowDirectUser: false,
         allowRooms: false,
         allowedMessageTypes: ["text"],
@@ -52,8 +50,9 @@ function testConfig(): AppConfig {
         wakeKeywords: ["小哈"],
         acceptMention: true,
         enabledFunctions: ["find_ppt_slides"],
-        adminUserIds: [],
-        adminDirectOnly: true
+        adminDirectOnly: true,
+        directAccessPolicy: "blocked",
+        groupAccessPolicy: "managed"
       }
     ],
     llm: {
@@ -76,6 +75,47 @@ function signedHeaders(body: string, secret: string) {
   };
 }
 
+function defaultAccessStore(): InMemoryAccessStore {
+  return new InMemoryAccessStore({
+    principals: [
+      {
+        id: "principal-main-user",
+        profileName: "main",
+        type: "user",
+        principalId: "Uallowed",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        createdBy: "test"
+      },
+      {
+        id: "principal-main-group",
+        profileName: "main",
+        type: "group",
+        principalId: "Cmain",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        createdBy: "test"
+      },
+      {
+        id: "principal-slides-group",
+        profileName: "slides",
+        type: "group",
+        principalId: "Cslides",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        createdBy: "test"
+      }
+    ]
+  });
+}
+
+function createTestApp(
+  config: AppConfig,
+  deps: Parameters<typeof createApp>[1]
+): ReturnType<typeof createApp> {
+  return createApp(config, {
+    accessStore: defaultAccessStore(),
+    ...deps
+  });
+}
+
 function accessConfig(): AppConfig {
   return {
     serviceName: "hhc-line-function-bot",
@@ -90,8 +130,6 @@ function accessConfig(): AppConfig {
         webhookPath: "/line/helper/webhook",
         channelSecret: "helper-secret",
         channelAccessToken: "helper-token",
-        allowedGroupIds: [],
-        allowedUserIds: [],
         allowDirectUser: true,
         allowRooms: false,
         allowedMessageTypes: ["text"],
@@ -100,7 +138,6 @@ function accessConfig(): AppConfig {
         acceptMention: true,
         enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
         adminUserId: "Uroot",
-        adminUserIds: ["Uroot"],
         adminDirectOnly: true,
         directAccessPolicy: "managed",
         groupAccessPolicy: "managed",
@@ -111,8 +148,6 @@ function accessConfig(): AppConfig {
         webhookPath: "/line/main-public/webhook",
         channelSecret: "main-secret",
         channelAccessToken: "main-token",
-        allowedGroupIds: [],
-        allowedUserIds: [],
         allowDirectUser: true,
         allowRooms: false,
         allowedMessageTypes: ["text"],
@@ -121,7 +156,6 @@ function accessConfig(): AppConfig {
         acceptMention: true,
         enabledFunctions: ["query_service_schedule"],
         adminUserId: "Uroot",
-        adminUserIds: ["Uroot"],
         adminDirectOnly: true,
         directAccessPolicy: "public",
         groupAccessPolicy: "blocked",
@@ -141,7 +175,7 @@ function accessConfig(): AppConfig {
 describe("LINE entrance", () => {
   it("rejects an invalid LINE signature for the selected profile", async () => {
     const router: FunctionRouterPort = { route: vi.fn() };
-    const app = createApp(testConfig(), { router });
+    const app = createTestApp(testConfig(), { router });
 
     const body = lineBody({
       type: "message",
@@ -169,7 +203,7 @@ describe("LINE entrance", () => {
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -219,7 +253,7 @@ describe("LINE entrance", () => {
     });
     const routeObserver = vi.fn().mockResolvedValue(undefined);
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       functionRegistry: { find_ppt_slides: findPptSlides },
       routeObserver,
@@ -278,7 +312,7 @@ describe("LINE entrance", () => {
     });
     const routeObserver = vi.fn().mockResolvedValue(undefined);
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       functionRegistry: { query_service_schedule: queryServiceSchedule },
       routeObserver,
@@ -313,7 +347,7 @@ describe("LINE entrance", () => {
 
   it("ignores a group message without wake word before calling the router", async () => {
     const router: FunctionRouterPort = { route: vi.fn() };
-    const app = createApp(testConfig(), { router });
+    const app = createTestApp(testConfig(), { router });
     const body = lineBody({
       type: "message",
       replyToken: "reply-token",
@@ -339,7 +373,7 @@ describe("LINE entrance", () => {
       reason: "not_matched",
       provider: "ollama"
     });
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
     });
@@ -365,7 +399,7 @@ describe("LINE entrance", () => {
   it("handles slash admin status in direct chat without calling the router", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -395,7 +429,7 @@ describe("LINE entrance", () => {
   it("lists built-in and registered slash admin commands through help-admin", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       adminHandlers: {
         "refresh-sheet-music-cache": vi.fn()
@@ -430,7 +464,7 @@ describe("LINE entrance", () => {
   it("introduces available functions when a group user only calls the bot name", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -474,7 +508,7 @@ describe("LINE entrance", () => {
   it("introduces available functions in direct chat when the user asks for help", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -506,7 +540,7 @@ describe("LINE entrance", () => {
     ];
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(config, {
+    const app = createTestApp(config, {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -534,7 +568,7 @@ describe("LINE entrance", () => {
   it("denies slash admin commands from groups when direct-only admin is enabled", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -564,7 +598,7 @@ describe("LINE entrance", () => {
       ok: true,
       replyText: "已重新整理流行歌譜 cache。"
     });
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       adminHandlers: {
         "refresh-sheet-music-cache": refreshSheetMusicCache
@@ -596,7 +630,7 @@ describe("LINE entrance", () => {
   it("reports profile diagnostics through slash admin profile", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -633,7 +667,7 @@ describe("LINE entrance", () => {
       replyText: "should not run"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       functionRegistry: { query_service_schedule: queryServiceSchedule },
       createLineReplyClient: () => ({ replyText })
@@ -673,7 +707,7 @@ describe("LINE entrance", () => {
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       functionRegistry: {
         find_ppt_slides: vi.fn().mockRejectedValue(new Error("graph unavailable"))
@@ -723,7 +757,7 @@ describe("LINE entrance", () => {
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       functionRegistry: {
         find_ppt_slides: vi.fn().mockResolvedValue({
@@ -783,7 +817,7 @@ describe("LINE entrance", () => {
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(config, {
+    const app = createTestApp(config, {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -816,7 +850,7 @@ describe("LINE entrance", () => {
   it("denies slash admin commands from non-admin direct users without routing", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       createLineReplyClient: () => ({ replyText })
     });
@@ -1101,7 +1135,7 @@ describe("LINE entrance", () => {
 
   it("blocks non-text messages until the profile explicitly allows them", async () => {
     const router: FunctionRouterPort = { route: vi.fn() };
-    const app = createApp(testConfig(), { router });
+    const app = createTestApp(testConfig(), { router });
     const body = lineBody({
       type: "message",
       replyToken: "reply-token",
@@ -1134,7 +1168,7 @@ describe("LINE entrance", () => {
     const postbackHandlers: PostbackHandlerRegistry = {
       select_ppt: handleSelect
     };
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route: vi.fn() },
       postbackHandlers,
       createLineReplyClient: () => ({ replyText })
@@ -1182,7 +1216,7 @@ describe("LINE entrance", () => {
         handle: handleNumericSelection
       }
     };
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       textMessageHandlers,
       createLineReplyClient: () => ({ replyText })
@@ -1239,7 +1273,7 @@ describe("LINE entrance", () => {
         handle: handleNumericSelection
       }
     };
-    const app = createApp(testConfig(), {
+    const app = createTestApp(testConfig(), {
       router: { route },
       textMessageHandlers,
       createLineReplyClient: () => ({ replyText })
@@ -1265,7 +1299,7 @@ describe("LINE entrance", () => {
   });
 
   it("reports profiles, enabled functions, and LLM status from healthz", async () => {
-    const app = createApp(testConfig(), { router: { route: vi.fn() } });
+    const app = createTestApp(testConfig(), { router: { route: vi.fn() } });
 
     const res = await app.inject({ method: "GET", url: "/healthz" });
 
