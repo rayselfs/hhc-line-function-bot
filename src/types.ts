@@ -8,6 +8,15 @@ export type FunctionName = (typeof FUNCTION_NAMES)[number];
 
 export type JsonRecord = Record<string, unknown>;
 
+export type DirectAccessPolicy = "managed" | "public" | "blocked";
+
+export type GroupAccessPolicy = "managed" | "blocked";
+
+export interface RegistrationConfig {
+  enabled: boolean;
+  inviteCodeRequired: boolean;
+}
+
 export interface BotProfileConfig {
   name: string;
   webhookPath: string;
@@ -22,8 +31,12 @@ export interface BotProfileConfig {
   wakeKeywords: string[];
   acceptMention: boolean;
   enabledFunctions: FunctionName[];
+  adminUserId?: string;
   adminUserIds?: string[];
   adminDirectOnly?: boolean;
+  directAccessPolicy?: DirectAccessPolicy;
+  groupAccessPolicy?: GroupAccessPolicy;
+  registration?: RegistrationConfig;
 }
 
 export interface LlmConfig {
@@ -73,6 +86,8 @@ export interface AppConfig {
   graph?: GraphConfig;
   notion?: NotionConfig;
   redis?: RedisConfig;
+  database?: DatabaseConfig;
+  access?: AccessConfig;
   rateLimit?: RateLimitConfig;
   lastErrors?: LastErrorsConfig;
 }
@@ -80,6 +95,15 @@ export interface AppConfig {
 export interface RedisConfig {
   url: string;
   keyPrefix: string;
+}
+
+export interface DatabaseConfig {
+  url: string;
+  ssl: boolean;
+}
+
+export interface AccessConfig {
+  inviteCodeSecret?: string;
 }
 
 export interface RateLimitConfig {

@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 import fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { hashInviteCode } from "./access/invite-code.js";
+import { InMemoryAccessStore } from "./access/memory-access-store.js";
+import type { AccessPrincipalType, AccessStore } from "./access/types.js";
 import { createLineSdkReplyClient } from "./clients/line.js";
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies } from "./line-reply.js";
@@ -51,6 +54,7 @@ export interface AppDependencies {
   lastErrorStore?: LastErrorStore;
   lastRouteStore?: LastRouteStore;
   rateLimiter?: RateLimiter;
+  accessStore?: AccessStore;
 }
 
 interface AllowResult {
@@ -74,7 +78,22 @@ const builtInAdminCommands: AdminCommandHelpEntry[] = [
   { usage: "/profile", description: "查看目前 LINE 來源與 profile 設定摘要" },
   { usage: "/route-test <text>", description: "測試一段文字會 route 到哪個 function" },
   { usage: "/last-errors", description: "查看最近錯誤" },
-  { usage: "/last-routes", description: "查看最近 route/function 結果" }
+  { usage: "/last-routes", description: "查看最近 route/function 結果" },
+  { usage: "/whoami", description: "顯示目前 LINE user/group 與權限狀態" },
+  { usage: "/access-requests", description: "列出待審核使用者申請" },
+  { usage: "/access-approve <requestId>", description: "核准使用者申請" },
+  { usage: "/access-deny <requestId>", description: "拒絕使用者申請" },
+  { usage: "/access-list", description: "列出已開通的 user/group/admin" },
+  { usage: "/allow-user-add <userId>", description: "開通使用者" },
+  { usage: "/allow-user-remove <userId>", description: "停用使用者" },
+  { usage: "/allow-group-add <groupId>", description: "開通群組" },
+  { usage: "/allow-group-remove <groupId>", description: "停用群組" },
+  { usage: "/register-this-group", description: "將目前群組加入可使用清單" },
+  { usage: "/invite-code-create <code> [maxUses] [expiresDays]", description: "建立邀請碼" },
+  { usage: "/invite-code-list", description: "列出有效邀請碼摘要" },
+  { usage: "/invite-code-disable <id>", description: "停用邀請碼" },
+  { usage: "/admin-add <userId>", description: "superadmin 新增 admin" },
+  { usage: "/admin-remove <userId>", description: "superadmin 停用 admin" }
 ];
 
 export function createApp(config: AppConfig, deps: AppDependencies): FastifyInstance {
@@ -85,6 +104,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const functionRegistry = deps.functionRegistry ?? {};
   const createReplyClient = deps.createLineReplyClient ?? createLineSdkReplyClient;
   const requestIdFactory = deps.requestIdFactory ?? randomUUID;
+  const accessStore = deps.accessStore ?? new InMemoryAccessStore();
   const lastErrorStore =
     deps.lastErrorStore ?? new InMemoryLastErrorStore(config.lastErrors?.maxEntries ?? 20);
   const lastRouteStore =
@@ -131,7 +151,9 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         requestIdFactory,
         lastErrorStore,
         lastRouteStore,
-        rateLimiter
+        rateLimiter,
+        accessStore,
+        config.access?.inviteCodeSecret
       );
     });
   }
@@ -153,7 +175,9 @@ async function handleWebhook(
   requestIdFactory: () => string,
   lastErrorStore: LastErrorStore,
   lastRouteStore: LastRouteStore,
-  rateLimiter: RateLimiter
+  rateLimiter: RateLimiter,
+  accessStore: AccessStore,
+  inviteCodeSecret: string | undefined
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -174,7 +198,7 @@ async function handleWebhook(
   const ignoredCounts = new Map<string, number>();
 
   for (const event of payload.events) {
-    const allow = await allowEvent(profile, event, textMessageHandlers);
+    const allow = await allowEvent(profile, event, textMessageHandlers, accessStore);
     if (allow.allowed) {
       allowedEvents.push(event);
     } else {
@@ -240,6 +264,17 @@ async function handleWebhook(
 
     if (isAdminCommand(event.message.text)) {
       const parsedAdminCommand = parseAdminCommand(event.message.text);
+      const accessCommandResult = await handlePublicAccessCommand(
+        event.message.text,
+        profile,
+        event,
+        accessStore,
+        inviteCodeSecret
+      );
+      if (accessCommandResult) {
+        await line.replyText(event.replyToken, accessCommandResult.replyText, undefined);
+        continue;
+      }
       const adminStartedAt = Date.now();
       let adminResult: FunctionExecutionResult;
       try {
@@ -251,6 +286,8 @@ async function handleWebhook(
           router,
           lastErrorStore,
           lastRouteStore,
+          accessStore,
+          inviteCodeSecret,
           requestId
         );
       } catch (error) {
@@ -272,11 +309,16 @@ async function handleWebhook(
         sourceType: event.source.type,
         requestId,
         command: parsedAdminCommand?.command ?? "unknown",
-        authorized: adminAllowed(profile, event),
+        authorized: await adminAllowed(profile, event, accessStore, parsedAdminCommand?.command),
         ok: adminResult.ok,
         durationMs: elapsedMs(adminStartedAt)
       });
       await line.replyText(event.replyToken, adminResult.replyText, undefined);
+      continue;
+    }
+
+    if (await shouldPromptManagedRegistration(profile, event, accessStore)) {
+      await line.replyText(event.replyToken, registrationPrompt(profile), undefined);
       continue;
     }
 
@@ -499,10 +541,12 @@ function parseWebhookPayload(body: Buffer): LineWebhookPayload | null {
 async function allowEvent(
   profile: BotProfileConfig,
   event: LineEvent,
-  textMessageHandlers: TextMessageHandlerRegistry
+  textMessageHandlers: TextMessageHandlerRegistry,
+  accessStore: AccessStore
 ): Promise<AllowResult> {
   const eventType = event.type?.trim().toLowerCase();
   const sourceType = event.source?.type?.trim().toLowerCase();
+  const command = parseAdminCommand(event.message?.text)?.command;
 
   switch (sourceType) {
     case "room":
@@ -512,7 +556,13 @@ async function allowEvent(
       return { allowed: false, reason: "room_not_implemented" };
 
     case "group":
-      if (!isAllowedId(profile.allowedGroupIds, event.source.groupId)) {
+      if (groupAccessPolicy(profile) === "blocked") {
+        return { allowed: false, reason: "group_blocked" };
+      }
+      if (command === "register-this-group") {
+        return { allowed: true, reason: "group_registration_command_allowed" };
+      }
+      if (!(await isGroupAllowed(profile, event.source.groupId, accessStore))) {
         return { allowed: false, reason: "group_not_allowed" };
       }
       if (eventType === "postback") {
@@ -524,7 +574,7 @@ async function allowEvent(
       if (!messageTypeAllowed(profile, event)) {
         return { allowed: false, reason: "message_type_not_allowed" };
       }
-      if (isAdminCommand(event.message?.text)) {
+      if (command) {
         return { allowed: true, reason: "group_admin_command_allowed" };
       }
       if (!profile.groupRequireWakeWord || matchesWakeRule(profile, event.message)) {
@@ -536,13 +586,22 @@ async function allowEvent(
       return { allowed: false, reason: "wake_word_missing" };
 
     case "user":
-      if (!profile.allowDirectUser) {
-        return { allowed: false, reason: "direct_user_blocked" };
+      if (command === "whoami" || command === "register") {
+        return { allowed: true, reason: "direct_access_command_allowed" };
       }
-      if (isAdminCommand(event.message?.text)) {
+      if (command) {
         return { allowed: true, reason: "direct_admin_command_allowed" };
       }
-      if (!isAllowedId(profile.allowedUserIds, event.source.userId)) {
+      if (directAccessPolicy(profile) === "blocked") {
+        return { allowed: false, reason: "direct_user_blocked" };
+      }
+      if (
+        directAccessPolicy(profile) === "managed" &&
+        !(await isDirectUserAllowed(profile, event.source.userId, accessStore))
+      ) {
+        if (profile.registration?.enabled && eventType === "message") {
+          return { allowed: true, reason: "direct_registration_prompt_allowed" };
+        }
         return { allowed: false, reason: "user_not_allowed" };
       }
       if (eventType === "postback") {
@@ -565,7 +624,155 @@ function isAdminCommand(text: string | undefined): boolean {
   return Boolean(parseAdminCommand(text));
 }
 
-function handleAdminCommand(
+async function handlePublicAccessCommand(
+  text: string,
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore,
+  inviteCodeSecret: string | undefined
+): Promise<FunctionExecutionResult | undefined> {
+  const parsed = parseAdminCommand(text);
+  if (!parsed) {
+    return undefined;
+  }
+  if (parsed.command === "whoami") {
+    return handleWhoamiCommand(profile, event, accessStore);
+  }
+  if (parsed.command !== "register") {
+    return undefined;
+  }
+  return handleRegisterCommand(parsed.args, profile, event, accessStore, inviteCodeSecret);
+}
+
+async function handleWhoamiCommand(
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore
+): Promise<FunctionExecutionResult> {
+  const userId = event.source.userId ?? "(none)";
+  const groupId = event.source.groupId ?? "(none)";
+  return {
+    ok: true,
+    replyText: [
+      "Who am I",
+      `profile: ${profile.name}`,
+      `source: ${event.source.type}`,
+      `userId: ${userId}`,
+      `groupId: ${groupId}`,
+      `directPolicy: ${directAccessPolicy(profile)}`,
+      `groupPolicy: ${groupAccessPolicy(profile)}`,
+      `superadmin: ${isBootstrapSuperAdmin(profile, event.source.userId)}`,
+      `admin: ${await isAdminUser(profile, event.source.userId, accessStore)}`,
+      `userAllowed: ${await isDirectUserAllowed(profile, event.source.userId, accessStore)}`,
+      `groupAllowed: ${await isGroupAllowed(profile, event.source.groupId, accessStore)}`
+    ].join("\n")
+  };
+}
+
+async function handleRegisterCommand(
+  args: string[],
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore,
+  inviteCodeSecret: string | undefined
+): Promise<FunctionExecutionResult> {
+  if (event.source.type !== "user" || !event.source.userId) {
+    return { ok: true, replyText: "請在個人聊天室使用 /register。" };
+  }
+  if (!profile.registration?.enabled) {
+    return { ok: true, replyText: "這個 bot 目前沒有開放自行申請。" };
+  }
+  if (await isDirectUserAllowed(profile, event.source.userId, accessStore)) {
+    return { ok: true, replyText: "你已經可以使用小哈。" };
+  }
+
+  const inviteCodeRequired = profile.registration.inviteCodeRequired;
+  const inviteCode = inviteCodeRequired ? args[0] : undefined;
+  const displayName = args
+    .slice(inviteCodeRequired ? 1 : 0)
+    .join(" ")
+    .trim();
+  if (inviteCodeRequired && !inviteCode) {
+    return { ok: true, replyText: "請輸入 /register <邀請碼> <你的名字>。" };
+  }
+
+  if (inviteCodeRequired) {
+    if (!inviteCodeSecret) {
+      return { ok: false, replyText: messages.requestFailed };
+    }
+    const matchedInviteCode = await accessStore.findInviteCode(
+      profile.name,
+      hashInviteCode(inviteCode ?? "", inviteCodeSecret),
+      new Date()
+    );
+    if (!matchedInviteCode) {
+      return { ok: true, replyText: "邀請碼無效、已過期，或已達使用次數上限。" };
+    }
+    const created = await createUserAccessRequest(
+      accessStore,
+      profile,
+      event.source.userId,
+      displayName || undefined
+    );
+    if (created.created) {
+      await accessStore.incrementInviteCodeUse(matchedInviteCode.id);
+    }
+    return formatRegistrationResult(created.request.id, created.created);
+  }
+
+  const created = await createUserAccessRequest(
+    accessStore,
+    profile,
+    event.source.userId,
+    displayName || undefined
+  );
+  return formatRegistrationResult(created.request.id, created.created);
+}
+
+function createUserAccessRequest(
+  accessStore: AccessStore,
+  profile: BotProfileConfig,
+  userId: string,
+  displayName: string | undefined
+) {
+  return accessStore.createAccessRequest({
+    profileName: profile.name,
+    sourceType: "user",
+    sourceId: userId,
+    displayName,
+    requestedBy: userId
+  });
+}
+
+function formatRegistrationResult(requestId: string, created: boolean): FunctionExecutionResult {
+  return {
+    ok: true,
+    replyText: created
+      ? ["已送出申請。", `requestId: ${requestId}`, "管理同工審核後就可以使用。"].join("\n")
+      : ["你已經有一筆待審核申請。", `requestId: ${requestId}`].join("\n")
+  };
+}
+
+function registrationPrompt(profile: BotProfileConfig): string {
+  if (profile.registration?.enabled) {
+    return "你尚未開通小哈。請先用 /register <邀請碼> <你的名字> 送出申請。";
+  }
+  return "你尚未開通小哈，請聯絡管理同工協助。";
+}
+
+async function shouldPromptManagedRegistration(
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore
+): Promise<boolean> {
+  return (
+    event.source.type === "user" &&
+    directAccessPolicy(profile) === "managed" &&
+    !(await isDirectUserAllowed(profile, event.source.userId, accessStore))
+  );
+}
+
+async function handleAdminCommand(
   text: string,
   profile: BotProfileConfig,
   event: LineEvent,
@@ -573,15 +780,17 @@ function handleAdminCommand(
   router: FunctionRouterPort,
   lastErrorStore: LastErrorStore,
   lastRouteStore: LastRouteStore,
+  accessStore: AccessStore,
+  inviteCodeSecret: string | undefined,
   requestId: string
-): Promise<FunctionExecutionResult> | FunctionExecutionResult {
-  if (!adminAllowed(profile, event)) {
-    return { ok: true, replyText: messages.adminUnauthorized };
-  }
-
+): Promise<FunctionExecutionResult> {
   const parsed = parseAdminCommand(text);
   if (!parsed) {
     return { ok: true, replyText: "目前不支援這個 admin 指令。" };
+  }
+
+  if (!(await adminAllowed(profile, event, accessStore, parsed.command))) {
+    return { ok: true, replyText: messages.adminUnauthorized };
   }
 
   if (parsed.command === "status") {
@@ -634,12 +843,293 @@ function handleAdminCommand(
     }));
   }
 
+  const accessResult = await handleAdminAccessCommand(
+    parsed.command,
+    parsed.args,
+    profile,
+    event,
+    accessStore,
+    inviteCodeSecret
+  );
+  if (accessResult) {
+    return withPendingAccessNotice(profile, event, accessStore, accessResult);
+  }
+
   const handler = adminHandlers[parsed.command];
   if (handler) {
-    return handler({ profile, event, command: parsed.command, args: parsed.args, requestId });
+    return withPendingAccessNotice(
+      profile,
+      event,
+      accessStore,
+      await handler({ profile, event, command: parsed.command, args: parsed.args, requestId })
+    );
   }
 
   return { ok: true, replyText: "目前不支援這個 admin 指令。" };
+}
+
+async function handleAdminAccessCommand(
+  command: string,
+  args: string[],
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore,
+  inviteCodeSecret: string | undefined
+): Promise<FunctionExecutionResult | undefined> {
+  const actorUserId = event.source.userId;
+  if (!actorUserId) {
+    return { ok: true, replyText: messages.adminUnauthorized };
+  }
+
+  if (command === "access-requests") {
+    const requests = await accessStore.listPendingRequests(profile.name);
+    if (requests.length === 0) {
+      return { ok: true, replyText: "Access requests\n(none)" };
+    }
+    return {
+      ok: true,
+      replyText: [
+        "Access requests",
+        ...requests.map((request) =>
+          [
+            `id: ${request.id}`,
+            `source: ${request.sourceType}:${request.sourceId}`,
+            request.displayName ? `name: ${request.displayName}` : undefined,
+            `createdAt: ${request.createdAt}`
+          ]
+            .filter(Boolean)
+            .join(" | ")
+        )
+      ].join("\n")
+    };
+  }
+
+  if (command === "access-approve") {
+    const requestId = args[0];
+    if (!requestId) {
+      return { ok: true, replyText: "Usage: /access-approve <requestId>" };
+    }
+    const approved = await accessStore.approveAccessRequest({
+      profileName: profile.name,
+      requestId,
+      approvedBy: actorUserId
+    });
+    if (!approved) {
+      return { ok: true, replyText: "找不到待核准申請。" };
+    }
+    await accessStore.recordAudit({
+      profileName: profile.name,
+      actorUserId,
+      action: "access.approve",
+      targetType: approved.sourceType,
+      targetId: approved.sourceId
+    });
+    return { ok: true, replyText: `已核准 ${approved.sourceType}:${approved.sourceId}` };
+  }
+
+  if (command === "access-deny") {
+    const requestId = args[0];
+    if (!requestId) {
+      return { ok: true, replyText: "Usage: /access-deny <requestId>" };
+    }
+    const denied = await accessStore.denyAccessRequest({
+      profileName: profile.name,
+      requestId,
+      deniedBy: actorUserId
+    });
+    if (!denied) {
+      return { ok: true, replyText: "找不到待拒絕申請。" };
+    }
+    await accessStore.recordAudit({
+      profileName: profile.name,
+      actorUserId,
+      action: "access.deny",
+      targetType: denied.sourceType,
+      targetId: denied.sourceId
+    });
+    return { ok: true, replyText: `已拒絕 ${denied.sourceType}:${denied.sourceId}` };
+  }
+
+  if (command === "access-list") {
+    const principals = await accessStore.listPrincipals(profile.name);
+    if (principals.length === 0) {
+      return { ok: true, replyText: "Access list\n(none)" };
+    }
+    return {
+      ok: true,
+      replyText: [
+        "Access list",
+        ...principals.map(
+          (principal) =>
+            `${principal.type}: ${principal.principalId}${
+              principal.displayName ? ` (${principal.displayName})` : ""
+            }`
+        )
+      ].join("\n")
+    };
+  }
+
+  if (command === "register-this-group") {
+    if (event.source.type !== "group" || !event.source.groupId) {
+      return { ok: true, replyText: "請在要開通的群組裡使用 /register-this-group。" };
+    }
+    await accessStore.addPrincipal({
+      profileName: profile.name,
+      type: "group",
+      principalId: event.source.groupId,
+      createdBy: actorUserId
+    });
+    return { ok: true, replyText: `已加入 group ${event.source.groupId}` };
+  }
+
+  if (command === "allow-user-add" || command === "allow-group-add") {
+    const principalId = args[0];
+    if (!principalId) {
+      return { ok: true, replyText: `Usage: /${command} <id>` };
+    }
+    const type: AccessPrincipalType = command === "allow-user-add" ? "user" : "group";
+    await accessStore.addPrincipal({
+      profileName: profile.name,
+      type,
+      principalId,
+      createdBy: actorUserId
+    });
+    return { ok: true, replyText: `已加入 ${type} ${principalId}` };
+  }
+
+  if (command === "allow-user-remove" || command === "allow-group-remove") {
+    const principalId = args[0];
+    if (!principalId) {
+      return { ok: true, replyText: `Usage: /${command} <id>` };
+    }
+    const type: AccessPrincipalType = command === "allow-user-remove" ? "user" : "group";
+    const removed = await accessStore.disablePrincipal({
+      profileName: profile.name,
+      type,
+      principalId,
+      disabledBy: actorUserId
+    });
+    return { ok: true, replyText: removed ? `已停用 ${type} ${principalId}` : "找不到項目。" };
+  }
+
+  if (command === "invite-code-create") {
+    if (!inviteCodeSecret) {
+      return { ok: false, replyText: messages.requestFailed };
+    }
+    const rawCode = args[0];
+    if (!rawCode) {
+      return { ok: true, replyText: "Usage: /invite-code-create <code> [maxUses] [expiresDays]" };
+    }
+    const maxUses = parsePositiveInt(args[1]);
+    const expiresDays = parsePositiveInt(args[2]);
+    const inviteCode = await accessStore.createInviteCode({
+      profileName: profile.name,
+      codeHash: hashInviteCode(rawCode, inviteCodeSecret),
+      maxUses,
+      expiresAt: expiresDays
+        ? new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000).toISOString()
+        : undefined,
+      createdBy: actorUserId
+    });
+    return {
+      ok: true,
+      replyText: [
+        "Invite code created",
+        `id: ${inviteCode.id}`,
+        `maxUses: ${inviteCode.maxUses ?? "(unlimited)"}`,
+        `expiresAt: ${inviteCode.expiresAt ?? "(none)"}`,
+        "Store the plain code securely; only its hash is saved."
+      ].join("\n")
+    };
+  }
+
+  if (command === "invite-code-list") {
+    const inviteCodes = await accessStore.listInviteCodes(profile.name);
+    if (inviteCodes.length === 0) {
+      return { ok: true, replyText: "Invite codes\n(none)" };
+    }
+    return {
+      ok: true,
+      replyText: [
+        "Invite codes",
+        ...inviteCodes.map(
+          (code) =>
+            `id: ${code.id} | used: ${code.usedCount}/${code.maxUses ?? "unlimited"} | expiresAt: ${
+              code.expiresAt ?? "(none)"
+            }`
+        )
+      ].join("\n")
+    };
+  }
+
+  if (command === "invite-code-disable") {
+    const inviteCodeId = args[0];
+    if (!inviteCodeId) {
+      return { ok: true, replyText: "Usage: /invite-code-disable <id>" };
+    }
+    const disabled = await accessStore.disableInviteCode({
+      profileName: profile.name,
+      inviteCodeId,
+      disabledBy: actorUserId
+    });
+    return {
+      ok: true,
+      replyText: disabled ? `Invite code disabled: ${inviteCodeId}` : "找不到邀請碼。"
+    };
+  }
+
+  if (command === "admin-add" || command === "admin-remove") {
+    if (!isBootstrapSuperAdmin(profile, actorUserId)) {
+      return { ok: true, replyText: "只有 superadmin 可以管理 admin。" };
+    }
+    const targetUserId = args[0];
+    if (!targetUserId) {
+      return { ok: true, replyText: `Usage: /${command} <userId>` };
+    }
+    if (command === "admin-add") {
+      await accessStore.addPrincipal({
+        profileName: profile.name,
+        type: "admin",
+        principalId: targetUserId,
+        createdBy: actorUserId
+      });
+      return { ok: true, replyText: `已加入 admin ${targetUserId}` };
+    }
+    if (isBootstrapSuperAdmin(profile, targetUserId)) {
+      return { ok: true, replyText: "不能移除 bootstrap superadmin。" };
+    }
+    const removed = await accessStore.disablePrincipal({
+      profileName: profile.name,
+      type: "admin",
+      principalId: targetUserId,
+      disabledBy: actorUserId
+    });
+    return { ok: true, replyText: removed ? `已停用 admin ${targetUserId}` : "找不到 admin。" };
+  }
+
+  return undefined;
+}
+
+async function withPendingAccessNotice(
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore,
+  result: FunctionExecutionResult
+): Promise<FunctionExecutionResult> {
+  if (!result.ok || !profile.registration?.enabled) {
+    return result;
+  }
+  if (!(await isAdminUser(profile, event.source.userId, accessStore))) {
+    return result;
+  }
+  const pendingCount = await accessStore.countPendingRequests(profile.name);
+  if (pendingCount === 0 || result.replyText.includes("/access-requests")) {
+    return result;
+  }
+  return {
+    ...result,
+    replyText: `${result.replyText}\n\n待審核申請：${pendingCount}\n/access-requests`
+  };
 }
 
 function formatAdminCommandHelp(adminHandlers: AdminHandlerRegistry): string {
@@ -737,9 +1227,17 @@ function parseAdminCommand(text: string | undefined): ParsedAdminCommand | undef
   };
 }
 
-function adminAllowed(profile: BotProfileConfig, event: LineEvent): boolean {
-  if (!isAdminUser(profile, event.source.userId)) {
+async function adminAllowed(
+  profile: BotProfileConfig,
+  event: LineEvent,
+  accessStore: AccessStore,
+  command?: string
+): Promise<boolean> {
+  if (!(await isAdminUser(profile, event.source.userId, accessStore))) {
     return false;
+  }
+  if (command === "register-this-group") {
+    return event.source.type === "group";
   }
   if (profile.adminDirectOnly !== false && event.source.type !== "user") {
     return false;
@@ -747,11 +1245,72 @@ function adminAllowed(profile: BotProfileConfig, event: LineEvent): boolean {
   return true;
 }
 
-function isAdminUser(profile: BotProfileConfig, userId: string | undefined): boolean {
+async function isAdminUser(
+  profile: BotProfileConfig,
+  userId: string | undefined,
+  accessStore: AccessStore
+): Promise<boolean> {
   if (!userId) {
     return false;
   }
-  return (profile.adminUserIds ?? []).includes(userId);
+  return (
+    isBootstrapSuperAdmin(profile, userId) ||
+    (await accessStore.hasActivePrincipal(profile.name, "admin", userId))
+  );
+}
+
+function isBootstrapSuperAdmin(profile: BotProfileConfig, userId: string | undefined): boolean {
+  if (!userId) {
+    return false;
+  }
+  return profile.adminUserId === userId || (profile.adminUserIds ?? []).includes(userId);
+}
+
+async function isDirectUserAllowed(
+  profile: BotProfileConfig,
+  userId: string | undefined,
+  accessStore: AccessStore
+): Promise<boolean> {
+  if (!userId) {
+    return false;
+  }
+  return (
+    directAccessPolicy(profile) === "public" ||
+    isAllowedId(profile.allowedUserIds, userId) ||
+    isBootstrapSuperAdmin(profile, userId) ||
+    (await accessStore.hasActivePrincipal(profile.name, "admin", userId)) ||
+    (await accessStore.hasActivePrincipal(profile.name, "user", userId))
+  );
+}
+
+async function isGroupAllowed(
+  profile: BotProfileConfig,
+  groupId: string | undefined,
+  accessStore: AccessStore
+): Promise<boolean> {
+  if (!groupId) {
+    return false;
+  }
+  return (
+    isAllowedId(profile.allowedGroupIds, groupId) ||
+    (await accessStore.hasActivePrincipal(profile.name, "group", groupId))
+  );
+}
+
+function directAccessPolicy(profile: BotProfileConfig) {
+  return profile.directAccessPolicy ?? (profile.allowDirectUser ? "managed" : "blocked");
+}
+
+function groupAccessPolicy(profile: BotProfileConfig) {
+  return profile.groupAccessPolicy ?? (profile.allowedGroupIds.length > 0 ? "managed" : "blocked");
+}
+
+function parsePositiveInt(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function messageTypeAllowed(profile: BotProfileConfig, event: LineEvent): boolean {

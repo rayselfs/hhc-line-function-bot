@@ -70,9 +70,114 @@ describe("config", () => {
     });
 
     expect(config.profiles[0]).toMatchObject({
+      adminUserId: "Uadmin",
       adminUserIds: ["Uadmin"],
       adminDirectOnly: true
     });
+  });
+
+  it("loads a single bootstrap admin user id", () => {
+    const config = loadConfigFromEnv({
+      BOT_PROFILES_JSON: JSON.stringify([
+        {
+          name: "helper",
+          webhookPath: "/line/helper/webhook",
+          channelSecret: "secret",
+          channelAccessToken: "token",
+          enabledFunctions: ["query_service_schedule"],
+          adminUserId: "Uadmin"
+        }
+      ])
+    });
+
+    expect(config.profiles[0]).toMatchObject({
+      adminUserId: "Uadmin",
+      adminUserIds: ["Uadmin"]
+    });
+  });
+
+  it("rejects multiple legacy admin user ids", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            adminUserIds: ["U1", "U2"]
+          }
+        ])
+      })
+    ).toThrow("Only one bootstrap adminUserId is supported");
+  });
+
+  it("loads profile access policy and registration settings", () => {
+    const config = loadConfigFromEnv({
+      BOT_PROFILES_JSON: JSON.stringify([
+        {
+          name: "helper",
+          webhookPath: "/line/helper/webhook",
+          channelSecret: "secret",
+          channelAccessToken: "token",
+          directAccessPolicy: "managed",
+          groupAccessPolicy: "managed",
+          registration: {
+            enabled: true,
+            inviteCodeRequired: true
+          }
+        }
+      ]),
+      DATABASE_URL: "postgres://localhost/test",
+      ACCESS_INVITE_CODE_SECRET: "secret"
+    });
+
+    expect(config.profiles[0]).toMatchObject({
+      directAccessPolicy: "managed",
+      groupAccessPolicy: "managed",
+      registration: {
+        enabled: true,
+        inviteCodeRequired: true
+      }
+    });
+    expect(config.database).toMatchObject({
+      url: "postgres://localhost/test",
+      ssl: false
+    });
+    expect(config.access).toMatchObject({ inviteCodeSecret: "secret" });
+  });
+
+  it("rejects registration without PostgreSQL", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            registration: { enabled: true, inviteCodeRequired: false }
+          }
+        ])
+      })
+    ).toThrow("DATABASE_URL is required when profile registration is enabled");
+  });
+
+  it("rejects invite-code registration without a secret", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            registration: { enabled: true, inviteCodeRequired: true }
+          }
+        ]),
+        DATABASE_URL: "postgres://localhost/test"
+      })
+    ).toThrow("ACCESS_INVITE_CODE_SECRET is required");
   });
 
   it("coerces numeric Ollama keep_alive values from environment strings", () => {

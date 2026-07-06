@@ -20,8 +20,17 @@ const profileSchema = z.object({
   wakeKeywords: z.array(z.string()).default([]),
   acceptMention: z.boolean().default(true),
   enabledFunctions: z.array(z.enum(FUNCTION_NAMES)).default([]),
+  adminUserId: z.string().optional(),
   adminUserIds: z.array(z.string()).default([]),
-  adminDirectOnly: z.boolean().default(true)
+  adminDirectOnly: z.boolean().default(true),
+  directAccessPolicy: z.enum(["managed", "public", "blocked"]).optional(),
+  groupAccessPolicy: z.enum(["managed", "blocked"]).optional(),
+  registration: z
+    .object({
+      enabled: z.boolean().default(false),
+      inviteCodeRequired: z.boolean().default(true)
+    })
+    .default({ enabled: false, inviteCodeRequired: true })
 });
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
@@ -33,6 +42,8 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   );
   assertCompleteGroup(env, graphRequiredKeys, "Incomplete Graph configuration");
   assertCompleteGroup(env, notionRequiredKeys, "Incomplete Notion configuration");
+  const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile));
+  validateAccessConfig(normalizedProfiles, env);
 
   return {
     serviceName: env.SERVICE_NAME || "hhc-line-function-bot",
@@ -41,7 +52,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
     timeZone: readTimeZone(env.TIME_ZONE),
     healthPath: env.HEALTH_PATH || "/healthz",
     maxBodyBytes: readInt(env.MAX_BODY_BYTES, 262_144),
-    profiles: profiles.map((profile) => ({
+    profiles: normalizedProfiles.map((profile) => ({
       ...profile,
       enabledFunctions: profile.enabledFunctions as FunctionName[]
     })),
@@ -102,6 +113,15 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
           keyPrefix: env.REDIS_KEY_PREFIX || "hhc-line-function-bot"
         }
       : undefined,
+    database: env.DATABASE_URL?.trim()
+      ? {
+          url: env.DATABASE_URL,
+          ssl: readBool(env.DATABASE_SSL, false)
+        }
+      : undefined,
+    access: {
+      inviteCodeSecret: env.ACCESS_INVITE_CODE_SECRET?.trim() || undefined
+    },
     rateLimit: {
       enabled: readBool(env.RATE_LIMIT_ENABLED, true),
       windowMs: readInt(env.RATE_LIMIT_WINDOW_MS, 60_000),
@@ -111,6 +131,46 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       maxEntries: readInt(env.LAST_ERRORS_MAX_ENTRIES, 20)
     }
   };
+}
+
+type ParsedProfile = z.infer<typeof profileSchema>;
+
+function normalizeProfile(profile: ParsedProfile): ParsedProfile {
+  if (profile.adminUserIds.length > 1) {
+    throw new Error("Only one bootstrap adminUserId is supported per profile");
+  }
+  const legacyAdminUserId = profile.adminUserIds[0];
+  if (profile.adminUserId && legacyAdminUserId && profile.adminUserId !== legacyAdminUserId) {
+    throw new Error("adminUserId and adminUserIds[0] must match");
+  }
+  const adminUserId = profile.adminUserId ?? legacyAdminUserId;
+  return {
+    ...profile,
+    adminUserId,
+    adminUserIds: adminUserId ? [adminUserId] : [],
+    directAccessPolicy:
+      profile.directAccessPolicy ?? (profile.allowDirectUser ? "managed" : "blocked"),
+    groupAccessPolicy:
+      profile.groupAccessPolicy ?? (profile.allowedGroupIds.length > 0 ? "managed" : "blocked")
+  };
+}
+
+function validateAccessConfig(profiles: ParsedProfile[], env: NodeJS.ProcessEnv): void {
+  const registrationProfiles = profiles.filter((profile) => profile.registration.enabled);
+  if (registrationProfiles.length === 0) {
+    return;
+  }
+  if (!env.DATABASE_URL?.trim()) {
+    throw new Error("DATABASE_URL is required when profile registration is enabled");
+  }
+  if (
+    registrationProfiles.some((profile) => profile.registration.inviteCodeRequired) &&
+    !env.ACCESS_INVITE_CODE_SECRET?.trim()
+  ) {
+    throw new Error(
+      "ACCESS_INVITE_CODE_SECRET is required when invite-code registration is enabled"
+    );
+  }
 }
 
 const graphRequiredKeys = [

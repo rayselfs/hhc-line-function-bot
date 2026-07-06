@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { hashInviteCode } from "../access/invite-code.js";
+import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
 import type {
@@ -71,6 +73,68 @@ function signedHeaders(body: string, secret: string) {
   return {
     "content-type": "application/json",
     "x-line-signature": signLineBody(Buffer.from(body), secret)
+  };
+}
+
+function accessConfig(): AppConfig {
+  return {
+    serviceName: "hhc-line-function-bot",
+    host: "127.0.0.1",
+    port: 3000,
+    timeZone: "Asia/Taipei",
+    healthPath: "/healthz",
+    maxBodyBytes: 32_768,
+    profiles: [
+      {
+        name: "helper",
+        webhookPath: "/line/helper/webhook",
+        channelSecret: "helper-secret",
+        channelAccessToken: "helper-token",
+        allowedGroupIds: [],
+        allowedUserIds: [],
+        allowDirectUser: true,
+        allowRooms: false,
+        allowedMessageTypes: ["text"],
+        groupRequireWakeWord: true,
+        wakeKeywords: ["小哈"],
+        acceptMention: true,
+        enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+        adminUserId: "Uroot",
+        adminUserIds: ["Uroot"],
+        adminDirectOnly: true,
+        directAccessPolicy: "managed",
+        groupAccessPolicy: "managed",
+        registration: { enabled: true, inviteCodeRequired: true }
+      },
+      {
+        name: "main",
+        webhookPath: "/line/main-public/webhook",
+        channelSecret: "main-secret",
+        channelAccessToken: "main-token",
+        allowedGroupIds: [],
+        allowedUserIds: [],
+        allowDirectUser: true,
+        allowRooms: false,
+        allowedMessageTypes: ["text"],
+        groupRequireWakeWord: false,
+        wakeKeywords: [],
+        acceptMention: true,
+        enabledFunctions: ["query_service_schedule"],
+        adminUserId: "Uroot",
+        adminUserIds: ["Uroot"],
+        adminDirectOnly: true,
+        directAccessPolicy: "public",
+        groupAccessPolicy: "blocked",
+        registration: { enabled: false, inviteCodeRequired: true }
+      }
+    ],
+    llm: {
+      ollamaBaseUrl: "http://127.0.0.1:11434",
+      ollamaModel: "qwen3:4b-instruct",
+      timeoutMs: 8000,
+      keywordFallbackEnabled: true
+    },
+    access: { inviteCodeSecret: "invite-secret" }
   };
 }
 
@@ -773,6 +837,266 @@ describe("LINE entrance", () => {
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
     expect(replyText).toHaveBeenCalledWith("reply-token", "你沒有權限使用 admin 指令。", undefined);
+  });
+
+  it("prompts managed direct users to register before routing", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore: new InMemoryAccessStore(),
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Unew" },
+      message: { type: "text", text: "小哈 查服事表" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("尚未開通");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/register");
+  });
+
+  it("creates a pending registration request through an invite code", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore({
+      inviteCodes: [
+        {
+          id: "invite-1",
+          profileName: "helper",
+          codeHash: hashInviteCode("HHCTEST", "invite-secret"),
+          maxUses: 10,
+          usedCount: 0,
+          expiresAt: undefined,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          createdBy: "Uroot",
+          disabledAt: undefined
+        }
+      ]
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Unew" },
+      message: { type: "text", text: "/register HHCTEST Ray" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("已送出申請");
+    await expect(accessStore.countPendingRequests("helper")).resolves.toBe(1);
+  });
+
+  it("lets admins create invite codes without storing the plain code", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const createBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/invite-code-create HELLO 3 7" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(createBody, "helper-secret"),
+      payload: createBody
+    });
+
+    const registerBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Unew" },
+      message: { type: "text", text: "/register HELLO Ray" }
+    });
+    const registerRes = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(registerBody, "helper-secret"),
+      payload: registerBody
+    });
+
+    expect(registerRes.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("Invite code created");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("HELLO");
+    expect(replyText.mock.calls[1]?.[1]).toContain("已送出申請");
+    await expect(accessStore.countPendingRequests("helper")).resolves.toBe(1);
+  });
+
+  it("lets an admin review and approve pending registration requests", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const { request } = await accessStore.createAccessRequest({
+      profileName: "helper",
+      sourceType: "user",
+      sourceId: "Unew",
+      displayName: "Ray",
+      requestedBy: "Unew"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const listBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/access-requests" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(listBody, "helper-secret"),
+      payload: listBody
+    });
+
+    const approveBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: `/access-approve ${request.id}` }
+    });
+    const approveRes = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(approveBody, "helper-secret"),
+      payload: approveBody
+    });
+
+    expect(approveRes.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain(request.id);
+    expect(replyText.mock.calls[1]?.[1]).toContain("已核准");
+    await expect(accessStore.hasActivePrincipal("helper", "user", "Unew")).resolves.toBe(true);
+  });
+
+  it("allows public direct profiles without static allowlists and blocks their groups", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore: new InMemoryAccessStore(),
+      createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
+    });
+
+    const directBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uany" },
+      message: { type: "text", text: "查服事表" }
+    });
+    const directRes = await app.inject({
+      method: "POST",
+      url: "/line/main-public/webhook",
+      headers: signedHeaders(directBody, "main-secret"),
+      payload: directBody
+    });
+
+    const groupBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "group", groupId: "Cblocked", userId: "Uany" },
+      message: { type: "text", text: "查服事表" }
+    });
+    const groupRes = await app.inject({
+      method: "POST",
+      url: "/line/main-public/webhook",
+      headers: signedHeaders(groupBody, "main-secret"),
+      payload: groupBody
+    });
+
+    expect(directRes.statusCode).toBe(200);
+    expect(groupRes.statusCode).toBe(200);
+    expect(groupRes.json()).toMatchObject({ ok: true, ignored: true, reason: "group_blocked" });
+    expect(route).toHaveBeenCalledOnce();
+  });
+
+  it("limits admin management to the single bootstrap superadmin", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    await accessStore.addPrincipal({
+      profileName: "helper",
+      type: "admin",
+      principalId: "Uadmin2",
+      createdBy: "Uroot"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const deniedBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uadmin2" },
+      message: { type: "text", text: "/admin-add Unewadmin" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(deniedBody, "helper-secret"),
+      payload: deniedBody
+    });
+
+    const allowedBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/admin-add Unewadmin" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(allowedBody, "helper-secret"),
+      payload: allowedBody
+    });
+
+    expect(replyText.mock.calls[0]?.[1]).toContain("只有 superadmin");
+    expect(replyText.mock.calls[1]?.[1]).toContain("已加入 admin");
+    await expect(accessStore.hasActivePrincipal("helper", "admin", "Unewadmin")).resolves.toBe(
+      true
+    );
   });
 
   it("blocks non-text messages until the profile explicitly allows them", async () => {

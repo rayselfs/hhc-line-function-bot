@@ -15,7 +15,8 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
 - Optional Redis backend for sessions, cache, recent errors, and rate limiting.
-- Direct-chat admin commands for configured admin LINE user ids.
+- Per-profile access policy with PostgreSQL-backed user/group/admin registration.
+- Direct-chat admin commands for a single bootstrap `adminUserId` plus DB-managed admins.
 - Function handlers:
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
   - `query_service_schedule`: queries Notion with env-configured property mapping.
@@ -52,8 +53,11 @@ Each profile controls:
 - LINE channel secret and access token.
 - Webhook path.
 - Allowed LINE group/user ids.
+- Direct and group access policy.
+- Optional registration flow.
 - Wake keywords and mention handling.
 - Enabled functions.
+- Single bootstrap superadmin user id.
 
 Example shape:
 
@@ -73,13 +77,46 @@ Example shape:
     "wakeKeywords": ["小哈"],
     "acceptMention": true,
     "enabledFunctions": ["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"],
-    "adminUserIds": ["PLACEHOLDER_ADMIN_USER_ID"],
-    "adminDirectOnly": true
+    "adminUserId": "PLACEHOLDER_SUPERADMIN_LINE_USER_ID",
+    "adminDirectOnly": true,
+    "directAccessPolicy": "managed",
+    "groupAccessPolicy": "managed",
+    "registration": {
+      "enabled": true,
+      "inviteCodeRequired": true
+    }
   }
 ]
 ```
 
 Use `*` in an allowlist only when you intentionally want to allow every id for that source type.
+
+`adminUserIds` is kept only for backward compatibility and may contain at most one id. Prefer `adminUserId`.
+
+## Access Control
+
+Profiles can choose separate policies for direct chat and groups:
+
+- `directAccessPolicy: "managed"`: only static allowlist users, DB users/admins, or the bootstrap superadmin can use functions. If `registration.enabled=true`, unknown direct users receive a registration prompt.
+- `directAccessPolicy: "public"`: any direct user can use the profile. This is suitable for a future official one-to-one bot.
+- `directAccessPolicy: "blocked"`: direct users are blocked except slash diagnostics such as `/whoami` and admin authorization checks.
+- `groupAccessPolicy: "managed"`: groups must be static allowlisted or added through DB access management.
+- `groupAccessPolicy: "blocked"`: group events are ignored.
+
+Registration is profile-scoped. The current intended split is:
+
+- `helper`: managed direct users, managed groups, invite-code registration enabled.
+- `main`: public direct users, groups blocked, registration disabled.
+
+When any profile enables registration, configure:
+
+```text
+DATABASE_URL=...
+DATABASE_SSL=true
+ACCESS_INVITE_CODE_SECRET=...
+```
+
+PostgreSQL tables are created on startup if they do not exist.
 
 ## Routing
 
@@ -115,10 +152,11 @@ Sheet music search uses a short-lived in-memory file index cache. Admins can cle
 /refresh-sheet-music-cache
 ```
 
-Admin commands use slash syntax and are gated by each profile's `adminUserIds`.
+Admin commands use slash syntax and are gated by each profile's bootstrap `adminUserId` or DB-managed admin principals.
 Available commands:
 
 - `/help-admin`
+- `/whoami`
 - `/status`
 - `/functions`
 - `/profile`
@@ -130,6 +168,20 @@ Available commands:
 - `/cache`
 - `/clear-sessions`
 - `/refresh-sheet-music-cache`
+- `/access-requests`
+- `/access-approve <requestId>`
+- `/access-deny <requestId>`
+- `/access-list`
+- `/allow-user-add <userId>`
+- `/allow-user-remove <userId>`
+- `/allow-group-add <groupId>`
+- `/allow-group-remove <groupId>`
+- `/register-this-group`
+- `/invite-code-create <code> [maxUses] [expiresDays]`
+- `/invite-code-list`
+- `/invite-code-disable <id>`
+- `/admin-add <userId>`
+- `/admin-remove <userId>`
 
 `/help-admin` lists built-in admin commands and registered function-module admin handlers. `/admin-help` and `/commands` are aliases. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/llm-status` probes Ollama from inside the running app process with `/api/tags` and a minimal `/api/chat` call, without echoing the full base URL.
 
@@ -165,6 +217,8 @@ Do not commit real `.env` files. In Azure Container Apps, store runtime values i
 - LINE channel secrets and tokens inside the profile JSON
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
+- `DATABASE_URL`
+- `ACCESS_INVITE_CODE_SECRET`
 - `REDIS_URL` when using multi-replica or restart-tolerant state
 
 ## Governance

@@ -1,6 +1,8 @@
 import { createOllamaProvider } from "./clients/ollama.js";
+import { createAccessStore } from "./access/create-access-store.js";
 import { createCacheStore } from "./cache/create-cache-store.js";
 import { loadConfigFromEnv } from "./config.js";
+import { createPostgresRuntime } from "./db/postgres.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
 import { createLastErrorStore } from "./observability/create-last-error-store.js";
@@ -25,6 +27,8 @@ const router = createFunctionRouter({
   keywordFallbackEnabled: config.llm.keywordFallbackEnabled
 });
 const redis = await createRedisRuntime(config.redis);
+const postgres = await createPostgresRuntime(config.database);
+const accessStore = await createAccessStore({ db: postgres?.pool });
 const sessionStore = createSessionStore({ redis });
 const cache = createCacheStore({ redis });
 const lastErrorStore = createLastErrorStore({
@@ -44,6 +48,7 @@ const app = createApp(config, {
   adminHandlers: registries.adminHandlers,
   lastErrorStore,
   rateLimiter,
+  accessStore,
   routeObserver: createConsoleRouteObserver()
 });
 
