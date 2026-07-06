@@ -352,6 +352,12 @@ describe("LINE entrance", () => {
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
+    expect(replyText.mock.calls[0]?.[1]).toContain("教會同工小幫手");
+    expect(replyText.mock.calls[0]?.[1]).toContain("聚會或詩歌需要的投影片");
+    expect(replyText.mock.calls[0]?.[1]).toContain("近期聚會的服事安排");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("OneDrive");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("Notion");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("下載連結");
     expect(replyText.mock.calls[0]?.[1]).toContain("查投影片");
     expect(replyText.mock.calls[0]?.[1]).toContain("查服事表");
     expect(replyText).toHaveBeenCalledWith(
@@ -390,6 +396,40 @@ describe("LINE entrance", () => {
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
+  });
+
+  it("introduces sheet music lookup without exposing storage details", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = [
+      "find_ppt_slides",
+      "query_service_schedule",
+      "find_pop_sheet_music"
+    ];
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "小哈" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("流行歌曲樂譜");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("OneDrive");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("下載連結");
   });
 
   it("denies slash admin commands from groups when direct-only admin is enabled", async () => {
