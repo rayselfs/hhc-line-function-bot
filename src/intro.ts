@@ -81,7 +81,10 @@ function normalizeIntroText(value: string): string {
 }
 
 function formatGreetingLine(value: string | undefined): string | undefined {
-  const greeting = value?.normalize("NFKC").trim().replace(/[!！。.\s]+$/g, "");
+  const greeting = value
+    ?.normalize("NFKC")
+    .trim()
+    .replace(/[!！。.\s]+$/g, "");
   if (!greeting) {
     return undefined;
   }

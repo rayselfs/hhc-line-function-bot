@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AccessAuditInput,
+  AccessAuditEvent,
   AccessInviteCode,
   AccessPrincipal,
   AccessPrincipalType,
@@ -26,7 +27,7 @@ export class InMemoryAccessStore implements AccessStore {
   private readonly principals = new Map<string, AccessPrincipal>();
   private readonly inviteCodes = new Map<string, AccessInviteCode>();
   private readonly requests = new Map<string, AccessRequest>();
-  readonly audit: AccessAuditInput[] = [];
+  readonly audit: AccessAuditEvent[] = [];
 
   constructor(options: InMemoryAccessStoreOptions = {}) {
     for (const principal of options.principals ?? []) {
@@ -262,6 +263,22 @@ export class InMemoryAccessStore implements AccessStore {
   }
 
   async recordAudit(input: AccessAuditInput): Promise<void> {
-    this.audit.push({ ...input });
+    this.audit.unshift({
+      id: randomUUID(),
+      profileName: input.profileName,
+      actorUserId: input.actorUserId,
+      action: input.action,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      metadata: input.metadata,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  async listAuditEvents(profileName: string, limit: number): Promise<AccessAuditEvent[]> {
+    return this.audit
+      .filter((event) => event.profileName === profileName)
+      .slice(0, limit)
+      .map((event) => ({ ...event }));
   }
 }

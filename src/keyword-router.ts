@@ -106,7 +106,10 @@ function extractIntroFallback(text: string): { greeting?: string } | undefined {
 }
 
 function normalizeIntroFallbackText(value: string): string {
-  return value.normalize("NFKC").trim().replace(/[!！。.\s]+$/g, "");
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/[!！。.\s]+$/g, "");
 }
 
 function matchGreeting(value: string): string | undefined {

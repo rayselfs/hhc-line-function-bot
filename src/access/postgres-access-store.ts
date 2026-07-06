@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AccessAuditInput,
+  AccessAuditEvent,
   AccessInviteCode,
   AccessPrincipal,
   AccessPrincipalType,
@@ -332,6 +333,20 @@ export class PostgresAccessStore implements AccessStore {
       ]
     );
   }
+
+  async listAuditEvents(profileName: string, limit: number): Promise<AccessAuditEvent[]> {
+    const result = await this.db.query(
+      `
+      select *
+      from access_audit_events
+      where profile_name = $1
+      order by created_at desc
+      limit $2
+      `,
+      [profileName, limit]
+    );
+    return result.rows.map(mapAuditEvent);
+  }
 }
 
 function mapPrincipal(row: Record<string, unknown>): AccessPrincipal {
@@ -377,6 +392,19 @@ function mapRequest(row: Record<string, unknown>): AccessRequest {
   };
 }
 
+function mapAuditEvent(row: Record<string, unknown>): AccessAuditEvent {
+  return {
+    id: String(row.id),
+    profileName: String(row.profile_name),
+    actorUserId: String(row.actor_user_id),
+    action: String(row.action),
+    targetType: optionalString(row.target_type),
+    targetId: optionalString(row.target_id),
+    metadata: jsonRecord(row.metadata),
+    createdAt: toIso(row.created_at)
+  };
+}
+
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -387,6 +415,12 @@ function optionalNumber(value: unknown): number | undefined {
 
 function optionalIso(value: unknown): string | undefined {
   return value ? toIso(value) : undefined;
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function toIso(value: unknown): string {

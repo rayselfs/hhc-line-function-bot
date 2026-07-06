@@ -39,6 +39,17 @@ export interface AccessRequest {
   decidedBy?: string;
 }
 
+export interface AccessAuditEvent {
+  id: string;
+  profileName: string;
+  actorUserId: string;
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface AddPrincipalInput {
   profileName: string;
   type: AccessPrincipalType;
@@ -124,4 +135,5 @@ export interface AccessStore {
   denyAccessRequest(input: DenyAccessRequestInput): Promise<AccessRequest | undefined>;
   countPendingRequests(profileName: string): Promise<number>;
   recordAudit(input: AccessAuditInput): Promise<void>;
+  listAuditEvents(profileName: string, limit: number): Promise<AccessAuditEvent[]>;
 }

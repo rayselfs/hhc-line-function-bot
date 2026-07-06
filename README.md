@@ -103,6 +103,14 @@ Registration is profile-scoped. The current intended split is:
 - `helper`: managed direct users, managed groups, invite-code registration enabled.
 - `main`: public direct users, groups blocked, registration disabled.
 
+Users and groups register with the same command:
+
+```text
+/register <inviteCode> <name>
+```
+
+In a direct chat this creates a pending user request. In a group this creates a pending group request. If an admin sends `/register <name>` from inside a group, the current group is opened immediately without a pending review.
+
 When any profile enables registration, configure:
 
 ```text
@@ -147,38 +155,39 @@ Sheet music search uses a short-lived in-memory file index cache. Admins can cle
 /refresh-sheet-music-cache
 ```
 
-Admin commands use slash syntax and are gated by each profile's bootstrap `adminUserId` or DB-managed admin principals.
-Available commands:
+Admin commands use slash syntax and are gated by each profile's bootstrap `adminUserId` or DB-managed admin principals. `/help-admin` lists common commands by group, and `/help-admin all` includes advanced and diagnostic commands.
 
-- `/help-admin`
-- `/whoami`
-- `/status`
-- `/functions`
-- `/profile`
-- `/route-test <text>`
-- `/llm-status`
-- `/last-errors`
-- `/last-routes`
-- `/sessions`
-- `/cache`
-- `/clear-sessions`
-- `/refresh-sheet-music-cache`
-- `/access-requests`
-- `/access-approve <requestId>`
-- `/access-deny <requestId>`
-- `/access-list`
-- `/allow-user-add <userId>`
-- `/allow-user-remove <userId>`
-- `/allow-group-add <groupId> [displayName]`
-- `/register-this-group [displayName]`
-- `/remove-group [groupId]`
-- `/invite-code-create <code> [maxUses] [expiresDays]`
-- `/invite-code-list`
-- `/invite-code-disable <id>`
-- `/admin-add <userId>`
-- `/admin-remove <userId>`
+Common commands:
 
-`/help-admin` lists built-in admin commands and registered function-module admin handlers. `/admin-help` and `/commands` are aliases. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/llm-status` probes Ollama from inside the running app process with `/api/tags` and a minimal `/api/chat` call, without echoing the full base URL.
+```text
+/access-requests [user|group]
+/access-approve <requestId>
+/access-deny <requestId>
+/access-list [user|group|admin]
+/user-remove <userId>
+/group-remove [groupId]
+/audit-list [limit]
+/whoami
+```
+
+Advanced commands:
+
+```text
+/user-add <userId> [name]
+/group-add <groupId> [name]
+/invite-code-create <code> [maxUses] [expiresDays]
+/invite-code-list
+/invite-code-disable <id>
+/admin-add <userId>
+/admin-remove <userId>
+/status
+/profile
+/route-test <text>
+/last-errors
+/last-routes
+```
+
+Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query.
 
 ## OneDrive And Graph
 

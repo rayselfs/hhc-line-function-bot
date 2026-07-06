@@ -426,7 +426,7 @@ describe("LINE entrance", () => {
     );
   });
 
-  it("lists built-in and registered slash admin commands through help-admin", async () => {
+  it("lists common grouped admin commands through help-admin", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createTestApp(testConfig(), {
@@ -453,19 +453,61 @@ describe("LINE entrance", () => {
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("Admin commands");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/status");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/profile");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/route-test <text>");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/last-errors");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/last-routes");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/refresh-sheet-music-cache");
-    expect(replyText.mock.calls[0]?.[1]).toContain("/remove-group [groupId]");
+    expect(replyText.mock.calls[0]?.[1]).toContain("申請審核");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/access-requests [user|group]");
+    expect(replyText.mock.calls[0]?.[1]).toContain("成員與群組");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/group-remove [groupId]");
+    expect(replyText.mock.calls[0]?.[1]).toContain("查詢");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/audit-list [limit]");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/help-admin all");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/status");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/route-test <text>");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/refresh-sheet-music-cache");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/remove-group");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("/allow-group-remove");
-    expect(replyText.mock.calls[0]?.[1]).not.toContain("/group-remove");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("/remove-this-group");
   });
 
-  it("lets an admin remove a group by id without the legacy allow command", async () => {
+  it("lists advanced grouped admin commands through help-admin all", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      adminHandlers: {
+        "refresh-sheet-music-cache": vi.fn()
+      },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/help-admin all" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("邀請碼");
+    expect(replyText.mock.calls[0]?.[1]).toContain(
+      "/invite-code-create <code> [maxUses] [expiresDays]"
+    );
+    expect(replyText.mock.calls[0]?.[1]).toContain("Superadmin");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/admin-add <userId>");
+    expect(replyText.mock.calls[0]?.[1]).toContain("診斷");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/route-test <text>");
+    expect(replyText.mock.calls[0]?.[1]).toContain("功能模組");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/refresh-sheet-music-cache");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/group-add <groupId> [name]");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/allow-group-add");
+  });
+
+  it("lets an admin remove a group by id through group-remove", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const accessStore = defaultAccessStore();
@@ -478,7 +520,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "reply-token",
       source: { type: "user", userId: "Uadmin" },
-      message: { type: "text", text: "/remove-group Cmain" }
+      message: { type: "text", text: "/group-remove Cmain" }
     });
 
     const res = await app.inject({
@@ -507,7 +549,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "reply-token",
       source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
-      message: { type: "text", text: "/remove-group" }
+      message: { type: "text", text: "/group-remove" }
     });
 
     const res = await app.inject({
@@ -523,7 +565,7 @@ describe("LINE entrance", () => {
     await expect(accessStore.hasActivePrincipal("main", "group", "Cmain")).resolves.toBe(false);
   });
 
-  it("stores an optional display name when registering the current group", async () => {
+  it("does not keep the old group registration command", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const accessStore = new InMemoryAccessStore();
@@ -548,9 +590,8 @@ describe("LINE entrance", () => {
 
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
-    await expect(accessStore.listPrincipals("main")).resolves.toMatchObject([
-      { type: "group", principalId: "Cnew", displayName: "影音同工群" }
-    ]);
+    expect(replyText.mock.calls[0]?.[1]).toContain("目前不支援");
+    await expect(accessStore.listPrincipals("main")).resolves.toEqual([]);
   });
 
   it("introduces available functions when a group user only calls the bot name", async () => {
@@ -1075,6 +1116,89 @@ describe("LINE entrance", () => {
     await expect(accessStore.countPendingRequests("helper")).resolves.toBe(1);
   });
 
+  it("creates a pending group registration request from an unregistered group", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore({
+      inviteCodes: [
+        {
+          id: "invite-1",
+          profileName: "helper",
+          codeHash: hashInviteCode("HHCGROUP", "invite-secret"),
+          maxUses: 10,
+          usedCount: 0,
+          expiresAt: undefined,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          createdBy: "Uroot",
+          disabledAt: undefined
+        }
+      ]
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cnew", userId: "Unew" },
+      message: { type: "text", text: "/register HHCGROUP 影音同工群" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("已送出申請");
+    await expect(accessStore.listPendingRequests("helper")).resolves.toMatchObject([
+      {
+        sourceType: "group",
+        sourceId: "Cnew",
+        displayName: "影音同工群",
+        requestedBy: "Unew"
+      }
+    ]);
+  });
+
+  it("lets an admin register the current group directly without an invite code", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cadmin", userId: "Uroot" },
+      message: { type: "text", text: "/register 影音同工群" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("已開通此群組");
+    await expect(accessStore.hasActivePrincipal("helper", "group", "Cadmin")).resolves.toBe(true);
+    await expect(accessStore.countPendingRequests("helper")).resolves.toBe(0);
+    expect(accessStore.audit).toMatchObject([
+      { action: "access.group.register_admin", targetType: "group", targetId: "Cadmin" }
+    ]);
+  });
+
   it("lets admins create invite codes without storing the plain code", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
@@ -1169,6 +1293,215 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[0]?.[1]).toContain(request.id);
     expect(replyText.mock.calls[1]?.[1]).toContain("已核准");
     await expect(accessStore.hasActivePrincipal("helper", "user", "Unew")).resolves.toBe(true);
+  });
+
+  it("filters pending access requests and attaches approve/deny postbacks", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    await accessStore.createAccessRequest({
+      profileName: "helper",
+      sourceType: "user",
+      sourceId: "Unew",
+      displayName: "Ray",
+      requestedBy: "Unew"
+    });
+    const { request } = await accessStore.createAccessRequest({
+      profileName: "helper",
+      sourceType: "group",
+      sourceId: "Cnew",
+      displayName: "影音同工群",
+      requestedBy: "Unew"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/access-requests group" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("group:Cnew");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("user:Unew");
+    expect(replyText.mock.calls[0]?.[2]).toMatchObject({
+      quickReplies: expect.arrayContaining([
+        expect.objectContaining({
+          label: "核准 1",
+          action: expect.objectContaining({
+            type: "postback",
+            data: `action=access_approve&requestId=${request.id}`
+          })
+        }),
+        expect.objectContaining({
+          label: "拒絕 1",
+          action: expect.objectContaining({
+            type: "postback",
+            data: `action=access_deny&requestId=${request.id}`
+          })
+        })
+      ])
+    });
+  });
+
+  it("approves access requests from admin postbacks", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const { request } = await accessStore.createAccessRequest({
+      profileName: "helper",
+      sourceType: "group",
+      sourceId: "Cnew",
+      displayName: "影音同工群",
+      requestedBy: "Unew"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "postback",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      postback: { data: `action=access_approve&requestId=${request.id}` }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("已核准 group:Cnew");
+    await expect(accessStore.hasActivePrincipal("helper", "group", "Cnew")).resolves.toBe(true);
+  });
+
+  it("denies access requests from admin postbacks", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const { request } = await accessStore.createAccessRequest({
+      profileName: "helper",
+      sourceType: "user",
+      sourceId: "Unew",
+      displayName: "Ray",
+      requestedBy: "Unew"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "postback",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      postback: { data: `action=access_deny&requestId=${request.id}` }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("已拒絕 user:Unew");
+    await expect(accessStore.countPendingRequests("helper")).resolves.toBe(0);
+    await expect(accessStore.hasActivePrincipal("helper", "user", "Unew")).resolves.toBe(false);
+  });
+
+  it("filters the access list by principal type", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    await accessStore.addPrincipal({
+      profileName: "helper",
+      type: "user",
+      principalId: "Uallowed",
+      displayName: "Ray",
+      createdBy: "Uroot"
+    });
+    await accessStore.addPrincipal({
+      profileName: "helper",
+      type: "group",
+      principalId: "Callowed",
+      displayName: "影音同工群",
+      createdBy: "Uroot"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/access-list group" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("group: Callowed");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("user: Uallowed");
+  });
+
+  it("lists recent access audit events with a capped limit", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    await accessStore.recordAudit({
+      profileName: "helper",
+      actorUserId: "Uroot",
+      action: "access.group.register_admin",
+      targetType: "group",
+      targetId: "Cnew"
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/audit-list 50" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("Audit events");
+    expect(replyText.mock.calls[0]?.[1]).toContain("access.group.register_admin");
+    expect(replyText.mock.calls[0]?.[1]).toContain("target=group:Cnew");
   });
 
   it("allows public direct profiles without static allowlists and blocks their groups", async () => {
