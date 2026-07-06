@@ -3,7 +3,7 @@ import { z } from "zod";
 import { parseFunctionArguments } from "./function-arguments.js";
 import { normalizeFunctionArguments } from "./functions/argument-normalization.js";
 import { getFunctionDefinitions } from "./functions/definitions.js";
-import { FUNCTION_NAMES, isFunctionName } from "./types.js";
+import { FUNCTION_NAMES, isFunctionName, isSystemActionName } from "./types.js";
 import type {
   ChatProvider,
   FunctionName,
@@ -129,6 +129,16 @@ function parseProviderDecision(
     };
   }
 
+  if (isSystemActionName(action)) {
+    return {
+      type: "respond",
+      action,
+      arguments: coerceFunctionArguments(parsed.data.arguments),
+      confidence: parsed.data.confidence,
+      provider
+    };
+  }
+
   if (!isFunctionName(action)) {
     return { type: "deny", reason: "unknown_action", provider };
   }
@@ -179,7 +189,11 @@ function buildRouterPrompt(enabledFunctions: FunctionName[]): string {
     "You are a strict JSON function router for a LINE bot.",
     "Return exactly one JSON object and no markdown.",
     'If the user request does not clearly match an enabled function, return {"action":"deny","reason":"not_matched"}.',
+    'If the user greets the bot, only calls the bot, asks what the bot can do, or asks for help/usage, return {"action":"introduce_bot","arguments":{"greeting":"<short greeting if present>"}}.',
+    "If the user both greets and requests an enabled function, choose the function instead of introduce_bot.",
     "Never invent a function name.",
+    "System actions:",
+    "- introduce_bot: controlled introduction/help response. Do not write the final reply text.",
     "Available functions:",
     available || "(none)"
   ].join("\n");

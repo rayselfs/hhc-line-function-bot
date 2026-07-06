@@ -393,9 +393,9 @@ async function handleWebhook(
       requestId,
       provider: route.provider,
       outcome: route.type,
-      action: route.type === "execute" ? route.action : undefined,
+      action: route.type === "execute" || route.type === "respond" ? route.action : undefined,
       reason: route.type === "deny" ? route.reason : undefined,
-      confidence: route.type === "execute" ? route.confidence : undefined,
+      confidence: route.type === "execute" || route.type === "respond" ? route.confidence : undefined,
       fallbackProvider: route.fallbackProvider,
       fallbackReason: route.fallbackReason,
       durationMs: elapsedMs(routeStartedAt)
@@ -408,13 +408,30 @@ async function handleWebhook(
       phase: "route",
       provider: route.provider,
       outcome: route.type,
-      action: route.type === "execute" ? route.action : undefined,
+      action: route.type === "execute" || route.type === "respond" ? route.action : undefined,
       reason: route.type === "deny" ? route.reason : undefined,
       fallbackProvider: route.fallbackProvider,
       fallbackReason: route.fallbackReason,
       ...(route.type === "execute" ? summarizeRouteArguments(route.arguments) : {}),
       durationMs: elapsedMs(routeStartedAt)
     });
+
+    if (route.type === "respond") {
+      if (route.action === "introduce_bot") {
+        const intro = createIntroReply(profile, event.message.text, {
+          force: true,
+          greeting: stringRouteArgument(route.arguments, "greeting")
+        });
+        await line.replyText(
+          event.replyToken,
+          intro?.replyText ?? messages.requestFailed,
+          intro?.quickReplies ? { quickReplies: intro.quickReplies } : undefined
+        );
+        continue;
+      }
+      await line.replyText(event.replyToken, messages.unsupported);
+      continue;
+    }
 
     if (route.type === "deny") {
       const quickReplies = buildFunctionQuickReplies(profile);
@@ -1216,6 +1233,20 @@ async function handleRouteTestCommand(
     };
   }
 
+  if (route.type === "respond") {
+    return {
+      ok: true,
+      replyText: [
+        "Route test",
+        "type: respond",
+        `provider: ${route.provider}`,
+        `action: ${route.action}`,
+        `arguments: ${JSON.stringify(route.arguments)}`,
+        ...formatFallbackDiagnostics(route)
+      ].join("\n")
+    };
+  }
+
   return {
     ok: true,
     replyText: [
@@ -1249,6 +1280,11 @@ function summarizeRouteArguments(args: JsonRecord): Pick<LastRouteRecord, "query
     query: typeof queryValue === "string" ? (queryValue.trim() ? "present" : "empty") : "missing",
     fileType: typeof fileTypeValue === "string" ? fileTypeValue : undefined
   };
+}
+
+function stringRouteArgument(args: JsonRecord, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function parseAdminCommand(text: string | undefined): ParsedAdminCommand | undefined {

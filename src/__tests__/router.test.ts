@@ -40,6 +40,36 @@ describe("function router", () => {
     });
   });
 
+  it("returns a controlled intro response when Qwen classifies a greeting", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "introduce_bot",
+        confidence: 0.92,
+        arguments: { greeting: "你好" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "你好",
+      enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toEqual({
+      type: "respond",
+      action: "introduce_bot",
+      provider: "ollama",
+      confidence: 0.92,
+      arguments: { greeting: "你好" }
+    });
+  });
+
   it("passes structured service schedule metadata from Qwen", async () => {
     const qwen = provider(
       JSON.stringify({
@@ -510,6 +540,31 @@ describe("function router", () => {
       action: "find_ppt_slides",
       provider: "keyword",
       arguments: { query: "奇異恩典" }
+    });
+  });
+
+  it("falls back to a controlled intro response when Qwen fails on a greeting", async () => {
+    const qwen = provider("not-json");
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "你好",
+      enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toEqual({
+      type: "respond",
+      action: "introduce_bot",
+      provider: "keyword",
+      fallbackProvider: "ollama",
+      fallbackReason: "invalid_json",
+      arguments: { greeting: "你好" }
     });
   });
 

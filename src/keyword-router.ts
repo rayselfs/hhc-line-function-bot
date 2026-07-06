@@ -24,6 +24,15 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
       );
 
       if (matches.length === 0) {
+        const intro = extractIntroFallback(text);
+        if (intro) {
+          return {
+            type: "respond",
+            action: "introduce_bot",
+            arguments: intro.greeting ? { greeting: intro.greeting } : {},
+            provider: "keyword"
+          };
+        }
         return { type: "deny", reason: "keyword_no_match", provider: "keyword" };
       }
 
@@ -81,4 +90,55 @@ function cleanupQuery(text: string, stripWords: string[]): string {
     result = result.replaceAll(word, " ");
   }
   return result.replace(/\s+/g, " ").trim();
+}
+
+function extractIntroFallback(text: string): { greeting?: string } | undefined {
+  const normalized = normalizeIntroFallbackText(text);
+  const withoutWake = normalized.replace(/^小哈[，,\s]*/i, "");
+  const greeting = matchGreeting(withoutWake) ?? matchGreeting(normalized);
+  if (greeting) {
+    return { greeting };
+  }
+  if (isIntroHelpText(normalized)) {
+    return {};
+  }
+  return undefined;
+}
+
+function normalizeIntroFallbackText(value: string): string {
+  return value.normalize("NFKC").trim().replace(/[!！。.\s]+$/g, "");
+}
+
+function matchGreeting(value: string): string | undefined {
+  const normalized = value.toLowerCase();
+  const greetings: Record<string, string> = {
+    你好: "你好",
+    嗨: "嗨",
+    hi: "Hi",
+    hello: "Hello",
+    hey: "Hey",
+    哈囉: "哈囉",
+    哈啰: "哈囉",
+    平安: "平安",
+    早安: "早安",
+    午安: "午安",
+    晚安: "晚安"
+  };
+  return greetings[normalized];
+}
+
+function isIntroHelpText(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return [
+    "小哈",
+    "help",
+    "功能",
+    "使用說明",
+    "小哈可以幹嘛",
+    "小哈可以做什麼",
+    "小哈你會什麼",
+    "小哈會什麼",
+    "你可以做什麼",
+    "你會什麼"
+  ].includes(normalized);
 }

@@ -6,6 +6,10 @@ export const FUNCTION_NAMES = [
 
 export type FunctionName = (typeof FUNCTION_NAMES)[number];
 
+export const SYSTEM_ACTION_NAMES = ["introduce_bot"] as const;
+
+export type SystemActionName = (typeof SYSTEM_ACTION_NAMES)[number];
+
 export type JsonRecord = Record<string, unknown>;
 
 export type DirectAccessPolicy = "managed" | "public" | "blocked";
@@ -162,6 +166,15 @@ export type RouteResult =
   | {
       type: "execute";
       action: FunctionName;
+      arguments: JsonRecord;
+      confidence?: number;
+      provider: "ollama" | "keyword";
+      fallbackProvider?: "ollama";
+      fallbackReason?: string;
+    }
+  | {
+      type: "respond";
+      action: SystemActionName;
       arguments: JsonRecord;
       confidence?: number;
       provider: "ollama" | "keyword";
@@ -350,4 +363,8 @@ export interface NotionDatabaseClient {
 
 export function isFunctionName(value: string): value is FunctionName {
   return (FUNCTION_NAMES as readonly string[]).includes(value);
+}
+
+export function isSystemActionName(value: string): value is SystemActionName {
+  return (SYSTEM_ACTION_NAMES as readonly string[]).includes(value);
 }

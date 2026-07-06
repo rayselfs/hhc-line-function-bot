@@ -5,7 +5,7 @@ export interface LastRouteRecord {
   sourceType: string;
   phase: "route" | "function";
   provider?: string;
-  outcome?: "execute" | "deny";
+  outcome?: "execute" | "respond" | "deny";
   action?: string;
   reason?: string;
   fallbackProvider?: string;

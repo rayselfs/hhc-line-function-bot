@@ -623,6 +623,45 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
   });
 
+  it("uses the router intro intent for direct greetings without falling through to deny", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "respond",
+      action: "introduce_bot",
+      provider: "ollama",
+      confidence: 0.92,
+      arguments: { greeting: "你好" }
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "你好" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "你好",
+        enabledFunctions: ["find_ppt_slides", "query_service_schedule"]
+      })
+    );
+    expect(replyText.mock.calls[0]?.[1]).toMatch(/^你好。\n我是小哈/);
+    expect(replyText.mock.calls[0]?.[1]).toContain("教會同工小幫手");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("目前不支援");
+  });
+
   it("introduces sheet music lookup without exposing storage details", async () => {
     const config = testConfig();
     config.profiles[0].enabledFunctions = [
