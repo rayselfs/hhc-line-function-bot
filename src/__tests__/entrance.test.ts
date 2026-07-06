@@ -280,6 +280,70 @@ describe("LINE entrance", () => {
     );
   });
 
+  it("introduces available functions when a group user only calls the bot name", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "小哈" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
+    expect(replyText.mock.calls[0]?.[1]).toContain("查投影片");
+    expect(replyText.mock.calls[0]?.[1]).toContain("查服事表");
+    expect(replyText).toHaveBeenCalledWith(
+      "reply-token",
+      expect.any(String),
+      expect.objectContaining({
+        quickReplies: expect.arrayContaining([
+          expect.objectContaining({ label: "查投影片" }),
+          expect.objectContaining({ label: "查服事表" })
+        ])
+      })
+    );
+  });
+
+  it("introduces available functions in direct chat when the user asks for help", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "help" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
+  });
+
   it("denies slash admin commands from groups when direct-only admin is enabled", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
@@ -340,6 +404,167 @@ describe("LINE entrance", () => {
       expect.objectContaining({ profile: expect.objectContaining({ name: "main" }) })
     );
     expect(replyText).toHaveBeenCalledWith("reply-token", "已重新整理流行歌譜 cache。", undefined);
+  });
+
+  it("reports profile diagnostics through slash admin profile", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/profile" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("Profile");
+    expect(replyText.mock.calls[0]?.[1]).toContain("name: main");
+    expect(replyText.mock.calls[0]?.[1]).toContain("source: user");
+  });
+
+  it("route-tests admin text without executing the selected function", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "query_service_schedule",
+      arguments: { query: "服事表" },
+      provider: "keyword"
+    });
+    const queryServiceSchedule = vi.fn().mockResolvedValue({
+      ok: true,
+      replyText: "should not run"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      functionRegistry: { query_service_schedule: queryServiceSchedule },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/route-test 小哈 查服事表" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "main",
+        text: "小哈 查服事表"
+      })
+    );
+    expect(queryServiceSchedule).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("Route test");
+    expect(replyText.mock.calls[0]?.[1]).toContain("action: query_service_schedule");
+    expect(replyText.mock.calls[0]?.[1]).toContain("provider: keyword");
+  });
+
+  it("records function errors with request ids and exposes them to slash admin last-errors", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "find_ppt_slides",
+      arguments: { query: "奇異恩典" },
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(testConfig(), {
+      router: { route },
+      functionRegistry: {
+        find_ppt_slides: vi.fn().mockRejectedValue(new Error("graph unavailable"))
+      },
+      requestIdFactory: () => "req-test-1",
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const userBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "小哈 查投影片 奇異恩典" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(userBody, "main-secret"),
+      payload: userBody
+    });
+
+    const adminBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/last-errors" }
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(adminBody, "main-secret"),
+      payload: adminBody
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[1]?.[1]).toContain("Last errors");
+    expect(replyText.mock.calls[1]?.[1]).toContain("req-test-1");
+    expect(replyText.mock.calls[1]?.[1]).toContain("find_ppt_slides");
+    expect(replyText.mock.calls[1]?.[1]).toContain("graph unavailable");
+  });
+
+  it("rate limits repeated events for the same profile and source before routing", async () => {
+    const config = testConfig();
+    config.rateLimit = { enabled: true, windowMs: 60_000, maxRequests: 1 };
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const event = {
+      type: "message",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "小哈 不支援" }
+    };
+
+    const firstBody = lineBody({ ...event, replyToken: "reply-token-1" });
+    const secondBody = lineBody({ ...event, replyToken: "reply-token-2" });
+    await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(firstBody, "main-secret"),
+      payload: firstBody
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(secondBody, "main-secret"),
+      payload: secondBody
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledOnce();
+    expect(replyText.mock.calls[1]?.[1]).toBe("你傳得太快了，請稍後再試。");
   });
 
   it("denies slash admin commands from non-admin direct users without routing", async () => {

@@ -11,19 +11,8 @@ import type {
   PostbackHandlerRegistry,
   TextMessageHandlerRegistry
 } from "../types.js";
-import {
-  createFindPptSlidesHandler,
-  createFindPptSlidesPostbackHandler,
-  createFindPptSlidesTextMessageHandler
-} from "./find-ppt-slides.js";
-import {
-  createFindPopSheetMusicHandler,
-  createFindPopSheetMusicPostbackHandler,
-  createFindPopSheetMusicTextMessageHandler,
-  SHEET_MUSIC_INDEX_CACHE_PREFIX
-} from "./find-pop-sheet-music.js";
+import { FUNCTION_MODULES } from "./modules.js";
 import { createPendingFunctionTextMessageHandler } from "./pending-function.js";
-import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
 
 export interface RegistryClients {
   graph?: GraphDriveClient;
@@ -51,77 +40,30 @@ export function createFunctionRegistries(
   const adminHandlers: AdminHandlerRegistry = {};
   const sessionStore = clients.sessionStore ?? new InMemorySessionStore();
   const cache = clients.cache ?? new MemoryCacheStore();
-  let usesSessionStore = false;
 
-  if (config.graph) {
-    const graph = clients.graph ?? createGraphDriveClient(config.graph);
-    usesSessionStore = true;
-    functions.find_ppt_slides = createFindPptSlidesHandler({
-      graph,
-      driveId: config.graph.driveId,
-      folderItemId: config.graph.pptFolderItemId,
-      allowedExtensions: config.graph.allowedExtensions,
-      defaultIncludePdf: config.graph.defaultIncludePdf,
+  const moduleContext = {
+    config,
+    clients: {
+      graph: config.graph ? (clients.graph ?? createGraphDriveClient(config.graph)) : undefined,
+      notion: config.notion
+        ? (clients.notion ?? createNotionDatabaseClient(config.notion))
+        : undefined,
       sessionStore,
-      now: clients.now,
-      requestIdFactory: clients.requestIdFactory
-    });
-    postbacks.select_ppt = createFindPptSlidesPostbackHandler({
-      graph,
-      sessionStore,
-      now: clients.now
-    });
-    textMessages.ppt_numeric_selection = createFindPptSlidesTextMessageHandler({
-      graph,
-      sessionStore,
-      now: clients.now
-    });
-    functions.find_pop_sheet_music = createFindPopSheetMusicHandler({
-      graph,
-      driveId: config.graph.driveId,
-      folderItemId: config.graph.sheetMusicFolderItemId,
-      folderPath: config.graph.sheetMusicFolderPath,
-      allowedExtensions: config.graph.sheetMusicAllowedExtensions,
-      recursive: config.graph.sheetMusicRecursive,
       cache,
-      sessionStore,
       now: clients.now,
       requestIdFactory: clients.requestIdFactory
-    });
-    postbacks.select_sheet_music = createFindPopSheetMusicPostbackHandler({
-      graph,
-      sessionStore,
-      now: clients.now
-    });
-    textMessages.sheet_music_numeric_selection = createFindPopSheetMusicTextMessageHandler({
-      graph,
-      sessionStore,
-      now: clients.now
-    });
-    adminHandlers["refresh-sheet-music-cache"] = async () => {
-      const removed = await cache.deleteByPrefix(SHEET_MUSIC_INDEX_CACHE_PREFIX);
-      return {
-        ok: true,
-        replyText: `已清除流行歌譜 cache（${removed} 筆），下次查詢會重新建立。`
-      };
-    };
+    }
+  };
+
+  for (const module of FUNCTION_MODULES) {
+    const registrations = module.register(moduleContext);
+    Object.assign(functions, registrations.functions);
+    Object.assign(postbacks, registrations.postbacks);
+    Object.assign(textMessages, registrations.textMessages);
+    Object.assign(adminHandlers, registrations.adminHandlers);
   }
 
-  if (config.notion) {
-    const notion = clients.notion ?? createNotionDatabaseClient(config.notion);
-    usesSessionStore = true;
-    functions.query_service_schedule = createQueryServiceScheduleHandler({
-      notion,
-      databaseId: config.notion.databaseId,
-      properties: config.notion.properties,
-      timeZone: config.timeZone,
-      sessionStore,
-      now: clients.now,
-      requestIdFactory: clients.requestIdFactory
-    });
-  }
-
-  if (usesSessionStore) {
+  if (Object.keys(functions).length > 0) {
     textMessages.pending_function_answer = createPendingFunctionTextMessageHandler({
       sessionStore,
       functions
@@ -139,8 +81,8 @@ export function createFunctionRegistries(
     ].join("\n")
   });
 
-  adminHandlers.sessions = () => {
-    const summary = sessionStore.summary();
+  adminHandlers.sessions = async () => {
+    const summary = await sessionStore.summary();
     const byType = Object.entries(summary.byType).map(([type, count]) => `- ${type}: ${count}`);
     return {
       ok: true,
@@ -152,8 +94,8 @@ export function createFunctionRegistries(
     };
   };
 
-  adminHandlers["clear-sessions"] = () => {
-    const removed = sessionStore.clear();
+  adminHandlers["clear-sessions"] = async () => {
+    const removed = await sessionStore.clear();
     return {
       ok: true,
       replyText: `已清除 session（${removed} 筆）。`

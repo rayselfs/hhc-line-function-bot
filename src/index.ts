@@ -1,10 +1,15 @@
 import { createOllamaProvider } from "./clients/ollama.js";
+import { createCacheStore } from "./cache/create-cache-store.js";
 import { loadConfigFromEnv } from "./config.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
+import { createLastErrorStore } from "./observability/create-last-error-store.js";
 import { createConsoleRouteObserver } from "./observability/route-observer.js";
+import { createRateLimiter } from "./rate-limit.js";
+import { createRedisRuntime } from "./redis.js";
 import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
+import { createSessionStore } from "./state/create-session-store.js";
 
 const config = loadConfigFromEnv(process.env);
 
@@ -19,13 +24,26 @@ const router = createFunctionRouter({
   keywordFallback: createKeywordFallbackRouter(),
   keywordFallbackEnabled: config.llm.keywordFallbackEnabled
 });
-const registries = createFunctionRegistries(config);
+const redis = await createRedisRuntime(config.redis);
+const sessionStore = createSessionStore({ redis });
+const cache = createCacheStore({ redis });
+const lastErrorStore = createLastErrorStore({
+  redis,
+  maxEntries: config.lastErrors?.maxEntries ?? 20
+});
+const rateLimiter = createRateLimiter({
+  redis,
+  config: config.rateLimit ?? { enabled: true, windowMs: 60_000, maxRequests: 20 }
+});
+const registries = createFunctionRegistries(config, { sessionStore, cache });
 const app = createApp(config, {
   router,
   functionRegistry: registries.functions,
   postbackHandlers: registries.postbacks,
   textMessageHandlers: registries.textMessages,
   adminHandlers: registries.adminHandlers,
+  lastErrorStore,
+  rateLimiter,
   routeObserver: createConsoleRouteObserver()
 });
 

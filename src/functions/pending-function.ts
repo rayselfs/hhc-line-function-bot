@@ -25,8 +25,10 @@ export interface PendingFunctionTextMessageOptions {
   functions: FunctionRegistry;
 }
 
-export function storePendingFunctionQuery(options: StorePendingFunctionOptions): void {
-  options.sessionStore.set({
+export async function storePendingFunctionQuery(
+  options: StorePendingFunctionOptions
+): Promise<void> {
+  await options.sessionStore.set({
     id: options.requestId,
     type: "pending_function",
     action: options.action,
@@ -42,16 +44,17 @@ export function createPendingFunctionTextMessageHandler(
   options: PendingFunctionTextMessageOptions
 ): TextMessageHandler {
   return {
-    matches: (request, context) =>
-      Boolean(request.text.trim()) && Boolean(findPendingFunction(options.sessionStore, context)),
+    matches: async (request, context) =>
+      Boolean(request.text.trim()) &&
+      Boolean(await findPendingFunction(options.sessionStore, context)),
 
     handle: async (request, context) => {
-      const pending = findPendingFunction(options.sessionStore, context);
+      const pending = await findPendingFunction(options.sessionStore, context);
       if (!pending) {
         return undefined;
       }
 
-      options.sessionStore.delete(pending.id);
+      await options.sessionStore.delete(pending.id);
 
       if (!context.profile.enabledFunctions.includes(pending.action)) {
         return { ok: true, replyText: messages.functionNotConfigured };

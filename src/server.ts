@@ -1,10 +1,19 @@
+import { randomUUID } from "node:crypto";
+
 import fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { createLineSdkReplyClient } from "./clients/line.js";
+import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
 import { messages } from "./messages.js";
+import {
+  formatLastErrors,
+  InMemoryLastErrorStore,
+  type LastErrorStore
+} from "./observability/last-error-store.js";
+import { InMemoryRateLimiter, type RateLimiter } from "./rate-limit.js";
 import type {
   AppConfig,
   AdminHandlerRegistry,
@@ -31,6 +40,9 @@ export interface AppDependencies {
   adminHandlers?: AdminHandlerRegistry;
   createLineReplyClient?: (profile: BotProfileConfig) => LineReplyClient;
   routeObserver?: RouteObserver;
+  requestIdFactory?: () => string;
+  lastErrorStore?: LastErrorStore;
+  rateLimiter?: RateLimiter;
 }
 
 interface AllowResult {
@@ -50,6 +62,14 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   });
   const functionRegistry = deps.functionRegistry ?? {};
   const createReplyClient = deps.createLineReplyClient ?? createLineSdkReplyClient;
+  const requestIdFactory = deps.requestIdFactory ?? randomUUID;
+  const lastErrorStore =
+    deps.lastErrorStore ?? new InMemoryLastErrorStore(config.lastErrors?.maxEntries ?? 20);
+  const rateLimiter =
+    deps.rateLimiter ??
+    new InMemoryRateLimiter(
+      config.rateLimit ?? { enabled: true, windowMs: 60_000, maxRequests: 20 }
+    );
 
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
@@ -83,7 +103,10 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         deps.textMessageHandlers ?? {},
         deps.adminHandlers ?? {},
         createReplyClient,
-        deps.routeObserver
+        deps.routeObserver,
+        requestIdFactory,
+        lastErrorStore,
+        rateLimiter
       );
     });
   }
@@ -101,7 +124,10 @@ async function handleWebhook(
   textMessageHandlers: TextMessageHandlerRegistry,
   adminHandlers: AdminHandlerRegistry,
   createReplyClient: (profile: BotProfileConfig) => LineReplyClient,
-  routeObserver?: RouteObserver
+  routeObserver: RouteObserver | undefined,
+  requestIdFactory: () => string,
+  lastErrorStore: LastErrorStore,
+  rateLimiter: RateLimiter
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -122,7 +148,7 @@ async function handleWebhook(
   const ignoredCounts = new Map<string, number>();
 
   for (const event of payload.events) {
-    const allow = allowEvent(profile, event, textMessageHandlers);
+    const allow = await allowEvent(profile, event, textMessageHandlers);
     if (allow.allowed) {
       allowedEvents.push(event);
     } else {
@@ -140,16 +166,19 @@ async function handleWebhook(
 
   const line = createReplyClient(profile);
   for (const event of allowedEvents) {
+    const requestId = requestIdFactory();
+
     if (event.type === "postback") {
       if (!event.replyToken) {
         continue;
       }
       const startedAt = Date.now();
-      const result = await handlePostbackEvent(event, profile, postbackHandlers);
+      const result = await handlePostbackEvent(event, profile, postbackHandlers, requestId);
       await emitRouteEvent(routeObserver, {
         kind: "postback",
         profileName: profile.name,
         sourceType: event.source.type,
+        requestId,
         action: parsePostbackData(event.postback?.data ?? "")?.action,
         ok: result.ok,
         durationMs: elapsedMs(startedAt)
@@ -170,19 +199,51 @@ async function handleWebhook(
       continue;
     }
 
+    const rateLimit = await rateLimiter.check({ profileName: profile.name, source: event.source });
+    if (!rateLimit.allowed) {
+      await line.replyText(event.replyToken, "你傳得太快了，請稍後再試。", undefined);
+      await emitRouteEvent(routeObserver, {
+        kind: "rate_limited",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        requestId,
+        ok: false
+      });
+      continue;
+    }
+
     if (isAdminCommand(event.message.text)) {
       const parsedAdminCommand = parseAdminCommand(event.message.text);
       const adminStartedAt = Date.now();
-      const adminResult = await handleAdminCommand(
-        event.message.text,
-        profile,
-        event,
-        adminHandlers
-      );
+      let adminResult: FunctionExecutionResult;
+      try {
+        adminResult = await handleAdminCommand(
+          event.message.text,
+          profile,
+          event,
+          adminHandlers,
+          router,
+          lastErrorStore,
+          requestId
+        );
+      } catch (error) {
+        await lastErrorStore.record({
+          requestId,
+          occurredAt: new Date().toISOString(),
+          profileName: profile.name,
+          sourceType: event.source.type,
+          phase: "admin",
+          command: parsedAdminCommand?.command,
+          errorName: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        adminResult = { ok: false, replyText: messages.requestFailed };
+      }
       await emitRouteEvent(routeObserver, {
         kind: "admin_command",
         profileName: profile.name,
         sourceType: event.source.type,
+        requestId,
         command: parsedAdminCommand?.command ?? "unknown",
         authorized: adminAllowed(profile, event),
         ok: adminResult.ok,
@@ -192,17 +253,32 @@ async function handleWebhook(
       continue;
     }
 
-    const textMessageHandler = matchingTextMessageHandler(event, profile, textMessageHandlers);
+    const intro = createIntroReply(profile, event.message.text);
+    if (intro) {
+      await line.replyText(
+        event.replyToken,
+        intro.replyText,
+        intro.quickReplies ? { quickReplies: intro.quickReplies } : undefined
+      );
+      continue;
+    }
+
+    const textMessageHandler = await matchingTextMessageHandler(
+      event,
+      profile,
+      textMessageHandlers
+    );
     if (textMessageHandler) {
       const handlerStartedAt = Date.now();
       const result = await textMessageHandler.handler.handle(
         { text: event.message.text },
-        { profile, event }
+        { profile, event, requestId }
       );
       await emitRouteEvent(routeObserver, {
         kind: "text_handler",
         profileName: profile.name,
         sourceType: event.source.type,
+        requestId,
         handler: textMessageHandler.name,
         ok: result?.ok,
         durationMs: elapsedMs(handlerStartedAt)
@@ -218,16 +294,32 @@ async function handleWebhook(
     }
 
     const routeStartedAt = Date.now();
-    const route = await router.route({
-      profileName: profile.name,
-      text: event.message.text,
-      enabledFunctions: profile.enabledFunctions,
-      source: event.source
-    });
+    let route;
+    try {
+      route = await router.route({
+        profileName: profile.name,
+        text: event.message.text,
+        enabledFunctions: profile.enabledFunctions,
+        source: event.source
+      });
+    } catch (error) {
+      await lastErrorStore.record({
+        requestId,
+        occurredAt: new Date().toISOString(),
+        profileName: profile.name,
+        sourceType: event.source.type,
+        phase: "router",
+        errorName: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      await line.replyText(event.replyToken, messages.requestFailed);
+      continue;
+    }
     await emitRouteEvent(routeObserver, {
       kind: "route",
       profileName: profile.name,
       sourceType: event.source.type,
+      requestId,
       provider: route.provider,
       outcome: route.type,
       action: route.type === "execute" ? route.action : undefined,
@@ -254,11 +346,12 @@ async function handleWebhook(
 
     const functionStartedAt = Date.now();
     try {
-      const result = await handler(route.arguments, { profile, event });
+      const result = await handler(route.arguments, { profile, event, requestId });
       await emitRouteEvent(routeObserver, {
         kind: "function_result",
         profileName: profile.name,
         sourceType: event.source.type,
+        requestId,
         action: route.action,
         ok: result.ok,
         durationMs: elapsedMs(functionStartedAt)
@@ -269,10 +362,21 @@ async function handleWebhook(
         result.quickReplies ? { quickReplies: result.quickReplies } : undefined
       );
     } catch (error) {
+      await lastErrorStore.record({
+        requestId,
+        occurredAt: new Date().toISOString(),
+        profileName: profile.name,
+        sourceType: event.source.type,
+        phase: "function",
+        action: route.action,
+        errorName: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error)
+      });
       await emitRouteEvent(routeObserver, {
         kind: "function_error",
         profileName: profile.name,
         sourceType: event.source.type,
+        requestId,
         action: route.action,
         ok: false,
         errorName: error instanceof Error ? error.name : typeof error,
@@ -292,7 +396,8 @@ async function handleWebhook(
 async function handlePostbackEvent(
   event: LineEvent,
   profile: BotProfileConfig,
-  postbackHandlers: PostbackHandlerRegistry
+  postbackHandlers: PostbackHandlerRegistry,
+  requestId: string
 ) {
   const request = parsePostbackData(event.postback?.data ?? "");
   if (!request) {
@@ -302,7 +407,7 @@ async function handlePostbackEvent(
   if (!handler) {
     return { ok: true, replyText: messages.postbackUnsupported };
   }
-  return handler(request, { profile, event });
+  return handler(request, { profile, event, requestId });
 }
 
 function parsePostbackData(data: string): PostbackRequest | null {
@@ -326,11 +431,11 @@ function parseWebhookPayload(body: Buffer): LineWebhookPayload | null {
   }
 }
 
-function allowEvent(
+async function allowEvent(
   profile: BotProfileConfig,
   event: LineEvent,
   textMessageHandlers: TextMessageHandlerRegistry
-): AllowResult {
+): Promise<AllowResult> {
   const eventType = event.type?.trim().toLowerCase();
   const sourceType = event.source?.type?.trim().toLowerCase();
 
@@ -360,7 +465,7 @@ function allowEvent(
       if (!profile.groupRequireWakeWord || matchesWakeRule(profile, event.message)) {
         return { allowed: true, reason: "group_wake_matched" };
       }
-      if (matchingTextMessageHandler(event, profile, textMessageHandlers)) {
+      if (await matchingTextMessageHandler(event, profile, textMessageHandlers)) {
         return { allowed: true, reason: "group_text_message_handler_matched" };
       }
       return { allowed: false, reason: "wake_word_missing" };
@@ -399,7 +504,10 @@ function handleAdminCommand(
   text: string,
   profile: BotProfileConfig,
   event: LineEvent,
-  adminHandlers: AdminHandlerRegistry
+  adminHandlers: AdminHandlerRegistry,
+  router: FunctionRouterPort,
+  lastErrorStore: LastErrorStore,
+  requestId: string
 ): Promise<FunctionExecutionResult> | FunctionExecutionResult {
   if (!adminAllowed(profile, event)) {
     return { ok: true, replyText: messages.adminUnauthorized };
@@ -422,12 +530,78 @@ function handleAdminCommand(
     };
   }
 
+  if (parsed.command === "profile") {
+    return {
+      ok: true,
+      replyText: [
+        "Profile",
+        `name: ${profile.name}`,
+        `source: ${event.source.type}`,
+        `functions: ${profile.enabledFunctions.join(", ") || "(none)"}`,
+        `adminDirectOnly: ${profile.adminDirectOnly !== false}`
+      ].join("\n")
+    };
+  }
+
+  if (parsed.command === "route-test") {
+    return handleRouteTestCommand(parsed.args, profile, event, router);
+  }
+
+  if (parsed.command === "last-errors") {
+    return lastErrorStore.list().then((errors) => ({
+      ok: true,
+      replyText: formatLastErrors(errors)
+    }));
+  }
+
   const handler = adminHandlers[parsed.command];
   if (handler) {
-    return handler({ profile, event, command: parsed.command, args: parsed.args });
+    return handler({ profile, event, command: parsed.command, args: parsed.args, requestId });
   }
 
   return { ok: true, replyText: "目前不支援這個 admin 指令。" };
+}
+
+async function handleRouteTestCommand(
+  args: string[],
+  profile: BotProfileConfig,
+  event: LineEvent,
+  router: FunctionRouterPort
+): Promise<FunctionExecutionResult> {
+  const text = args.join(" ").trim();
+  if (!text) {
+    return { ok: true, replyText: "Route test\n請提供要測試的文字。" };
+  }
+
+  const route = await router.route({
+    profileName: profile.name,
+    text,
+    enabledFunctions: profile.enabledFunctions,
+    source: event.source
+  });
+
+  if (route.type === "deny") {
+    return {
+      ok: true,
+      replyText: [
+        "Route test",
+        "type: deny",
+        `provider: ${route.provider}`,
+        `reason: ${route.reason}`
+      ].join("\n")
+    };
+  }
+
+  return {
+    ok: true,
+    replyText: [
+      "Route test",
+      "type: execute",
+      `provider: ${route.provider}`,
+      `action: ${route.action}`,
+      `arguments: ${JSON.stringify(route.arguments)}`
+    ].join("\n")
+  };
 }
 
 function parseAdminCommand(text: string | undefined): ParsedAdminCommand | undefined {
@@ -467,7 +641,7 @@ function messageTypeAllowed(profile: BotProfileConfig, event: LineEvent): boolea
   return profile.allowedMessageTypes.map((type) => type.toLowerCase()).includes(messageType);
 }
 
-function matchingTextMessageHandler(
+async function matchingTextMessageHandler(
   event: LineEvent,
   profile: BotProfileConfig,
   textMessageHandlers: TextMessageHandlerRegistry
@@ -477,7 +651,7 @@ function matchingTextMessageHandler(
     return undefined;
   }
   for (const [name, handler] of Object.entries(textMessageHandlers)) {
-    if (handler.matches({ text }, { profile, event })) {
+    if (await handler.matches({ text }, { profile, event })) {
       return { name, handler };
     }
   }

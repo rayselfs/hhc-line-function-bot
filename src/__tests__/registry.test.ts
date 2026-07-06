@@ -101,7 +101,7 @@ describe("function registry", () => {
     const cache = new MemoryCacheStore();
     const sessionStore = new InMemorySessionStore();
     await cache.set("sheet-music-index:drive-id:sheet-folder", [{ id: "1", name: "A.pdf" }], 1000);
-    sessionStore.set({
+    await sessionStore.set({
       id: "pending-1",
       type: "pending_function",
       action: "find_ppt_slides",

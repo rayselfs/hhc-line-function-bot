@@ -74,4 +74,59 @@ describe("config", () => {
       adminDirectOnly: true
     });
   });
+
+  it("loads Redis, rate limit, and last error settings", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      REDIS_URL: "redis://localhost:6379",
+      REDIS_KEY_PREFIX: "test-prefix",
+      RATE_LIMIT_ENABLED: "true",
+      RATE_LIMIT_WINDOW_MS: "30000",
+      RATE_LIMIT_MAX_REQUESTS: "5",
+      LAST_ERRORS_MAX_ENTRIES: "7"
+    });
+
+    expect(config.redis).toEqual({
+      url: "redis://localhost:6379",
+      keyPrefix: "test-prefix"
+    });
+    expect(config.rateLimit).toEqual({
+      enabled: true,
+      windowMs: 30_000,
+      maxRequests: 5
+    });
+    expect(config.lastErrors).toEqual({
+      maxEntries: 7
+    });
+  });
+
+  it("rejects duplicate webhook paths", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "main",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token"
+          },
+          {
+            name: "slides",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token"
+          }
+        ])
+      })
+    ).toThrow("Duplicate profile webhookPath");
+  });
+
+  it("rejects partial Graph configuration", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        ...baseEnv(),
+        GRAPH_TENANT_ID: "tenant"
+      })
+    ).toThrow("Incomplete Graph configuration");
+  });
 });

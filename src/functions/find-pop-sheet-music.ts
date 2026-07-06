@@ -6,7 +6,11 @@ import {
   type FindPopSheetMusicArguments
 } from "../function-arguments.js";
 import { buildPostbackQuickReply } from "../line-reply.js";
-import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
+import {
+  InMemorySessionStore,
+  type ConversationSession,
+  type SessionStore
+} from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 import type {
   DriveItem,
@@ -66,7 +70,7 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
     const rawQuery = args.query.trim();
 
     if (!rawQuery) {
-      storePendingFunctionQuery({
+      await storePendingFunctionQuery({
         sessionStore,
         requestId: requestIdFactory(),
         action: "find_pop_sheet_music",
@@ -117,7 +121,7 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
     }
 
     const requestId = requestIdFactory();
-    sessionStore.set({
+    await sessionStore.set({
       id: requestId,
       type: "selection",
       action: POSTBACK_ACTION,
@@ -171,7 +175,7 @@ export function createFindPopSheetMusicPostbackHandler(
     return selectSheetMusicCandidate({
       graph: options.graph,
       sessionStore: options.sessionStore,
-      session: options.sessionStore.get(request.params.requestId),
+      session: await options.sessionStore.get(request.params.requestId),
       selectedIndex,
       context,
       now: now()
@@ -185,17 +189,17 @@ export function createFindPopSheetMusicTextMessageHandler(
   const now = options.now ?? (() => new Date());
 
   return {
-    matches: (request, context) =>
+    matches: async (request, context) =>
       context.profile.enabledFunctions.includes("find_pop_sheet_music") &&
       numericSelectionToIndex(request.text) !== undefined &&
-      Boolean(findSheetMusicSelection(options.sessionStore, context)),
+      Boolean(await findSheetMusicSelection(options.sessionStore, context)),
 
     handle: async (request, context) => {
       const selectedIndex = numericSelectionToIndex(request.text);
       if (selectedIndex === undefined) {
         return undefined;
       }
-      const session = findSheetMusicSelection(options.sessionStore, context);
+      const session = await findSheetMusicSelection(options.sessionStore, context);
       if (!session) {
         return undefined;
       }
@@ -251,7 +255,7 @@ async function getCachedFileIndex(
 async function selectSheetMusicCandidate(options: {
   graph: GraphDriveClient;
   sessionStore: SessionStore;
-  session: ReturnType<SessionStore["get"]>;
+  session: ConversationSession | undefined;
   selectedIndex: number;
   context: FunctionHandlerContext;
   now: Date;
@@ -276,7 +280,7 @@ async function selectSheetMusicCandidate(options: {
     return { ok: true, replyText: invalidSelectionMessage ?? "這個選擇已失效，請重新查詢。" };
   }
 
-  sessionStore.delete(session.id);
+  await sessionStore.delete(session.id);
   return createSharingLinkReply(graph, item, now);
 }
 
@@ -352,7 +356,7 @@ function resolveSearchExtensions(
   }
 }
 
-function findSheetMusicSelection(sessionStore: SessionStore, context: TextMessageContext) {
+async function findSheetMusicSelection(sessionStore: SessionStore, context: TextMessageContext) {
   return sessionStore.findSelection({
     action: POSTBACK_ACTION,
     profileName: context.profile.name,

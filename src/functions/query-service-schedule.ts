@@ -54,7 +54,7 @@ export function createQueryServiceScheduleHandler(
     const args = queryServiceScheduleArgumentsSchema.parse(rawArgs);
 
     if (options.sessionStore && needsServiceScheduleClarification(args)) {
-      storePendingFunctionQuery({
+      await storePendingFunctionQuery({
         sessionStore: options.sessionStore,
         requestId: requestIdFactory(),
         action: "query_service_schedule",

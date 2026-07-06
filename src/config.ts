@@ -27,6 +27,12 @@ const profileSchema = z.object({
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   const profilesJson = readProfilesJson(env);
   const profiles = z.array(profileSchema).min(1).parse(JSON.parse(profilesJson));
+  assertUniqueValues(
+    profiles.map((profile) => profile.webhookPath),
+    "Duplicate profile webhookPath"
+  );
+  assertCompleteGroup(env, graphRequiredKeys, "Incomplete Graph configuration");
+  assertCompleteGroup(env, notionRequiredKeys, "Incomplete Notion configuration");
 
   return {
     serviceName: env.SERVICE_NAME || "hhc-line-function-bot",
@@ -89,8 +95,61 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
               person: env.NOTION_PERSON_PROPERTY
             }
           }
-        : undefined
+        : undefined,
+    redis: env.REDIS_URL?.trim()
+      ? {
+          url: env.REDIS_URL,
+          keyPrefix: env.REDIS_KEY_PREFIX || "hhc-line-function-bot"
+        }
+      : undefined,
+    rateLimit: {
+      enabled: readBool(env.RATE_LIMIT_ENABLED, true),
+      windowMs: readInt(env.RATE_LIMIT_WINDOW_MS, 60_000),
+      maxRequests: readInt(env.RATE_LIMIT_MAX_REQUESTS, 20)
+    },
+    lastErrors: {
+      maxEntries: readInt(env.LAST_ERRORS_MAX_ENTRIES, 20)
+    }
   };
+}
+
+const graphRequiredKeys = [
+  "GRAPH_TENANT_ID",
+  "GRAPH_CLIENT_ID",
+  "GRAPH_CLIENT_SECRET",
+  "GRAPH_DRIVE_ID",
+  "GRAPH_PPT_FOLDER_ITEM_ID"
+];
+
+const notionRequiredKeys = [
+  "NOTION_TOKEN",
+  "NOTION_SERVICE_DATABASE_ID",
+  "NOTION_DATE_PROPERTY",
+  "NOTION_MEETING_PROPERTY",
+  "NOTION_ROLE_PROPERTY",
+  "NOTION_PERSON_PROPERTY"
+];
+
+function assertUniqueValues(values: string[], message: string): void {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      throw new Error(`${message}: ${value}`);
+    }
+    seen.add(value);
+  }
+}
+
+function assertCompleteGroup(
+  env: NodeJS.ProcessEnv,
+  requiredKeys: string[],
+  message: string
+): void {
+  const present = requiredKeys.filter((key) => Boolean(env[key]?.trim()));
+  if (present.length > 0 && present.length !== requiredKeys.length) {
+    const missing = requiredKeys.filter((key) => !env[key]?.trim());
+    throw new Error(`${message}; missing ${missing.join(", ")}`);
+  }
 }
 
 function readProfilesJson(env: NodeJS.ProcessEnv): string {

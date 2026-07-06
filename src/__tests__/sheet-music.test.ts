@@ -229,7 +229,7 @@ describe("find_pop_sheet_music", () => {
         }
       }
     ]);
-    expect(sessionStore.get("sheet-req-1")).toMatchObject({
+    await expect(sessionStore.get("sheet-req-1")).resolves.toMatchObject({
       type: "selection",
       action: "select_sheet_music",
       items: [
@@ -247,7 +247,7 @@ describe("find_pop_sheet_music", () => {
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
     const sessionStore = new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 });
-    sessionStore.set({
+    await sessionStore.set({
       id: "sheet-req-1",
       type: "selection",
       action: "select_sheet_music",
@@ -294,7 +294,7 @@ describe("find_pop_sheet_music", () => {
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
     const sessionStore = new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 });
-    sessionStore.set({
+    await sessionStore.set({
       id: "sheet-req-1",
       type: "selection",
       action: "select_sheet_music",
@@ -310,7 +310,7 @@ describe("find_pop_sheet_music", () => {
       now: () => now
     });
 
-    expect(handleText.matches({ text: "1" }, handlerContext())).toBe(true);
+    await expect(handleText.matches({ text: "1" }, handlerContext())).resolves.toBe(true);
     const result = await handleText.handle({ text: "1" }, handlerContext());
 
     expect(result?.replyText).toContain("YESTERDAY.pdf");

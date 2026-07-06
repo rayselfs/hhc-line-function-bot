@@ -56,14 +56,14 @@ export interface PendingFunctionLookup extends PptSelectionLookup {
 }
 
 export interface SessionStore {
-  get(id: string): ConversationSession | undefined;
-  set(session: ConversationSession): void;
-  delete(id: string): void;
-  findPptSelection(lookup: PptSelectionLookup): PptSelectionSession | undefined;
-  findSelection(lookup: SelectionLookup): SelectionSession | undefined;
-  findPendingFunction(lookup: PendingFunctionLookup): PendingFunctionSession | undefined;
-  summary(): SessionStoreSummary;
-  clear(): number;
+  get(id: string): Promise<ConversationSession | undefined>;
+  set(session: ConversationSession): Promise<void>;
+  delete(id: string): Promise<void>;
+  findPptSelection(lookup: PptSelectionLookup): Promise<PptSelectionSession | undefined>;
+  findSelection(lookup: SelectionLookup): Promise<SelectionSession | undefined>;
+  findPendingFunction(lookup: PendingFunctionLookup): Promise<PendingFunctionSession | undefined>;
+  summary(): Promise<SessionStoreSummary>;
+  clear(): Promise<number>;
 }
 
 export interface InMemorySessionStoreOptions {
@@ -81,12 +81,12 @@ export class InMemorySessionStore implements SessionStore {
     this.ttlMs = options.ttlMs ?? 10 * 60 * 1000;
   }
 
-  get(id: string): ConversationSession | undefined {
+  async get(id: string): Promise<ConversationSession | undefined> {
     const session = this.sessions.get(id);
     return this.liveSession(session);
   }
 
-  findPptSelection(lookup: PptSelectionLookup): PptSelectionSession | undefined {
+  async findPptSelection(lookup: PptSelectionLookup): Promise<PptSelectionSession | undefined> {
     const liveSessions = Array.from(this.sessions.values())
       .map((session) => this.liveSession(session))
       .filter((session): session is PptSelectionSession => Boolean(session))
@@ -105,7 +105,7 @@ export class InMemorySessionStore implements SessionStore {
     )[0];
   }
 
-  findSelection(lookup: SelectionLookup): SelectionSession | undefined {
+  async findSelection(lookup: SelectionLookup): Promise<SelectionSession | undefined> {
     const liveSessions = Array.from(this.sessions.values())
       .map((session) => this.liveSession(session))
       .filter((session): session is SelectionSession => Boolean(session))
@@ -125,7 +125,9 @@ export class InMemorySessionStore implements SessionStore {
     )[0];
   }
 
-  findPendingFunction(lookup: PendingFunctionLookup): PendingFunctionSession | undefined {
+  async findPendingFunction(
+    lookup: PendingFunctionLookup
+  ): Promise<PendingFunctionSession | undefined> {
     const liveSessions = Array.from(this.sessions.values())
       .map((session) => this.liveSession(session))
       .filter((session): session is PendingFunctionSession => Boolean(session))
@@ -156,18 +158,18 @@ export class InMemorySessionStore implements SessionStore {
     return session;
   }
 
-  set(session: ConversationSession): void {
+  async set(session: ConversationSession): Promise<void> {
     this.sessions.set(session.id, {
       ...session,
       expiresAt: session.expiresAt || new Date(this.now().getTime() + this.ttlMs).toISOString()
     });
   }
 
-  delete(id: string): void {
+  async delete(id: string): Promise<void> {
     this.sessions.delete(id);
   }
 
-  summary(): SessionStoreSummary {
+  async summary(): Promise<SessionStoreSummary> {
     const byType: SessionStoreSummary["byType"] = {};
     const liveSessions = Array.from(this.sessions.values())
       .map((session) => this.liveSession(session))
@@ -183,7 +185,7 @@ export class InMemorySessionStore implements SessionStore {
     };
   }
 
-  clear(): number {
+  async clear(): Promise<number> {
     const count = this.sessions.size;
     this.sessions.clear();
     return count;

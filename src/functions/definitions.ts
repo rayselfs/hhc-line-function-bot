@@ -21,6 +21,7 @@ export interface FunctionDefinition {
     label: string;
     command: string;
   };
+  helpText: string;
   keywordFallback?: FunctionKeywordFallback;
 }
 
@@ -36,6 +37,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查投影片",
       command: "小哈 查投影片"
     },
+    helpText: "查 OneDrive 裡的投影片或 PDF，找到後回 1 天有效下載連結。",
     keywordFallback: {
       keywords: ["投影片", "ppt", "powerpoint", "slides"],
       stripWords: [...commonStripWords, "投影片", "ppt", "powerpoint", "slides", "pdf"],
@@ -51,6 +53,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查服事表",
       command: "小哈 查服事表"
     },
+    helpText: "查 Notion 上的聚會服事安排，例如下一場、本週、明天或主日。",
     keywordFallback: {
       keywords: ["服事表", "服事"],
       stripWords: [...commonStripWords]
@@ -65,6 +68,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查流行歌譜",
       command: "小哈 查流行歌譜"
     },
+    helpText: "查 OneDrive 裡的流行歌曲樂譜 PDF 或圖片，找到後回 1 天有效下載連結。",
     keywordFallback: {
       keywords: ["流行歌譜", "流行歌曲樂譜", "樂譜", "歌譜", "sheet music"],
       stripWords: [

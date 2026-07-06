@@ -253,7 +253,7 @@ describe("find_ppt_slides", () => {
       }
     ]);
     expect(graph.createSharingLink).not.toHaveBeenCalled();
-    expect(sessionStore.get("req-1")).toMatchObject({
+    await expect(sessionStore.get("req-1")).resolves.toMatchObject({
       type: "ppt_selection",
       requesterUserId: "U1",
       source: { type: "group", groupId: "Cgroup" },
@@ -272,7 +272,7 @@ describe("find_ppt_slides", () => {
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
     const sessionStore = new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 });
-    sessionStore.set({
+    await sessionStore.set({
       id: "req-1",
       type: "ppt_selection",
       profileName: "main",
@@ -322,7 +322,7 @@ describe("find_ppt_slides", () => {
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
     const sessionStore = new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 });
-    sessionStore.set({
+    await sessionStore.set({
       id: "req-1",
       type: "ppt_selection",
       profileName: "main",
@@ -350,7 +350,7 @@ describe("find_ppt_slides", () => {
       }
     };
 
-    expect(handleTextMessage.matches({ text: "2" }, context)).toBe(true);
+    await expect(handleTextMessage.matches({ text: "2" }, context)).resolves.toBe(true);
     const result = await handleTextMessage.handle({ text: "2" }, context);
 
     expect(result).toMatchObject({ ok: true });
@@ -381,7 +381,7 @@ describe("find_ppt_slides", () => {
       now: () => now
     });
 
-    expect(handleTextMessage.matches({ text: "1" }, handlerContext())).toBe(false);
+    await expect(handleTextMessage.matches({ text: "1" }, handlerContext())).resolves.toBe(false);
     const result = await handleTextMessage.handle({ text: "1" }, handlerContext());
 
     expect(result).toBeUndefined();

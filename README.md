@@ -13,6 +13,8 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Postback-based selection state for multi-result flows, currently used by PPT and sheet music search.
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
+- Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
+- Optional Redis backend for sessions, cache, recent errors, and rate limiting.
 - Direct-chat admin commands for configured admin LINE user ids.
 - Function handlers:
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
@@ -105,6 +107,8 @@ If a service schedule request is too generic, such as `查服事表`, the bot as
 
 The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
 
+Set `REDIS_URL` to move sessions, cache, recent errors, and rate-limit state to Redis. If `REDIS_URL` is unset, the app uses in-memory stores. If `REDIS_URL` is set but Redis cannot connect, startup fails.
+
 Sheet music search uses a short-lived in-memory file index cache. Admins can clear it from a direct LINE chat:
 
 ```text
@@ -116,6 +120,9 @@ Available commands:
 
 - `/status`
 - `/functions`
+- `/profile`
+- `/route-test <text>`
+- `/last-errors`
 - `/sessions`
 - `/cache`
 - `/clear-sessions`
@@ -153,10 +160,20 @@ Do not commit real `.env` files. In Azure Container Apps, store runtime values i
 - LINE channel secrets and tokens inside the profile JSON
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
+- `REDIS_URL` when using multi-replica or restart-tolerant state
+
+## Governance
+
+The app assigns a request id to each handled LINE event and includes it in route observer logs and recent error records. Basic per-source rate limiting is enabled by default:
+
+- `RATE_LIMIT_ENABLED=true`
+- `RATE_LIMIT_WINDOW_MS=60000`
+- `RATE_LIMIT_MAX_REQUESTS=20`
+- `LAST_ERRORS_MAX_ENTRIES=20`
 
 ## Azure DevOps Pipeline
 
-`azure-pipelines.yml` runs install, format check, typecheck, lint, tests, app build, and Docker image build for PRs and pushes to `main`.
+`azure-pipelines.yml` runs install, format check, typecheck, lint, tests, router eval replay, app build, and Docker image build for PRs and pushes to `main`.
 
 On successful `main` builds, the pipeline uses Azure Resource Manager service connection `alive-azure-rm` and `az acr build` to publish images to ACR:
 
@@ -171,6 +188,7 @@ Azure Container Apps should pull from the ACR image. Runtime secrets are expecte
 
 ```powershell
 pnpm test
+pnpm eval:router
 pnpm typecheck
 pnpm lint
 pnpm build

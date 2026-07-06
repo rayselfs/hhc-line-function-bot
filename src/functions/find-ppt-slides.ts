@@ -6,7 +6,11 @@ import {
 } from "../function-arguments.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 import { buildPostbackQuickReply } from "../line-reply.js";
-import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
+import {
+  InMemorySessionStore,
+  type ConversationSession,
+  type SessionStore
+} from "../state/session-store.js";
 import type {
   DriveItem,
   FunctionHandler,
@@ -69,7 +73,7 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
     const rawQuery = args.query.trim();
 
     if (!rawQuery) {
-      storePendingFunctionQuery({
+      await storePendingFunctionQuery({
         sessionStore,
         requestId: requestIdFactory(),
         action: "find_ppt_slides",
@@ -113,7 +117,7 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
     }
 
     const requestId = requestIdFactory();
-    sessionStore.set({
+    await sessionStore.set({
       id: requestId,
       type: "ppt_selection",
       profileName: context.profile.name,
@@ -163,7 +167,7 @@ export function createFindPptSlidesPostbackHandler(
     return selectPptCandidate({
       graph: options.graph,
       sessionStore: options.sessionStore,
-      session: options.sessionStore.get(request.params.requestId),
+      session: await options.sessionStore.get(request.params.requestId),
       selectedIndex,
       context,
       now: now()
@@ -177,17 +181,17 @@ export function createFindPptSlidesTextMessageHandler(
   const now = options.now ?? (() => new Date());
 
   return {
-    matches: (request, context) =>
+    matches: async (request, context) =>
       context.profile.enabledFunctions.includes("find_ppt_slides") &&
       numericSelectionToIndex(request.text) !== undefined &&
-      Boolean(findPptSelection(options.sessionStore, context)),
+      Boolean(await findPptSelection(options.sessionStore, context)),
 
     handle: async (request, context) => {
       const selectedIndex = numericSelectionToIndex(request.text);
       if (selectedIndex === undefined) {
         return undefined;
       }
-      const session = findPptSelection(options.sessionStore, context);
+      const session = await findPptSelection(options.sessionStore, context);
       if (!session) {
         return undefined;
       }
@@ -204,7 +208,7 @@ export function createFindPptSlidesTextMessageHandler(
   };
 }
 
-function findPptSelection(sessionStore: SessionStore, context: TextMessageContext) {
+async function findPptSelection(sessionStore: SessionStore, context: TextMessageContext) {
   return sessionStore.findPptSelection({
     profileName: context.profile.name,
     source: context.event.source,
@@ -227,7 +231,7 @@ function numericSelectionToIndex(text: string): number | undefined {
 async function selectPptCandidate(options: {
   graph: GraphDriveClient;
   sessionStore: SessionStore;
-  session: ReturnType<SessionStore["get"]>;
+  session: ConversationSession | undefined;
   selectedIndex: number;
   context: FunctionHandlerContext;
   now: Date;
@@ -251,7 +255,7 @@ async function selectPptCandidate(options: {
     return { ok: true, replyText: invalidSelectionMessage ?? "這個選擇已失效，請重新查詢。" };
   }
 
-  sessionStore.delete(session.id);
+  await sessionStore.delete(session.id);
   return createSharingLinkReply(graph, session.driveId, item, now);
 }
 

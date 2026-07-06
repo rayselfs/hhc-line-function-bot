@@ -72,6 +72,24 @@ export interface AppConfig {
   llm: LlmConfig;
   graph?: GraphConfig;
   notion?: NotionConfig;
+  redis?: RedisConfig;
+  rateLimit?: RateLimitConfig;
+  lastErrors?: LastErrorsConfig;
+}
+
+export interface RedisConfig {
+  url: string;
+  keyPrefix: string;
+}
+
+export interface RateLimitConfig {
+  enabled: boolean;
+  windowMs: number;
+  maxRequests: number;
+}
+
+export interface LastErrorsConfig {
+  maxEntries: number;
 }
 
 export interface LineWebhookPayload {
@@ -139,9 +157,16 @@ export interface FunctionRouterPort {
 
 export interface RouteObserverEvent {
   kind:
-    "route" | "function_result" | "function_error" | "text_handler" | "postback" | "admin_command";
+    | "route"
+    | "function_result"
+    | "function_error"
+    | "text_handler"
+    | "postback"
+    | "admin_command"
+    | "rate_limited";
   profileName: string;
   sourceType: string;
+  requestId?: string;
   durationMs?: number;
   provider?: RouteResult["provider"];
   outcome?: RouteResult["type"];
@@ -181,6 +206,7 @@ export interface FunctionExecutionResult {
 export interface FunctionHandlerContext {
   profile: BotProfileConfig;
   event: LineEvent;
+  requestId?: string;
 }
 
 export type FunctionHandler = (
@@ -218,6 +244,7 @@ export interface PostbackRequest {
 export interface PostbackContext {
   profile: BotProfileConfig;
   event: LineEvent;
+  requestId?: string;
 }
 
 export type PostbackHandler = (
@@ -234,10 +261,11 @@ export interface TextMessageRequest {
 export interface TextMessageContext {
   profile: BotProfileConfig;
   event: LineEvent;
+  requestId?: string;
 }
 
 export interface TextMessageHandler {
-  matches(request: TextMessageRequest, context: TextMessageContext): boolean;
+  matches(request: TextMessageRequest, context: TextMessageContext): Promise<boolean> | boolean;
   handle(
     request: TextMessageRequest,
     context: TextMessageContext
@@ -251,6 +279,7 @@ export interface AdminCommandContext {
   event: LineEvent;
   command: string;
   args: string[];
+  requestId?: string;
 }
 
 export type AdminHandler = (

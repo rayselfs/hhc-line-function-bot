@@ -1,4 +1,5 @@
 import type { FunctionName, JsonRecord } from "../../types.js";
+import { getRouterEvalCases } from "../../functions/modules.js";
 
 export const routerEvalEnabledFunctions: FunctionName[] = [
   "find_ppt_slides",
@@ -12,33 +13,7 @@ export interface KeywordRouteEvalCase {
   arguments: JsonRecord;
 }
 
-export const keywordRouteEvalCases: KeywordRouteEvalCase[] = [
-  {
-    text: "小哈 查投影片 主日報告 pdf",
-    action: "find_ppt_slides",
-    arguments: { query: "主日報告", fileType: "pdf", matchMode: "fuzzy" }
-  },
-  {
-    text: "小哈 查流行歌譜 A TIME FOR US",
-    action: "find_pop_sheet_music",
-    arguments: { query: "A TIME FOR US", fileType: "pdf", matchMode: "fuzzy" }
-  },
-  {
-    text: "小哈 查歌譜 Yesterday jpg",
-    action: "find_pop_sheet_music",
-    arguments: { query: "Yesterday", fileType: "image", matchMode: "fuzzy" }
-  },
-  {
-    text: "小哈 下一場聚會服事表",
-    action: "query_service_schedule",
-    arguments: { query: "下一場聚會服事表" }
-  },
-  {
-    text: "小哈 查服事表",
-    action: "query_service_schedule",
-    arguments: { query: "服事表" }
-  }
-];
+export const keywordRouteEvalCases: KeywordRouteEvalCase[] = getRouterEvalCases();
 
 export const keywordDenyEvalTexts = [
   "小哈 查流行歌 Yesterday",

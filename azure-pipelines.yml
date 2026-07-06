@@ -55,6 +55,9 @@ stages:
           - script: pnpm test
             displayName: Test
 
+          - script: pnpm eval:router
+            displayName: Router eval replay
+
           - script: pnpm build
             displayName: Build app
 
