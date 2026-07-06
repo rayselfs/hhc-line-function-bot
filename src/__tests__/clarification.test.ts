@@ -153,6 +153,71 @@ describe("clarification flow", () => {
     );
   });
 
+  it("extracts a PPT title from a wrapped pending follow-up reply", async () => {
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn().mockResolvedValue([
+        {
+          id: "ppt-1",
+          driveId: "drive-id",
+          name: "奇異恩典.pptx"
+        }
+      ]),
+      listFolderFilesRecursive: vi.fn(),
+      createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/amazing-grace")
+    };
+    const config = testConfig();
+    const registries = createFunctionRegistries(config, {
+      graph,
+      sessionStore: new InMemorySessionStore()
+    });
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "find_ppt_slides",
+      arguments: { query: "" },
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(config, {
+      router: { route },
+      functionRegistry: registries.functions,
+      postbackHandlers: registries.postbacks,
+      textMessageHandlers: registries.textMessages,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const firstBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "小哈 查投影片" }
+    });
+    const firstResponse = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(firstBody),
+      payload: firstBody
+    });
+
+    const secondBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "小哈，幫我查奇異恩典的投影片" }
+    });
+    const secondResponse = await app.inject({
+      method: "POST",
+      url: "/line/helper/webhook",
+      headers: signedHeaders(secondBody),
+      payload: secondBody
+    });
+
+    expect(firstResponse.statusCode).toBe(200);
+    expect(secondResponse.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledOnce();
+    expect(replyText.mock.calls[1]?.[1]).toContain("奇異恩典.pptx");
+    expect(replyText.mock.calls[1]?.[1]).toContain("https://download.invalid/amazing-grace");
+  });
+
   it("asks for a missing sheet music keyword and uses the next direct reply", async () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),

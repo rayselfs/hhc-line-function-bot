@@ -1,4 +1,5 @@
 import { FUNCTION_DEFINITIONS, type FunctionDefinition } from "./functions/definitions.js";
+import { extractPptSlideQuery } from "./ppt-query.js";
 import type { JsonRecord, RouteInput, RouteResult } from "./types.js";
 
 type KeywordRule = FunctionDefinition & {
@@ -50,10 +51,14 @@ function includesKeyword(text: string, keyword: string): boolean {
 }
 
 function extractArguments(rule: KeywordRule, text: string): JsonRecord {
-  const query = cleanupQuery(text, rule.keywordFallback.stripWords);
+  const cleanedQuery =
+    rule.name === "find_ppt_slides"
+      ? extractPptSlideQuery(text)
+      : cleanupQuery(text, rule.keywordFallback.stripWords);
+  const query = cleanedQuery || (rule.name === "find_ppt_slides" ? "" : text.trim());
   const argumentsRecord: JsonRecord = {
     ...(rule.keywordFallback.defaultArguments ?? {}),
-    query: query || text.trim()
+    query
   };
   if (rule.name === "find_ppt_slides") {
     if (includesKeyword(text, "pdf")) {

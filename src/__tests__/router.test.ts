@@ -152,6 +152,70 @@ describe("function router", () => {
     });
   });
 
+  it("extracts a PPT title from the user text when Qwen omits the query", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "find_ppt_slides",
+        confidence: 0.81,
+        arguments: { query: "" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈，查奇異恩典的投影片",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "find_ppt_slides",
+      provider: "ollama",
+      arguments: {
+        query: "奇異恩典",
+        originalQuery: "小哈，查奇異恩典的投影片"
+      }
+    });
+  });
+
+  it("cleans a wrapped PPT title when Qwen returns the full request as query", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "find_ppt_slides",
+        confidence: 0.82,
+        arguments: { query: "小哈，幫我查奇異恩典的投影片" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈，幫我查奇異恩典的投影片",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "find_ppt_slides",
+      provider: "ollama",
+      arguments: {
+        query: "奇異恩典",
+        originalQuery: "小哈，幫我查奇異恩典的投影片"
+      }
+    });
+  });
+
   it("routes structured pop sheet music metadata from Qwen", async () => {
     const qwen = provider(
       JSON.stringify({
@@ -213,6 +277,12 @@ describe("function router", () => {
       enabledFunctions: ["find_pop_sheet_music", "find_ppt_slides"],
       source: { type: "group", groupId: "C1", userId: "U1" }
     });
+    const wrappedPptResult = await router.route({
+      profileName: "main",
+      text: "小哈，查奇異恩典的投影片",
+      enabledFunctions: ["find_pop_sheet_music", "find_ppt_slides"],
+      source: { type: "group", groupId: "C1", userId: "U1" }
+    });
 
     expect(sheetResult).toMatchObject({
       type: "execute",
@@ -221,6 +291,12 @@ describe("function router", () => {
       arguments: { query: "Yesterday", fileType: "pdf", matchMode: "fuzzy" }
     });
     expect(pptResult).toMatchObject({
+      type: "execute",
+      action: "find_ppt_slides",
+      provider: "keyword",
+      arguments: { query: "奇異恩典" }
+    });
+    expect(wrappedPptResult).toMatchObject({
       type: "execute",
       action: "find_ppt_slides",
       provider: "keyword",
@@ -321,6 +397,29 @@ describe("function router", () => {
       action: "find_ppt_slides",
       provider: "keyword",
       arguments: { query: "奇異恩典" }
+    });
+  });
+
+  it("keeps generic PPT keyword fallback queries empty so the function can clarify", async () => {
+    const qwen = provider("not-json");
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "main",
+      text: "小哈 查投影片",
+      enabledFunctions: ["find_ppt_slides"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "find_ppt_slides",
+      provider: "keyword",
+      arguments: { query: "" }
     });
   });
 

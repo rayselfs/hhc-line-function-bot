@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { parseFunctionArguments } from "./function-arguments.js";
 import { getFunctionDefinitions } from "./functions/definitions.js";
+import { extractPptSlideQuery } from "./ppt-query.js";
 import { FUNCTION_NAMES, isFunctionName } from "./types.js";
 import type {
   ChatProvider,
@@ -194,6 +195,33 @@ function applyArgumentFallbacks(
   args: JsonRecord,
   input: RouteInput
 ): JsonRecord {
+  if (action === "find_ppt_slides") {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    const normalizedQuery = query ? extractPptSlideQuery(query) : extractPptSlideQuery(input.text);
+
+    if (normalizedQuery && normalizedQuery !== query) {
+      return {
+        ...args,
+        query: normalizedQuery,
+        originalQuery: typeof args.originalQuery === "string" ? args.originalQuery : input.text
+      };
+    }
+
+    if (query) {
+      return args;
+    }
+
+    if (!normalizedQuery) {
+      return args;
+    }
+
+    return {
+      ...args,
+      query: normalizedQuery,
+      originalQuery: typeof args.originalQuery === "string" ? args.originalQuery : input.text
+    };
+  }
+
   if (action !== "query_service_schedule") {
     return args;
   }

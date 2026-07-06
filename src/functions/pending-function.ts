@@ -1,4 +1,5 @@
 import { messages } from "../messages.js";
+import { extractPptSlideQuery } from "../ppt-query.js";
 import type { SessionStore } from "../state/session-store.js";
 import type {
   FunctionHandlerContext,
@@ -80,6 +81,9 @@ export function createPendingFunctionTextMessageHandler(
 }
 
 function normalizePendingFunctionAnswer(action: FunctionName, answer: string): string {
+  if (action === "find_ppt_slides") {
+    return extractPptSlideQuery(answer);
+  }
   if (action === "query_service_schedule" && answer === "主日") {
     return "主日服事";
   }
