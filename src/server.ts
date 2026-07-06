@@ -86,15 +86,17 @@ const builtInAdminCommands: AdminCommandHelpEntry[] = [
   { usage: "/access-list", description: "列出已開通的 user/group/admin" },
   { usage: "/allow-user-add <userId>", description: "開通使用者" },
   { usage: "/allow-user-remove <userId>", description: "停用使用者" },
-  { usage: "/allow-group-add <groupId>", description: "開通群組" },
-  { usage: "/allow-group-remove <groupId>", description: "停用群組" },
-  { usage: "/register-this-group", description: "將目前群組加入可使用清單" },
+  { usage: "/allow-group-add <groupId> [displayName]", description: "開通指定群組" },
+  { usage: "/register-this-group [displayName]", description: "將目前群組加入可使用清單" },
+  { usage: "/remove-group [groupId]", description: "停用指定群組；在群組內可省略 groupId" },
   { usage: "/invite-code-create <code> [maxUses] [expiresDays]", description: "建立邀請碼" },
   { usage: "/invite-code-list", description: "列出有效邀請碼摘要" },
   { usage: "/invite-code-disable <id>", description: "停用邀請碼" },
   { usage: "/admin-add <userId>", description: "superadmin 新增 admin" },
   { usage: "/admin-remove <userId>", description: "superadmin 停用 admin" }
 ];
+
+const groupScopedAdminCommands = new Set(["register-this-group", "remove-group"]);
 
 export function createApp(config: AppConfig, deps: AppDependencies): FastifyInstance {
   const app = fastify({
@@ -973,13 +975,41 @@ async function handleAdminAccessCommand(
     if (event.source.type !== "group" || !event.source.groupId) {
       return { ok: true, replyText: "請在要開通的群組裡使用 /register-this-group。" };
     }
+    const displayName = args.join(" ").trim() || undefined;
     await accessStore.addPrincipal({
       profileName: profile.name,
       type: "group",
       principalId: event.source.groupId,
+      displayName,
       createdBy: actorUserId
     });
-    return { ok: true, replyText: `已加入 group ${event.source.groupId}` };
+    return {
+      ok: true,
+      replyText: `已加入 group ${event.source.groupId}${displayName ? ` (${displayName})` : ""}`
+    };
+  }
+
+  if (command === "remove-group") {
+    const targetGroupId =
+      args[0] ?? (event.source.type === "group" ? event.source.groupId : undefined);
+    if (!targetGroupId) {
+      return { ok: true, replyText: "Usage: /remove-group <groupId>" };
+    }
+    const removed = await accessStore.disablePrincipal({
+      profileName: profile.name,
+      type: "group",
+      principalId: targetGroupId,
+      disabledBy: actorUserId
+    });
+    const currentGroup = event.source.type === "group" && targetGroupId === event.source.groupId;
+    return {
+      ok: true,
+      replyText: removed
+        ? currentGroup
+          ? `已停用此群組 ${targetGroupId}`
+          : `已停用 group ${targetGroupId}`
+        : "找不到群組。"
+    };
   }
 
   if (command === "allow-user-add" || command === "allow-group-add") {
@@ -988,16 +1018,22 @@ async function handleAdminAccessCommand(
       return { ok: true, replyText: `Usage: /${command} <id>` };
     }
     const type: AccessPrincipalType = command === "allow-user-add" ? "user" : "group";
+    const displayName =
+      command === "allow-group-add" ? args.slice(1).join(" ").trim() || undefined : undefined;
     await accessStore.addPrincipal({
       profileName: profile.name,
       type,
       principalId,
+      displayName,
       createdBy: actorUserId
     });
-    return { ok: true, replyText: `已加入 ${type} ${principalId}` };
+    return {
+      ok: true,
+      replyText: `已加入 ${type} ${principalId}${displayName ? ` (${displayName})` : ""}`
+    };
   }
 
-  if (command === "allow-user-remove" || command === "allow-group-remove") {
+  if (command === "allow-user-remove") {
     const principalId = args[0];
     if (!principalId) {
       return { ok: true, replyText: `Usage: /${command} <id>` };
@@ -1236,8 +1272,8 @@ async function adminAllowed(
   if (!(await isAdminUser(profile, event.source.userId, accessStore))) {
     return false;
   }
-  if (command === "register-this-group") {
-    return event.source.type === "group";
+  if (command && groupScopedAdminCommands.has(command) && event.source.type === "group") {
+    return true;
   }
   if (profile.adminDirectOnly !== false && event.source.type !== "user") {
     return false;

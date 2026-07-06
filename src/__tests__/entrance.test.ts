@@ -459,6 +459,98 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[0]?.[1]).toContain("/last-errors");
     expect(replyText.mock.calls[0]?.[1]).toContain("/last-routes");
     expect(replyText.mock.calls[0]?.[1]).toContain("/refresh-sheet-music-cache");
+    expect(replyText.mock.calls[0]?.[1]).toContain("/remove-group [groupId]");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/allow-group-remove");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/group-remove");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("/remove-this-group");
+  });
+
+  it("lets an admin remove a group by id without the legacy allow command", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = defaultAccessStore();
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/remove-group Cmain" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("已停用 group Cmain");
+    await expect(accessStore.hasActivePrincipal("main", "group", "Cmain")).resolves.toBe(false);
+  });
+
+  it("lets an admin remove the current group from inside the group", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = defaultAccessStore();
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
+      message: { type: "text", text: "/remove-group" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("已停用此群組");
+    await expect(accessStore.hasActivePrincipal("main", "group", "Cmain")).resolves.toBe(false);
+  });
+
+  it("stores an optional display name when registering the current group", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cnew", userId: "Uadmin" },
+      message: { type: "text", text: "/register-this-group 影音同工群" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/line/main/webhook",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    await expect(accessStore.listPrincipals("main")).resolves.toMatchObject([
+      { type: "group", principalId: "Cnew", displayName: "影音同工群" }
+    ]);
   });
 
   it("introduces available functions when a group user only calls the bot name", async () => {

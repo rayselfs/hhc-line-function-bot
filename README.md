@@ -169,9 +169,9 @@ Available commands:
 - `/access-list`
 - `/allow-user-add <userId>`
 - `/allow-user-remove <userId>`
-- `/allow-group-add <groupId>`
-- `/allow-group-remove <groupId>`
-- `/register-this-group`
+- `/allow-group-add <groupId> [displayName]`
+- `/register-this-group [displayName]`
+- `/remove-group [groupId]`
 - `/invite-code-create <code> [maxUses] [expiresDays]`
 - `/invite-code-list`
 - `/invite-code-disable <id>`
