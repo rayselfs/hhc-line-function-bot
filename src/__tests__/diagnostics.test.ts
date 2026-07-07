@@ -16,7 +16,7 @@ function config(): AppConfig {
     profiles: [
       {
         name: "helper",
-        webhookPath: "/line/helper/webhook",
+        webhookPath: "/api/line/webhook/helper",
         channelSecret: "helper-secret",
         channelAccessToken: "helper-token",
         allowDirectUser: true,
@@ -155,7 +155,7 @@ describe("diagnostics", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(body),
       payload: body
     });
@@ -189,7 +189,7 @@ describe("diagnostics", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(body),
       payload: body
     });

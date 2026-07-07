@@ -5,12 +5,17 @@ properties:
   managedEnvironmentId: PLACEHOLDER_CONTAINER_APP_ENVIRONMENT_ID
   configuration:
     activeRevisionsMode: Single
+    dapr:
+      enabled: true
+      appId: hhc-line-function-bot
+      appPort: 3000
+      appProtocol: http
     ingress:
-      external: true
+      external: false
       targetPort: 3000
       transport: auto
     secrets:
-      - name: bot-profiles-json
+      - name: bot-profiles-base64-json
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: ollama-base-url
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
@@ -37,8 +42,8 @@ properties:
             value: /healthz
           - name: READY_PATH
             value: /readyz
-          - name: BOT_PROFILES_JSON
-            secretRef: bot-profiles-json
+          - name: BOT_PROFILES_BASE64_JSON
+            secretRef: bot-profiles-base64-json
           - name: OLLAMA_BASE_URL
             secretRef: ollama-base-url
           - name: OLLAMA_MODEL

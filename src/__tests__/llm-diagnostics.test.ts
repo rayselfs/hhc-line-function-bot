@@ -44,7 +44,7 @@ describe("LLM diagnostics admin handler", () => {
     const result = await handler({
       profile: {
         name: "helper",
-        webhookPath: "/line/helper/webhook",
+        webhookPath: "/api/line/webhook/helper",
         channelSecret: "secret",
         channelAccessToken: "token",
         allowDirectUser: true,
@@ -92,7 +92,7 @@ describe("LLM diagnostics admin handler", () => {
     await handler({
       profile: {
         name: "helper",
-        webhookPath: "/line/helper/webhook",
+        webhookPath: "/api/line/webhook/helper",
         channelSecret: "secret",
         channelAccessToken: "token",
         allowDirectUser: true,
@@ -121,7 +121,7 @@ describe("LLM diagnostics admin handler", () => {
     const result = await handler({
       profile: {
         name: "helper",
-        webhookPath: "/line/helper/webhook",
+        webhookPath: "/api/line/webhook/helper",
         channelSecret: "secret",
         channelAccessToken: "token",
         allowDirectUser: true,

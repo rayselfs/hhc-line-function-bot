@@ -24,7 +24,7 @@ function testConfig(): AppConfig {
     profiles: [
       {
         name: "helper",
-        webhookPath: "/line/helper/webhook",
+        webhookPath: "/api/line/webhook/helper",
         channelSecret: "channel-secret",
         channelAccessToken: "channel-token",
         allowDirectUser: true,
@@ -138,7 +138,7 @@ describe("clarification flow", () => {
     });
     const firstResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(firstBody),
       payload: firstBody
     });
@@ -151,7 +151,7 @@ describe("clarification flow", () => {
     });
     const secondResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(secondBody),
       payload: secondBody
     });
@@ -219,7 +219,7 @@ describe("clarification flow", () => {
     });
     const firstResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(firstBody),
       payload: firstBody
     });
@@ -232,7 +232,7 @@ describe("clarification flow", () => {
     });
     const secondResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(secondBody),
       payload: secondBody
     });
@@ -285,7 +285,7 @@ describe("clarification flow", () => {
     });
     const firstResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(firstBody),
       payload: firstBody
     });
@@ -298,7 +298,7 @@ describe("clarification flow", () => {
     });
     const secondResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(secondBody),
       payload: secondBody
     });
@@ -357,7 +357,7 @@ describe("clarification flow", () => {
     });
     const firstResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(firstBody),
       payload: firstBody
     });
@@ -370,7 +370,7 @@ describe("clarification flow", () => {
     });
     const secondResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(secondBody),
       payload: secondBody
     });
@@ -457,7 +457,7 @@ describe("clarification flow", () => {
     });
     const firstResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(firstBody),
       payload: firstBody
     });
@@ -470,7 +470,7 @@ describe("clarification flow", () => {
     });
     const secondResponse = await app.inject({
       method: "POST",
-      url: "/line/helper/webhook",
+      url: "/api/line/webhook/helper",
       headers: signedHeaders(secondBody),
       payload: secondBody
     });

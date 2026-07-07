@@ -8,7 +8,7 @@ import type { AppConfig, BotProfileConfig, GraphDriveClient } from "../types.js"
 function profile(): BotProfileConfig {
   return {
     name: "helper",
-    webhookPath: "/line/helper/webhook",
+    webhookPath: "/api/line/webhook/helper",
     channelSecret: "secret",
     channelAccessToken: "token",
     allowDirectUser: true,

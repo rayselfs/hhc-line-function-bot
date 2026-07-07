@@ -35,7 +35,7 @@ Direct-message admin commands:
 Use the smoke tool to sign a LINE-shaped webhook payload:
 
 ```powershell
-pnpm smoke:webhook -- --url http://localhost:3000/line/helper/webhook --secret PLACEHOLDER_LINE_CHANNEL_SECRET --text "小哈"
+pnpm smoke:webhook -- --url http://localhost:3000/api/line/webhook/helper --secret PLACEHOLDER_LINE_CHANNEL_SECRET --text "小哈"
 ```
 
 The tool prints status, request id when present, and response body. It must not print the channel secret or access token.

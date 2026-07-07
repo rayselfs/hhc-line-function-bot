@@ -81,7 +81,7 @@ describe("config", () => {
       BOT_PROFILES_JSON: JSON.stringify([
         {
           name: "helper",
-          webhookPath: "/line/helper/webhook",
+          webhookPath: "/api/line/webhook/helper",
           channelSecret: "secret",
           channelAccessToken: "token",
           enabledFunctions: ["query_service_schedule"],
@@ -102,7 +102,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             adminUserIds: ["U1"]
@@ -118,7 +118,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             allowedUserIds: ["U1"]
@@ -132,7 +132,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             allowedGroupIds: ["C1"]
@@ -147,7 +147,7 @@ describe("config", () => {
       BOT_PROFILES_JSON: JSON.stringify([
         {
           name: "helper",
-          webhookPath: "/line/helper/webhook",
+          webhookPath: "/api/line/webhook/helper",
           channelSecret: "secret",
           channelAccessToken: "token",
           directAccessPolicy: "managed",
@@ -183,7 +183,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             registration: { enabled: true }
@@ -199,7 +199,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             registration: { enabled: true }
@@ -216,7 +216,7 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "helper",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token",
             registration: { enabled: true, inviteCodeRequired: true }
@@ -274,13 +274,13 @@ describe("config", () => {
         BOT_PROFILES_JSON: JSON.stringify([
           {
             name: "main",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token"
           },
           {
             name: "slides",
-            webhookPath: "/line/helper/webhook",
+            webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token"
           }

@@ -48,7 +48,6 @@ variables:
   imageTag: "$(Build.SourceBranchName)-$(Build.BuildId)"
   resourceGroup: "alive"
   containerAppName: "hhc-line-function-bot"
-  healthUrl: "https://hhc-line-function-bot.gentleriver-81abd7bc.eastasia.azurecontainerapps.io/healthz"
 
 stages:
   - stage: Validate
@@ -176,23 +175,6 @@ stages:
 
                 if [[ "${revision_ready}" != "true" ]]; then
                   echo "Revision ${target_revision} did not become ready in time"
-                  exit 1
-                fi
-
-                echo "Checking health endpoint"
-                health_ok=false
-                for attempt in {1..12}; do
-                  if curl -fsS "$(healthUrl)"; then
-                    health_ok=true
-                    break
-                  fi
-
-                  echo "Health check attempt ${attempt} failed; retrying"
-                  sleep 10
-                done
-
-                if [[ "${health_ok}" != "true" ]]; then
-                  echo "Health endpoint did not return success"
                   exit 1
                 fi
 

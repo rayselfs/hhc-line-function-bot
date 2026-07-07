@@ -22,7 +22,7 @@ Read these first when starting work:
 
 ## Current Product Shape
 
-- One service can host multiple LINE bot profiles on different webhook paths, for example `/line/helper/webhook`.
+- One service can host multiple LINE bot profiles on different webhook paths, for example `/api/line/webhook/helper`.
 - Each profile has its own LINE credentials, access policy, wake-word behavior, enabled functions, and bootstrap `adminUserId`.
 - The intended split is:
   - `helper`: managed direct users, managed groups, registration enabled.

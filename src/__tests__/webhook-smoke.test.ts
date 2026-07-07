@@ -46,7 +46,7 @@ describe("webhook smoke tool", () => {
     await runSmokeWebhookCli(
       [
         "--url",
-        "https://example.invalid/line/helper/webhook",
+        "https://example.invalid/api/line/webhook/helper",
         "--secret",
         "channel-secret",
         "--text",

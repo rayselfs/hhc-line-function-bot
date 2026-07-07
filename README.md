@@ -41,8 +41,8 @@ pnpm dev
 
 Set the LINE webhook URL per bot profile, for example:
 
-- `/line/helper/webhook`
-- `/line/slides/webhook`
+- `/api/line/webhook/helper`
+- `/api/line/webhook/slides`
 
 Health and readiness:
 
@@ -73,7 +73,7 @@ Example shape:
 [
   {
     "name": "helper",
-    "webhookPath": "/line/helper/webhook",
+    "webhookPath": "/api/line/webhook/helper",
     "channelSecret": "PLACEHOLDER",
     "channelAccessToken": "PLACEHOLDER",
     "allowDirectUser": true,
@@ -269,7 +269,7 @@ When Redis is configured, rate limits use atomic Redis counters. Recent routes a
 Use the signed webhook smoke tool for local or deployed webhook checks:
 
 ```powershell
-pnpm smoke:webhook -- --url http://localhost:3000/line/helper/webhook --secret PLACEHOLDER_LINE_CHANNEL_SECRET --text "小哈"
+pnpm smoke:webhook -- --url http://localhost:3000/api/line/webhook/helper --secret PLACEHOLDER_LINE_CHANNEL_SECRET --text "小哈"
 ```
 
 Operational details are in `docs/runbooks/production-operations.md`.
