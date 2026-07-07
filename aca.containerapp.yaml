@@ -18,6 +18,10 @@ properties:
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: notion-token
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: database-url
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: redis-url
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
   template:
     containers:
       - name: hhc-line-function-bot
@@ -29,6 +33,10 @@ properties:
             value: "3000"
           - name: TIME_ZONE
             value: Asia/Taipei
+          - name: HEALTH_PATH
+            value: /healthz
+          - name: READY_PATH
+            value: /readyz
           - name: BOT_PROFILES_JSON
             secretRef: bot-profiles-json
           - name: OLLAMA_BASE_URL
@@ -37,6 +45,18 @@ properties:
             value: qwen3:4b-instruct
           - name: KEYWORD_FALLBACK_ENABLED
             value: "true"
+          - name: DATABASE_URL
+            secretRef: database-url
+          - name: DATABASE_SSL
+            value: "true"
+          - name: REDIS_URL
+            secretRef: redis-url
+          - name: REDIS_KEY_PREFIX
+            value: hhc-line-function-bot
+          - name: REGISTRATION_INVITE_CODE_TTL_MINUTES
+            value: "60"
+          - name: CONFIRMATION_TTL_MINUTES
+            value: "5"
           - name: GRAPH_TENANT_ID
             value: PLACEHOLDER_GRAPH_TENANT_ID
           - name: GRAPH_CLIENT_ID
@@ -82,7 +102,7 @@ properties:
             periodSeconds: 30
           - type: Readiness
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10

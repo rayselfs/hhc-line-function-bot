@@ -21,6 +21,8 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
 - Direct-chat admin commands for a single bootstrap `adminUserId` plus DB-managed admins.
 - Admin direct-chat natural language for selected management actions, currently invite-code creation.
+- Minimal `/healthz`, data-layer `/readyz`, and admin-only `/diag` diagnostics.
+- Destructive admin-action confirmation infrastructure through `/confirm <code>`.
 - Function handlers:
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
   - `query_service_schedule`: queries Notion with env-configured property mapping.
@@ -42,11 +44,14 @@ Set the LINE webhook URL per bot profile, for example:
 - `/line/helper/webhook`
 - `/line/slides/webhook`
 
-Health:
+Health and readiness:
 
 ```text
 GET /healthz
+GET /readyz
 ```
+
+`/healthz` is minimal liveness. `/readyz` checks only Postgres and Redis. Use admin direct-chat `/diag` for detailed dependency status.
 
 ## Bot Profiles
 
@@ -123,9 +128,10 @@ DATABASE_URL=...
 DATABASE_SSL=true
 REDIS_URL=...
 REGISTRATION_INVITE_CODE_TTL_MINUTES=60
+CONFIRMATION_TTL_MINUTES=5
 ```
 
-PostgreSQL stores active user/group/admin principals and audit events. Redis stores short-lived one-time registration codes.
+PostgreSQL stores active user/group/admin principals and audit events. Redis stores short-lived one-time registration codes, confirmation codes, sessions, cache, recent errors, and rate-limit counters.
 If upgrading from the old pending-request registration flow, review `docs/sql/drop-legacy-access-registration.sql` before manually dropping legacy tables.
 
 Function toggles are profile-scoped:
@@ -176,6 +182,8 @@ Admins can also use direct-chat natural language for selected admin actions. For
 
 Admin natural-language requests pass through a conservative local hint check, the admin action router, the policy gate, and the admin action registry. `/last-routes` records sanitized admin route/action outcomes without raw message text or invite codes. Use `pnpm eval:admin` when changing admin intent hints or adding admin actions.
 
+Destructive admin actions must be confirmed with `/confirm <code>`. Invite-code creation is a `security_change` action and remains admin direct-chat only plus audited, but does not require confirmation.
+
 Common commands:
 
 ```text
@@ -197,10 +205,12 @@ Advanced commands:
 /user-add <userId> [name]
 /group-add <groupId> [name]
 /invite-code-create
+/confirm <code>
 /admin-add <userId>
 /admin-remove <userId>
 /status
 /profile
+/diag
 /route-test <text>
 /last-errors
 /last-routes
@@ -251,6 +261,18 @@ The app assigns a request id to each handled LINE event and includes it in route
 - `RATE_LIMIT_WINDOW_MS=60000`
 - `RATE_LIMIT_MAX_REQUESTS=20`
 - `LAST_ERRORS_MAX_ENTRIES=20`
+
+When Redis is configured, rate limits use atomic Redis counters. Recent routes and errors are sanitized before storage and do not include raw user text, function queries, invite codes, LINE reply tokens, credential URLs, or secrets.
+
+## Smoke Testing
+
+Use the signed webhook smoke tool for local or deployed webhook checks:
+
+```powershell
+pnpm smoke:webhook -- --url http://localhost:3000/line/helper/webhook --secret PLACEHOLDER_LINE_CHANNEL_SECRET --text "小哈"
+```
+
+Operational details are in `docs/runbooks/production-operations.md`.
 
 ## Azure DevOps Pipeline
 

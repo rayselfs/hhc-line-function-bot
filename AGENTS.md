@@ -6,6 +6,8 @@
 - The bot is a restricted church helper, not an open-ended chat bot.
 - It should feel smart inside explicitly enabled functions, but deny or clarify requests outside those functions.
 - Runtime behavior is controlled by bot profiles, function toggles, access control, and state stores.
+- Public `/healthz` is minimal liveness. Public `/readyz` checks only Postgres and Redis.
+- Detailed dependency status belongs in admin-only direct-chat `/diag`, not public endpoints.
 - Keep public repo safety in mind: never commit real `.env` files, tokens, IDs, or secrets.
 
 Read these first when starting work:
@@ -39,10 +41,12 @@ The first-class functions are:
 - User functions, admin actions, and system actions are separate action kinds. Do not add management behavior to `enabledFunctions`.
 - Admin natural language is direct-chat only. It may route to selected admin actions, currently invite-code creation, after admin identity and source policy checks.
 - Admin actions must go through the action catalog, policy gate, admin action registry, audit, and sanitized route observability.
+- Destructive admin actions must use `/confirm <code>`. `security_change` actions such as invite-code creation remain admin direct-only and audited unless explicitly reclassified.
 
 When adding or changing a function:
 
 - Add or update the function definition.
+- Include capability metadata: `displayName`, `shortDescription`, `examples`, `requires`, `scope`, and `clarificationPrompt`.
 - Register the function module.
 - Update routing and argument extraction.
 - Add clarification behavior for missing required slots.
@@ -57,6 +61,7 @@ When adding or changing an admin action:
 - Register the handler in the admin action registry instead of adding execution logic to `server.ts`.
 - Add admin router/eval cases and run `pnpm eval:admin`.
 - Add observability tests that verify `/last-routes` does not expose raw messages or secrets.
+- Keep telemetry, last routes, and last errors sanitized by construction.
 
 ## Architecture Map
 
@@ -72,7 +77,8 @@ When adding or changing an admin action:
 - `src/state/*`: short-lived user sessions and selection state.
 - `src/cache/*`: shared cache abstractions, including Redis-backed cache.
 - `src/observability/*`: recent errors and route diagnostics used by admin commands.
-- `src/tools/*`: local verification helpers such as router eval and Notion checks.
+- `src/diagnostics/*`: public data-layer readiness and admin-only dependency diagnostics.
+- `src/tools/*`: local verification helpers such as router eval, Notion checks, and signed webhook smoke tests.
 
 ## Access And Admin Model
 
@@ -105,6 +111,8 @@ When adding or changing an admin action:
 
 - In-memory stores are acceptable for single-replica local/dev behavior.
 - `REDIS_URL` moves sessions, cache, recent errors, rate-limit state, and registration invite codes to Redis.
+- `REDIS_URL` also moves destructive-action confirmation codes to Redis.
+- Redis rate limiting must use atomic counters, not read-modify-write JSON buckets.
 - PostgreSQL backs managed access principals and audit events when registration is enabled.
 - The app creates access tables on startup if PostgreSQL is configured.
 - Do not assume multi-replica safety without Redis for sessions/cache/invite codes.
@@ -121,6 +129,7 @@ When adding or changing an admin action:
   - `pnpm build`
 - For router behavior changes, also run `pnpm eval:router` when relevant.
 - For admin natural-language routing changes, also run `pnpm eval:admin`.
+- For webhook entrance changes, consider `pnpm smoke:webhook` against a local dev server or deployed URL.
 - Update tests when changing routing, LINE webhook entrance behavior, access control, admin commands, or function execution behavior.
 - Keep `README.md` aligned when changing user-facing or admin-facing commands.
 
