@@ -1,4 +1,5 @@
 import type { CacheStore } from "../cache/cache-store.js";
+import type { AgentMemoryStore } from "../agent/memory-store.js";
 import type { SessionStore } from "../state/session-store.js";
 import { FUNCTION_NAMES } from "../types.js";
 import type {
@@ -25,6 +26,7 @@ import {
   SHEET_MUSIC_INDEX_CACHE_PREFIX
 } from "./find-pop-sheet-music.js";
 import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
+import { createRetrieveMemoryHandler, createSaveMemoryHandler } from "./agent-memory-functions.js";
 
 export interface FunctionModuleContext {
   config: AppConfig;
@@ -33,6 +35,7 @@ export interface FunctionModuleContext {
     notion?: NotionDatabaseClient;
     sessionStore: SessionStore;
     cache: CacheStore;
+    memoryStore?: AgentMemoryStore;
     now?: () => Date;
     requestIdFactory?: () => string;
   };
@@ -346,6 +349,138 @@ export const FUNCTION_MODULES: FunctionModule[] = [
               replyText: `已清除流行歌譜 cache（${removed} 筆），下次查詢會重新建立。`
             };
           }
+        }
+      };
+    }
+  },
+  {
+    name: "save_memory",
+    definition: requiredDefinition("save_memory"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈幫我記住這個月服事表：主日導播是小明",
+        expected: {
+          type: "execute",
+          action: "save_memory",
+          arguments: { content: "這個月服事表：主日導播是小明" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈幫我記住",
+        expected: {
+          type: "execute",
+          action: "save_memory",
+          arguments: { content: "" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈幫我儲存主日提醒",
+        expected: {
+          type: "execute",
+          action: "save_memory",
+          arguments: { content: "主日提醒" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈請幫我訂便當",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈幫我記住這個月服事表",
+        enabledFunctions: withoutFunction("save_memory"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查投影片 奇異恩典",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "奇異恩典", matchMode: "fuzzy" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          save_memory: createSaveMemoryHandler({
+            memoryStore: clients.memoryStore,
+            now: clients.now
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "retrieve_memory",
+    definition: requiredDefinition("retrieve_memory"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈查我記住的服事表",
+        expected: {
+          type: "execute",
+          action: "retrieve_memory",
+          arguments: { query: "服事表" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈查我記住的",
+        expected: {
+          type: "execute",
+          action: "retrieve_memory",
+          arguments: { query: "" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈找我保存的服事",
+        expected: {
+          type: "execute",
+          action: "retrieve_memory",
+          arguments: { query: "服事" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈查今天股價",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈查我記住的服事表",
+        enabledFunctions: withoutFunction("retrieve_memory"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查服事表",
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "服事表" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          retrieve_memory: createRetrieveMemoryHandler({
+            memoryStore: clients.memoryStore,
+            now: clients.now
+          })
         }
       };
     }

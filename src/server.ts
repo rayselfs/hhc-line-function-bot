@@ -10,6 +10,7 @@ import {
   InMemoryRegistrationInviteCodeStore,
   type RegistrationInviteCodeStore
 } from "./access/registration-invite-code-store.js";
+import type { AgentRuntime } from "./agent/agent-runtime.js";
 import type { AccessPrincipalType, AccessStore } from "./access/types.js";
 import { createStaticAppDiagnostics } from "./diagnostics/dependencies.js";
 import {
@@ -53,6 +54,7 @@ import { InMemoryRateLimiter, type RateLimiter } from "./rate-limit.js";
 import type {
   AppConfig,
   AppDiagnostics,
+  AgentResourceType,
   AdminHandlerRegistry,
   BotProfileConfig,
   FunctionExecutionResult,
@@ -96,6 +98,7 @@ export interface AppDependencies {
   confirmationStore?: ConfirmationStore;
   inFlightStore?: InFlightStore;
   textGenerator?: TextGenerationProvider;
+  agentRuntime?: AgentRuntime;
 }
 
 interface AllowResult {
@@ -171,7 +174,8 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
       { usage: "/confirm <code>", description: "確認需要二次確認的操作" },
       { usage: "/route-test <text>", description: "測試一段文字會 route 到哪個 function" },
       { usage: "/last-errors", description: "查看最近錯誤" },
-      { usage: "/last-routes", description: "查看最近 route/function 結果" }
+      { usage: "/last-routes", description: "查看最近 route/function 結果" },
+      { usage: "/memory-status", description: "查看 agent memory 統計" }
     ]
   }
 ];
@@ -258,7 +262,8 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         registrationInviteCodeStore,
         diagnostics,
         inFlightStore,
-        textGenerator
+        textGenerator,
+        deps.agentRuntime
       );
     });
   }
@@ -288,7 +293,8 @@ async function handleWebhook(
   registrationInviteCodeStore: RegistrationInviteCodeStore,
   diagnostics: AppDiagnostics,
   inFlightStore: InFlightStore,
-  textGenerator: TextGenerationProvider | undefined
+  textGenerator: TextGenerationProvider | undefined,
+  agentRuntime: AgentRuntime | undefined
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -344,6 +350,15 @@ async function handleWebhook(
         requestId,
         requesterDisplayName
       );
+      const postbackFunctionName = functionNameForAgentResource(result.agentResource?.resourceType);
+      if (postbackFunctionName) {
+        await agentRuntime?.afterFunctionResult({
+          context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
+          action: postbackFunctionName,
+          arguments: {},
+          result
+        });
+      }
       await emitRouteEvent(routeObserver, {
         kind: "postback",
         profileName: profile.name,
@@ -384,6 +399,26 @@ async function handleWebhook(
 
     if (isAdminCommand(event.message.text)) {
       const parsedAdminCommand = parseAdminCommand(event.message.text);
+      const agentCommandResult = await agentRuntime?.handleCommand({
+        text: event.message.text,
+        context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
+        isAdmin: await adminAllowed(
+          effectiveProfile,
+          event,
+          accessStore,
+          parsedAdminCommand?.command
+        )
+      });
+      if (agentCommandResult) {
+        await line.replyText(
+          event.replyToken,
+          agentCommandResult.replyText,
+          agentCommandResult.quickReplies
+            ? { quickReplies: agentCommandResult.quickReplies }
+            : undefined
+        );
+        continue;
+      }
       const accessCommandResult = await handlePublicAccessCommand(
         event.message.text,
         effectiveProfile,
@@ -508,6 +543,29 @@ async function handleWebhook(
       continue;
     }
 
+    const agentPreRouteResult = await agentRuntime?.handleTextBeforeRouting({
+      text: event.message.text,
+      context: { profile: effectiveProfile, event, requestId, requesterDisplayName }
+    });
+    if (agentPreRouteResult) {
+      await emitRouteEvent(routeObserver, {
+        kind: "text_handler",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        requestId,
+        handler: "agent_runtime",
+        ok: agentPreRouteResult.ok
+      });
+      await line.replyText(
+        event.replyToken,
+        agentPreRouteResult.replyText,
+        agentPreRouteResult.quickReplies
+          ? { quickReplies: agentPreRouteResult.quickReplies }
+          : undefined
+      );
+      continue;
+    }
+
     const textMessageHandler = await matchingTextMessageHandler(
       event,
       effectiveProfile,
@@ -530,6 +588,17 @@ async function handleWebhook(
         durationMs: elapsedMs(handlerStartedAt)
       });
       if (result) {
+        const textHandlerFunctionName = functionNameForAgentResource(
+          result.agentResource?.resourceType
+        );
+        if (textHandlerFunctionName) {
+          await agentRuntime?.afterFunctionResult({
+            context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
+            action: textHandlerFunctionName,
+            arguments: {},
+            result
+          });
+        }
         await line.replyText(
           event.replyToken,
           result.replyText,
@@ -663,6 +732,31 @@ async function handleWebhook(
       continue;
     }
 
+    const agentBeforeFunctionResult = await agentRuntime?.handleBeforeFunctionExecution({
+      context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
+      action: route.action,
+      arguments: route.arguments
+    });
+    if (agentBeforeFunctionResult) {
+      await emitRouteEvent(routeObserver, {
+        kind: "function_result",
+        profileName: profile.name,
+        sourceType: event.source.type,
+        requestId,
+        action: route.action,
+        ok: agentBeforeFunctionResult.ok,
+        dedup: "agent_memory"
+      });
+      await line.replyText(
+        event.replyToken,
+        agentBeforeFunctionResult.replyText,
+        agentBeforeFunctionResult.quickReplies
+          ? { quickReplies: agentBeforeFunctionResult.quickReplies }
+          : undefined
+      );
+      continue;
+    }
+
     const inFlight = buildInFlightKey(
       effectiveProfile.name,
       event.source,
@@ -698,6 +792,12 @@ async function handleWebhook(
         event,
         requestId,
         requesterDisplayName
+      });
+      await agentRuntime?.afterFunctionResult({
+        context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
+        action: route.action,
+        arguments: route.arguments,
+        result
       });
       await emitRouteEvent(routeObserver, {
         kind: "function_result",
@@ -1018,6 +1118,8 @@ function formatPublicHelp(profile: BotProfileConfig): FunctionExecutionResult {
       "/help - 查看小哈可以協助什麼",
       "/registry <code> - 使用邀請碼開通",
       "/whoami - 查看目前 LINE user/group 資訊",
+      "/memories - 列出目前記住的資訊",
+      "/forget-memory <id> - 移除一段記憶",
       "/help admin - 管理員指令說明"
     ].join("\n"),
     quickReplies: buildFunctionQuickReplies(profile)
@@ -1888,6 +1990,17 @@ function summarizeRouteArguments(args: JsonRecord): Pick<LastRouteRecord, "query
     query: typeof queryValue === "string" ? (queryValue.trim() ? "present" : "empty") : "missing",
     fileType: typeof fileTypeValue === "string" ? fileTypeValue : undefined
   };
+}
+
+function functionNameForAgentResource(resourceType: AgentResourceType | undefined) {
+  switch (resourceType) {
+    case "ppt_slide":
+      return "find_ppt_slides";
+    case "sheet_music":
+      return "find_pop_sheet_music";
+    default:
+      return undefined;
+  }
 }
 
 const IN_FLIGHT_TTL_MS = 120_000;

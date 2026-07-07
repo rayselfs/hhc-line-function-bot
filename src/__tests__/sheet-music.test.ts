@@ -104,6 +104,11 @@ describe("find_pop_sheet_music", () => {
         "https://download.invalid/a-time-for-us"
       ].join("\n")
     );
+    expect(result.agentResource).toMatchObject({
+      resourceType: "sheet_music",
+      title: "A TIME FOR US-Andy Williams-043.pdf",
+      storage: { provider: "graph", driveId: "remote-drive", itemId: "pdf-1" }
+    });
     expect(graph.createSharingLink).toHaveBeenCalledWith(
       "remote-drive",
       "pdf-1",

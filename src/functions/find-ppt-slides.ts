@@ -15,6 +15,7 @@ import {
 } from "../state/session-store.js";
 import type {
   DriveItem,
+  FunctionExecutionResult,
   FunctionHandler,
   FunctionHandlerContext,
   GraphDriveClient,
@@ -277,13 +278,18 @@ async function createSharingLinkReply(
   driveId: string,
   item: Pick<DriveItem, "id" | "name">,
   now: Date
-) {
+): Promise<FunctionExecutionResult> {
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const link = await graph.createSharingLink(driveId, item.id, expiresAt);
 
   return {
     ok: true,
-    replyText: ["已找到詩歌投影片：", item.name, "下載連結（1 天內有效）：", link].join("\n")
+    replyText: ["已找到詩歌投影片：", item.name, "下載連結（1 天內有效）：", link].join("\n"),
+    agentResource: {
+      resourceType: "ppt_slide",
+      title: item.name,
+      storage: { provider: "graph", driveId, itemId: item.id }
+    }
   };
 }
 

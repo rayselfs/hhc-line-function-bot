@@ -3,7 +3,9 @@ import type { z } from "zod";
 import {
   findPopSheetMusicArgumentsSchema,
   findPptSlidesArgumentsSchema,
-  queryServiceScheduleArgumentsSchema
+  queryServiceScheduleArgumentsSchema,
+  retrieveMemoryArgumentsSchema,
+  saveMemoryArgumentsSchema
 } from "../function-arguments.js";
 import type { FunctionName, JsonRecord } from "../types.js";
 
@@ -18,7 +20,7 @@ export interface FunctionDefinition {
   displayName: string;
   shortDescription: string;
   examples: string[];
-  requires: Array<"graph" | "notion" | "session" | "cache">;
+  requires: Array<"graph" | "notion" | "session" | "cache" | "memory">;
   scope: "profile" | "group_capable";
   clarificationPrompt: string;
   description: string;
@@ -111,6 +113,55 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         "image"
       ],
       defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
+    }
+  },
+  {
+    name: "save_memory",
+    displayName: "記住資訊",
+    shortDescription: "保存使用者明確要求小哈記住的文字資訊。",
+    examples: ["小哈幫我記住這個月服事表：主日導播是小明"],
+    requires: ["memory"],
+    scope: "profile",
+    clarificationPrompt: "請直接告訴我要記住的內容。",
+    description:
+      '- save_memory: save explicit user-provided text memory only when the user clearly asks the bot to remember/save/store information. Arguments: {"title":"short optional title", "content":"the exact text to remember", "query":"optional lookup phrase"}. Do not use for passive group chatter.',
+    argumentSchema: saveMemoryArgumentsSchema,
+    quickReply: {
+      label: "記住資訊",
+      command: "小哈幫我記住："
+    },
+    helpText: "保存你明確交代小哈記住的文字資訊，預設只保留一段時間。",
+    keywordFallback: {
+      keywords: ["幫我記住", "記住這個", "幫我保存", "幫我儲存"],
+      stripWords: [...commonStripWords, "幫我記住", "記住這個", "幫我保存", "幫我儲存"]
+    }
+  },
+  {
+    name: "retrieve_memory",
+    displayName: "查記住的資訊",
+    shortDescription: "查詢使用者曾明確請小哈記住的資訊。",
+    examples: ["小哈查我記住的服事表"],
+    requires: ["memory"],
+    scope: "profile",
+    clarificationPrompt: "請告訴我要查哪一段記住的資訊。",
+    description:
+      '- retrieve_memory: retrieve explicit saved text memories. Arguments: {"query":"keyword or topic to search"}. Use only when the user asks what the bot remembered/saved/stored.',
+    argumentSchema: retrieveMemoryArgumentsSchema,
+    quickReply: {
+      label: "查記憶",
+      command: "小哈查我記住的"
+    },
+    helpText: "查詢先前明確保存的文字資訊。",
+    keywordFallback: {
+      keywords: ["查我記住", "查我保存", "查我儲存", "我記住的", "小哈記得"],
+      stripWords: [
+        ...commonStripWords,
+        "查我記住的",
+        "查我保存的",
+        "查我儲存的",
+        "我記住的",
+        "小哈記得"
+      ]
     }
   }
 ];

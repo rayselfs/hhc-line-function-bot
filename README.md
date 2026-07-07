@@ -16,6 +16,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
+- Controlled agent runtime for recent file recall, explicit text memories, and resource aliases.
 - Optional Redis backend for sessions, cache, recent errors, rate limiting, and one-time registration invite codes.
 - Per-profile access policy with PostgreSQL-backed user/group/admin registration.
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
@@ -27,6 +28,8 @@ LINE webhook service for routing selected church bot requests to local-first fun
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
   - `query_service_schedule`: queries Notion with env-configured property mapping.
   - `find_pop_sheet_music`: searches a configured OneDrive/SharePoint sheet music folder recursively, including shortcut folders, and returns 24 hour sharing links.
+  - `save_memory`: saves text only when the user explicitly asks the bot to remember it.
+  - `retrieve_memory`: retrieves explicitly saved text memories.
 
 Disabled, unknown, unclear, or explicitly denied actions are denied. There is no Azure OpenAI fallback in this version.
 
@@ -171,9 +174,32 @@ If a PPT or sheet music request is missing the title keyword, the bot stores a s
 
 If a service schedule request is too generic, such as `查服事表`, the bot asks which range to use and offers Quick Replies for `下一場`, `本週`, `明天`, and `主日`.
 
+## Agent Runtime And Memory
+
+The agent runtime adds controlled memory without making the bot an unrestricted chat recorder.
+
+- Recent PPT and sheet music results store only resource metadata: profile, LINE scope, requester, file title, Graph drive id, and item id.
+- Temporary sharing links are never stored. When a user asks for the previous one again, the bot creates a fresh 24 hour Graph link.
+- Recent-result recall is requester-scoped. In a group, another user cannot accidentally recall someone else's latest result.
+- Resource aliases are scope-scoped. A user can say `以後 X 就用這份` after a successful result, and the bot will try that alias before doing a folder search in the same group or direct chat.
+- Text memories are saved only when the user clearly asks the bot to remember, save, or store content. Normal group chatter is not saved.
+- Text memories currently expire after 30 days.
+
+Useful memory commands:
+
+```text
+/memories
+/forget-memory <id>
+/memory-status
+```
+
+`/memories` and `/forget-memory <id>` work in the current LINE scope. `/memory-status` is admin-only.
+
 The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
 
 Set `REDIS_URL` to move sessions, cache, recent errors, and rate-limit state to Redis. If `REDIS_URL` is unset, the app uses in-memory stores. If `REDIS_URL` is set but Redis cannot connect, startup fails.
+
+Set `DATABASE_URL` to persist access state and agent memory. If PostgreSQL is configured, the app creates both access tables and agent memory tables on startup. If PostgreSQL is missing, agent memory falls back to in-memory and is lost on restart.
 
 Sheet music search uses a short-lived in-memory file index cache. Admins can clear it from a direct LINE chat:
 
@@ -195,6 +221,8 @@ Common commands:
 /help
 /registry <code>
 /whoami
+/memories
+/forget-memory <id>
 /access-list [user|group|admin]
 /user-remove <userId>
 /group-remove [groupId]
@@ -219,6 +247,7 @@ Advanced commands:
 /route-test <text>
 /last-errors
 /last-routes
+/memory-status
 ```
 
 Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query.

@@ -39,6 +39,8 @@ The first-class functions are:
 - `find_ppt_slides`: search Microsoft Graph/OneDrive PPT or PDF files and return temporary sharing links.
 - `query_service_schedule`: query Notion service schedule data and return a focused service list.
 - `find_pop_sheet_music`: search Microsoft Graph/OneDrive sheet music folders, including shortcut folders, and return temporary sharing links.
+- `save_memory`: save explicit text memories only when the user clearly asks 小哈 to remember/save/store content.
+- `retrieve_memory`: retrieve explicit text memories in the current LINE scope.
 - Intro/help behavior is not a normal function execution path; keep it friendly and do not expose implementation details such as OneDrive or Notion to ordinary users.
 - User functions, admin actions, and system actions are separate action kinds. Do not add management behavior to `enabledFunctions`.
 - Admin natural language is direct-chat only. It may route to selected admin actions, currently invite-code creation, after admin identity and source policy checks.
@@ -75,6 +77,7 @@ When adding or changing an admin action:
 - `src/keyword-router.ts`: conservative fallback routing when Ollama is unavailable or invalid.
 - `src/function-arguments.ts`: argument extraction and slot handling.
 - `src/functions/*`: function definitions, modules, and implementations.
+- `src/agent/*`: controlled agent runtime, resource metadata memory, explicit text memory, aliases, and Postgres/in-memory stores.
 - `src/clients/*`: external service clients for LINE, Ollama, Graph, and Notion.
 - `src/access/*`: access principals, Redis-backed registration invite codes, audit events, and stores.
 - `src/state/*`: short-lived user sessions and selection state.
@@ -124,7 +127,10 @@ When adding or changing an admin action:
 - `REDIS_URL` also moves destructive-action confirmation codes to Redis.
 - Redis rate limiting must use atomic counters, not read-modify-write JSON buckets.
 - PostgreSQL backs managed access principals and audit events when registration is enabled.
-- The app creates access tables on startup if PostgreSQL is configured.
+- PostgreSQL backs agent memory when configured. The app creates access and agent memory tables on startup.
+- Agent memory must not store temporary sharing links. Store Graph drive/item metadata and regenerate short-lived links on demand.
+- Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
+- Do not add automatic group-chat recording. Text memory must be explicit user intent.
 - Do not assume multi-replica safety without Redis for sessions/cache/invite codes.
 - Group and room clarification/selection sessions are requester-scoped. They require the same `source.userId` to continue, and should not be created or matched when LINE does not provide a requester user id.
 - Soft display-name personalization is for task-state replies such as "what title?" or "please choose"; avoid adding names to final data-heavy function results unless the user asks.

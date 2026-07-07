@@ -19,6 +19,8 @@ The service is local-first for routing:
 - Explicit model deny decisions do not fall back.
 - Function execution is still controlled by server-side policy and registered
   handlers.
+- Agent memory is controlled and explicit: file results store metadata only,
+  text memory is saved only when requested, and short-lived links are regenerated.
 
 ## Request Flow
 
@@ -29,12 +31,15 @@ For normal LINE webhook messages, read the flow in this order:
 3. LINE signature and profile path select the `BotProfileConfig`.
 4. Access policy checks direct user, group, registration, and admin identity.
 5. Group engagement decides whether the bot was actually addressed.
-6. Slash commands and pending text sessions can short-circuit the router.
+6. Slash commands, pending text sessions, and agent-memory follow-ups can
+   short-circuit the router.
 7. Intro and small-talk system actions can respond without function execution.
 8. `src/router.ts` asks Ollama for a strict JSON route.
 9. `src/keyword-router.ts` may provide conservative fallback.
-10. Server policy validates enabled functions and calls the registered handler.
-11. Handler output is replied through the LINE client.
+10. Agent memory can resolve aliases before expensive file searches.
+11. Server policy validates enabled functions and calls the registered handler.
+12. Successful file handlers can record resource metadata for later recall.
+13. Handler output is replied through the LINE client.
 
 The main entrance behavior lives in `src/server.ts`; tests for it live mostly in
 `src/__tests__/entrance.test.ts`.
@@ -113,6 +118,32 @@ High-value tests:
 
 Run `pnpm eval:router` after changing function routing.
 
+## Agent Runtime Cookbook
+
+The controlled agent runtime lives in `src/agent/*` and is wired from
+`src/index.ts` into `src/server.ts`.
+
+Use it for cross-function agent behavior that should not belong to one function
+handler:
+
+- recent file recall such as "再給我一次"
+- scope-local aliases such as "以後 X 就用這份"
+- explicit text memories such as "幫我記住..."
+- memory commands such as `/memories`, `/forget-memory <id>`, and
+  `/memory-status`
+
+Do not use it for unrestricted chat logging. Normal group chatter must not be
+saved. Temporary Graph sharing links must not be saved; store drive/item ids and
+regenerate links on demand.
+
+When adding resource memory for a function:
+
+1. Return `agentResource` from the successful function result.
+2. Include only stable storage metadata, not generated sharing links.
+3. Add tests that cover direct handler execution and entrance-level recall.
+4. Keep requester-scoped recall for group conversations unless the user
+   explicitly asks for a shared alias.
+
 ## Admin Cookbook
 
 To add or change an admin action:
@@ -134,6 +165,8 @@ multiple replicas or restarts matter.
 
 - `src/state/*`: pending clarifications and selection sessions.
 - `src/cache/*`: shared cache, including sheet music cache.
+- `src/agent/*`: controlled recent resources, aliases, explicit text memories,
+  and Postgres/in-memory memory stores.
 - `src/in-flight/*`: duplicate in-flight function locks.
 - `src/observability/*`: recent routes and recent errors.
 - `src/access/*`: Postgres access principals, audit, and invite-code stores.
@@ -158,6 +191,7 @@ Function dependencies are intentionally behind ports/clients:
 - Microsoft Graph: `src/clients/graph.ts`
 - Notion: `src/clients/notion.ts`
 - Postgres access store: `src/access/postgres-access-store.ts`
+- Postgres agent memory store: `src/agent/postgres-memory-store.ts`
 - Redis wiring: `src/redis.ts`
 
 Do not put real tokens, tenant ids, folder ids, database ids, or LINE ids in
@@ -180,6 +214,8 @@ Use this map for common issues:
   requester-scoped session tests.
 - Duplicate long task replies: `src/in-flight/*` and in-flight block in
   `src/server.ts`.
+- Follow-up recall or aliases fail: `src/agent/agent-runtime.ts`,
+  `src/agent/*memory-store.ts`, and `src/__tests__/agent-memory.test.ts`.
 - Admin command denied: `adminUserId`, DB admin principals, `adminDirectOnly`,
   admin command parser, action policy tests.
 - Readiness failed: public `/readyz` checks only Postgres and Redis; detailed

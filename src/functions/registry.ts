@@ -1,5 +1,6 @@
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
+import { InMemoryAgentMemoryStore, type AgentMemoryStore } from "../agent/memory-store.js";
 import { MemoryCacheStore, type CacheStore } from "../cache/cache-store.js";
 import { createLlmStatusAdminHandler } from "../llm-diagnostics.js";
 import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
@@ -20,6 +21,7 @@ export interface RegistryClients {
   notion?: NotionDatabaseClient;
   sessionStore?: SessionStore;
   cache?: CacheStore;
+  memoryStore?: AgentMemoryStore;
   now?: () => Date;
   requestIdFactory?: () => string;
   fetchImpl?: typeof fetch;
@@ -42,6 +44,7 @@ export function createFunctionRegistries(
   const adminHandlers: AdminHandlerRegistry = {};
   const sessionStore = clients.sessionStore ?? new InMemorySessionStore();
   const cache = clients.cache ?? new MemoryCacheStore();
+  const memoryStore = clients.memoryStore ?? new InMemoryAgentMemoryStore({ now: clients.now });
 
   const moduleContext = {
     config,
@@ -52,6 +55,7 @@ export function createFunctionRegistries(
         : undefined,
       sessionStore,
       cache,
+      memoryStore,
       now: clients.now,
       requestIdFactory: clients.requestIdFactory
     }

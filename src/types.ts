@@ -1,7 +1,9 @@
 export const FUNCTION_NAMES = [
   "find_ppt_slides",
   "query_service_schedule",
-  "find_pop_sheet_music"
+  "find_pop_sheet_music",
+  "save_memory",
+  "retrieve_memory"
 ] as const;
 
 export type FunctionName = (typeof FUNCTION_NAMES)[number];
@@ -341,10 +343,24 @@ export interface LineIdentityClient {
   getGroupDisplayName(groupId: string): Promise<string | undefined>;
 }
 
+export type AgentResourceType = "ppt_slide" | "sheet_music";
+
+export interface AgentResourceReference {
+  resourceType: AgentResourceType;
+  title: string;
+  query?: string;
+  storage: {
+    provider: "graph";
+    driveId: string;
+    itemId: string;
+  };
+}
+
 export interface FunctionExecutionResult {
   ok: boolean;
   replyText: string;
   quickReplies?: QuickReplyItem[];
+  agentResource?: AgentResourceReference;
 }
 
 export interface FunctionHandlerContext {

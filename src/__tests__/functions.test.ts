@@ -160,6 +160,11 @@ describe("find_ppt_slides", () => {
         "https://download.invalid/amazing-grace"
       ].join("\n")
     );
+    expect(result.agentResource).toMatchObject({
+      resourceType: "ppt_slide",
+      title: "奇異恩典.pptx",
+      storage: { provider: "graph", driveId: "drive-id", itemId: "1" }
+    });
     expect(graph.createSharingLink).toHaveBeenCalledWith(
       "drive-id",
       "1",

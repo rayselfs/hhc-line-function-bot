@@ -3,7 +3,11 @@ import { createAdminActionRouter } from "./admin-action-router.js";
 import { RedisConfirmationStore } from "./actions/confirmation-store.js";
 import { createAccessStore } from "./access/create-access-store.js";
 import { RedisRegistrationInviteCodeStore } from "./access/registration-invite-code-store.js";
+import { createAgentMemoryStore } from "./agent/create-agent-memory-store.js";
+import { createAgentRuntime } from "./agent/agent-runtime.js";
 import { createCacheStore } from "./cache/create-cache-store.js";
+import { createGraphDriveClient } from "./clients/graph.js";
+import { createNotionDatabaseClient } from "./clients/notion.js";
 import { loadConfigFromEnv } from "./config.js";
 import { createDependencyDiagnostics } from "./diagnostics/dependencies.js";
 import { createPostgresRuntime } from "./db/postgres.js";
@@ -35,6 +39,9 @@ const adminActionRouter = createAdminActionRouter({ primary });
 const redis = await createRedisRuntime(config.redis);
 const postgres = await createPostgresRuntime(config.database);
 const accessStore = await createAccessStore({ db: postgres?.pool });
+const memoryStore = await createAgentMemoryStore({ db: postgres?.pool });
+const graph = config.graph ? createGraphDriveClient(config.graph) : undefined;
+const notion = config.notion ? createNotionDatabaseClient(config.notion) : undefined;
 const registrationInviteCodeStore = redis
   ? new RedisRegistrationInviteCodeStore({ client: redis.client, keyPrefix: redis.keyPrefix })
   : undefined;
@@ -52,7 +59,13 @@ const rateLimiter = createRateLimiter({
   redis,
   config: config.rateLimit ?? { enabled: true, windowMs: 60_000, maxRequests: 20 }
 });
-const registries = createFunctionRegistries(config, { sessionStore, cache });
+const registries = createFunctionRegistries(config, {
+  graph,
+  notion,
+  sessionStore,
+  cache,
+  memoryStore
+});
 const app = createApp(config, {
   router,
   adminActionRouter,
@@ -67,6 +80,7 @@ const app = createApp(config, {
   confirmationStore,
   inFlightStore,
   textGenerator: primary,
+  agentRuntime: createAgentRuntime({ memoryStore, graph }),
   diagnostics: createDependencyDiagnostics({
     config,
     postgres: postgres?.pool,

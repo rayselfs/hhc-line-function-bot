@@ -19,6 +19,21 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
   return {
     route(input: RouteInput): RouteResult {
       const text = input.text.trim();
+      const memoryIntent = extractMemoryIntent(text);
+      if (memoryIntent) {
+        if (!input.enabledFunctions.includes(memoryIntent.action)) {
+          return { type: "deny", reason: "function_disabled", provider: "keyword" };
+        }
+        return {
+          type: "execute",
+          action: memoryIntent.action,
+          arguments: normalizeFunctionArguments(memoryIntent.action, memoryIntent.arguments, {
+            text
+          }),
+          provider: "keyword"
+        };
+      }
+
       const matches = rules.filter((rule) =>
         rule.keywordFallback.keywords.some((keyword) => includesKeyword(text, keyword))
       );
@@ -63,6 +78,41 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
       };
     }
   };
+}
+
+function extractMemoryIntent(
+  text: string
+):
+  | { action: "save_memory"; arguments: JsonRecord }
+  | { action: "retrieve_memory"; arguments: JsonRecord }
+  | undefined {
+  const value = stripWakeAddress(text.trim());
+  const save = value.match(/^(?:幫我)?(?:記住|保存|儲存)(?:一下)?[：:\s]*(.*)$/u);
+  if (save) {
+    return {
+      action: "save_memory",
+      arguments: { content: save[1]?.trim() ?? "" }
+    };
+  }
+
+  const retrieve = value.match(
+    /^(?:幫我)?(?:查|找|看)(?:一下)?(?:我)?(?:記住|保存|儲存)(?:的)?[：:\s]*(.*)$/u
+  );
+  if (retrieve) {
+    return {
+      action: "retrieve_memory",
+      arguments: { query: retrieve[1]?.trim() ?? "" }
+    };
+  }
+
+  const remembered = value.match(/^我記住的[：:\s]*(.*)$/u);
+  if (remembered) {
+    return {
+      action: "retrieve_memory",
+      arguments: { query: remembered[1]?.trim() ?? "" }
+    };
+  }
+  return undefined;
 }
 
 function includesKeyword(text: string, keyword: string): boolean {

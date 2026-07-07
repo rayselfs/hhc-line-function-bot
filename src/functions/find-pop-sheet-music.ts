@@ -16,6 +16,7 @@ import {
 import { storePendingFunctionQuery } from "./pending-function.js";
 import type {
   DriveItem,
+  FunctionExecutionResult,
   FunctionHandler,
   FunctionHandlerContext,
   GraphDriveClient,
@@ -301,13 +302,18 @@ async function createSharingLinkReply(
   graph: GraphDriveClient,
   item: Pick<DriveItem, "id" | "name" | "driveId">,
   now: Date
-) {
+): Promise<FunctionExecutionResult> {
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const link = await graph.createSharingLink(item.driveId ?? "", item.id, expiresAt);
 
   return {
     ok: true,
-    replyText: ["已找到流行歌曲樂譜：", item.name, "下載連結（1 天內有效）：", link].join("\n")
+    replyText: ["已找到流行歌曲樂譜：", item.name, "下載連結（1 天內有效）：", link].join("\n"),
+    agentResource: {
+      resourceType: "sheet_music",
+      title: item.name,
+      storage: { provider: "graph", driveId: item.driveId ?? "", itemId: item.id }
+    }
   };
 }
 

@@ -61,9 +61,25 @@ export const findPopSheetMusicArgumentsSchema = z
   })
   .strip();
 
+export const saveMemoryArgumentsSchema = z
+  .object({
+    title: z.string().optional(),
+    content: z.string().optional().default(""),
+    query: z.string().optional()
+  })
+  .strip();
+
+export const retrieveMemoryArgumentsSchema = z
+  .object({
+    query: z.string().optional().default("")
+  })
+  .strip();
+
 export type FindPptSlidesArguments = z.infer<typeof findPptSlidesArgumentsSchema>;
 export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleArgumentsSchema>;
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
+export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
+export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
 
 export function parseFunctionArguments(
   action: FunctionName,
@@ -72,7 +88,9 @@ export function parseFunctionArguments(
   const schema = {
     find_ppt_slides: findPptSlidesArgumentsSchema,
     query_service_schedule: queryServiceScheduleArgumentsSchema,
-    find_pop_sheet_music: findPopSheetMusicArgumentsSchema
+    find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
+    save_memory: saveMemoryArgumentsSchema,
+    retrieve_memory: retrieveMemoryArgumentsSchema
   }[action];
   const parsed = schema.safeParse(rawArguments ?? {});
   return parsed.success ? (parsed.data as JsonRecord) : undefined;
