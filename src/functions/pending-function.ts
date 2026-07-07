@@ -1,4 +1,5 @@
 import { messages } from "../messages.js";
+import { applyPendingSlotAnswer } from "../agent/slot-clarification.js";
 import { canCreateRequesterScopedSession } from "../state/session-safety.js";
 import type { SessionStore } from "../state/session-store.js";
 import type {
@@ -74,11 +75,7 @@ export function createPendingFunctionTextMessageHandler(
       const answer = request.text.trim();
       const normalizedArguments = normalizeFunctionArguments(
         pending.action,
-        {
-          ...pending.arguments,
-          query: answer,
-          originalQuery: answer
-        },
+        applyPendingSlotAnswer(pending.action, pending.arguments, answer),
         { text: answer }
       );
       return handler(normalizedArguments, {

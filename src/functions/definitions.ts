@@ -7,12 +7,38 @@ import {
   retrieveMemoryArgumentsSchema,
   saveMemoryArgumentsSchema
 } from "../function-arguments.js";
-import type { FunctionName, JsonRecord } from "../types.js";
+import type { AgentResourceType, FunctionName, JsonRecord } from "../types.js";
 
 export interface FunctionKeywordFallback {
   keywords: string[];
   stripWords: string[];
   defaultArguments?: JsonRecord;
+}
+
+export type FunctionSideEffectLevel = "read" | "write" | "admin" | "destructive";
+export type FunctionAllowedSource = "user" | "group";
+export type FunctionRequiredSlotMissingWhen = "blank" | "service_schedule_generic";
+
+export interface FunctionRequiredSlot {
+  name: string;
+  argument: string;
+  missingWhen: FunctionRequiredSlotMissingWhen;
+  prompt: string;
+  quickReplies?: Array<{
+    label: string;
+    text: string;
+  }>;
+}
+
+export interface FunctionResourcePolicy {
+  kind: "none" | "graph_file";
+  resourceTypes?: AgentResourceType[];
+  remember: boolean;
+  alias: boolean;
+}
+
+export interface FunctionMemoryPolicy {
+  kind: "none" | "resource_metadata" | "explicit_text" | "retrieve_text";
 }
 
 export interface FunctionDefinition {
@@ -22,6 +48,11 @@ export interface FunctionDefinition {
   examples: string[];
   requires: Array<"graph" | "notion" | "session" | "cache" | "memory">;
   scope: "profile" | "group_capable";
+  sideEffectLevel: FunctionSideEffectLevel;
+  allowedSources: FunctionAllowedSource[];
+  requiredSlots: FunctionRequiredSlot[];
+  resourcePolicy: FunctionResourcePolicy;
+  memoryPolicy: FunctionMemoryPolicy;
   clarificationPrompt: string;
   description: string;
   argumentSchema: z.ZodType;
@@ -43,6 +74,23 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     examples: ["小哈 查投影片 奇異恩典", "小哈 查主日報告投影片"],
     requires: ["graph", "session"],
     scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        prompt: "要查哪一份投影片？請直接回覆名稱。"
+      }
+    ],
+    resourcePolicy: {
+      kind: "graph_file",
+      resourceTypes: ["ppt_slide"],
+      remember: true,
+      alias: true
+    },
+    memoryPolicy: { kind: "resource_metadata" },
     clarificationPrompt: "要查哪一份投影片？請直接回覆名稱。",
     description:
       '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "fileType":"ppt|pdf|any optional", "includePdf": boolean optional, "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
@@ -65,6 +113,24 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     examples: ["小哈 下一場聚會服事表", "小哈 查主日服事"],
     requires: ["notion"],
     scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "service_schedule_range",
+        argument: "query",
+        missingWhen: "service_schedule_generic",
+        prompt: "要查哪一場聚會或哪一天的服事？",
+        quickReplies: [
+          { label: "下一場", text: "下一場" },
+          { label: "本週", text: "本週" },
+          { label: "明天", text: "明天" },
+          { label: "主日", text: "主日服事" }
+        ]
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "none" },
     clarificationPrompt: "要查哪一場聚會或哪一天的服事？",
     description:
       '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"original user request text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.',
@@ -86,6 +152,23 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     examples: ["小哈 查流行歌譜 Yesterday", "小哈 幫我找 A TIME FOR US 的樂譜"],
     requires: ["graph", "cache"],
     scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        prompt: "要查哪一首流行歌曲樂譜？請直接回覆歌名。"
+      }
+    ],
+    resourcePolicy: {
+      kind: "graph_file",
+      resourceTypes: ["sheet_music"],
+      remember: true,
+      alias: true
+    },
+    memoryPolicy: { kind: "resource_metadata" },
     clarificationPrompt: "要查哪一首流行歌曲樂譜？請直接回覆歌名。",
     description:
       '- find_pop_sheet_music: find pop song sheet music PDF/image files by title or artist. Arguments: {"query":"song title keyword", "artist":"artist optional", "fileType":"pdf|image|any optional", "matchMode":"fuzzy|exact optional"}. Use this only for 流行歌譜, 流行歌曲樂譜, 樂譜, or sheet music requests.',
@@ -122,6 +205,18 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     examples: ["小哈幫我記住這個月服事表：主日導播是小明"],
     requires: ["memory"],
     scope: "profile",
+    sideEffectLevel: "write",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "content",
+        argument: "content",
+        missingWhen: "blank",
+        prompt: "請直接告訴我要記住的內容。"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "explicit_text" },
     clarificationPrompt: "請直接告訴我要記住的內容。",
     description:
       '- save_memory: save explicit user-provided text memory only when the user clearly asks the bot to remember/save/store information. Arguments: {"title":"short optional title", "content":"the exact text to remember", "query":"optional lookup phrase"}. Do not use for passive group chatter.',
@@ -143,6 +238,18 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     examples: ["小哈查我記住的服事表"],
     requires: ["memory"],
     scope: "profile",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        prompt: "要查哪一段記住的資訊？請回覆關鍵字。"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "retrieve_text" },
     clarificationPrompt: "請告訴我要查哪一段記住的資訊。",
     description:
       '- retrieve_memory: retrieve explicit saved text memories. Arguments: {"query":"keyword or topic to search"}. Use only when the user asks what the bot remembered/saved/stored.',

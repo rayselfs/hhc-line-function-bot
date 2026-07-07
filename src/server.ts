@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import fastify from "fastify";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -11,6 +11,12 @@ import {
   type RegistrationInviteCodeStore
 } from "./access/registration-invite-code-store.js";
 import type { AgentRuntime } from "./agent/agent-runtime.js";
+import { createAgentTurnRuntime, type AgentTurnRuntime } from "./agent/turn-runtime.js";
+import {
+  formatAgentTurnTraces,
+  InMemoryAgentTraceStore,
+  type AgentTraceStore
+} from "./agent/trace-store.js";
 import type { AccessPrincipalType, AccessStore } from "./access/types.js";
 import { createStaticAppDiagnostics } from "./diagnostics/dependencies.js";
 import {
@@ -20,25 +26,14 @@ import {
 } from "./engagement.js";
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
 import { getFunctionDefinitions } from "./functions/definitions.js";
-import {
-  MemoryInFlightStore,
-  type InFlightKey,
-  type InFlightStore
-} from "./in-flight/in-flight-store.js";
-import {
-  enabledNaturalLanguageAdminActionNames,
-  matchesNaturalLanguageAdminActionHint
-} from "./actions/catalog.js";
+import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-store.js";
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
 import { messages } from "./messages.js";
 import { sanitizeActionTelemetryEvent } from "./observability/action-telemetry.js";
-import {
-  resolveRequesterDisplayName,
-  withRequesterDisplayName
-} from "./requester-personalization.js";
-import { createControlledSmallTalkReply, smallTalkCategoryFromArguments } from "./small-talk.js";
+import { resolveRequesterDisplayName } from "./requester-personalization.js";
+import { createControlledSmallTalkReply } from "./small-talk.js";
 import {
   formatLastErrors,
   InMemoryLastErrorStore,
@@ -47,10 +42,10 @@ import {
 import {
   formatLastRoutes,
   InMemoryLastRouteStore,
-  type LastRouteRecord,
   type LastRouteStore
 } from "./observability/last-route-store.js";
 import { InMemoryRateLimiter, type RateLimiter } from "./rate-limit.js";
+import type { SessionStore } from "./state/session-store.js";
 import type {
   AppConfig,
   AppDiagnostics,
@@ -64,9 +59,7 @@ import type {
   LineIdentityClient,
   LineEvent,
   LineReplyClient,
-  LineSource,
   LineWebhookPayload,
-  JsonRecord,
   FunctionName,
   PostbackHandlerRegistry,
   PostbackRequest,
@@ -99,6 +92,9 @@ export interface AppDependencies {
   inFlightStore?: InFlightStore;
   textGenerator?: TextGenerationProvider;
   agentRuntime?: AgentRuntime;
+  agentTurnRuntime?: AgentTurnRuntime;
+  agentTraceStore?: AgentTraceStore;
+  sessionStore?: SessionStore;
 }
 
 interface AllowResult {
@@ -175,6 +171,7 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
       { usage: "/route-test <text>", description: "測試一段文字會 route 到哪個 function" },
       { usage: "/last-errors", description: "查看最近錯誤" },
       { usage: "/last-routes", description: "查看最近 route/function 結果" },
+      { usage: "/last-agent-turns [limit]", description: "查看最近 agent runtime 步驟" },
       { usage: "/memory-status", description: "查看 agent memory 統計" }
     ]
   }
@@ -222,6 +219,26 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const diagnostics = deps.diagnostics ?? createStaticAppDiagnostics(config);
   const inFlightStore = deps.inFlightStore ?? new MemoryInFlightStore();
   const textGenerator = deps.textGenerator;
+  const agentTraceStore =
+    deps.agentTraceStore ?? new InMemoryAgentTraceStore(config.lastErrors?.maxEntries ?? 20);
+  const agentTurnRuntime =
+    deps.agentTurnRuntime ??
+    createAgentTurnRuntime({
+      router: deps.router,
+      functionRegistry,
+      textMessageHandlers: deps.textMessageHandlers ?? {},
+      adminActionRouter,
+      adminActionRegistry,
+      accessStore,
+      inFlightStore,
+      sessionStore: deps.sessionStore,
+      agentRuntime: deps.agentRuntime,
+      traceStore: agentTraceStore,
+      lastErrorStore,
+      lastRouteStore,
+      routeObserver: deps.routeObserver,
+      textGenerator
+    });
 
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
@@ -245,9 +262,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         reply,
         profile,
         deps.router,
-        adminActionRouter,
         adminActionRegistry,
-        functionRegistry,
         deps.postbackHandlers ?? {},
         deps.textMessageHandlers ?? {},
         deps.adminHandlers ?? {},
@@ -261,7 +276,8 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         accessStore,
         registrationInviteCodeStore,
         diagnostics,
-        inFlightStore,
+        agentTurnRuntime,
+        agentTraceStore,
         textGenerator,
         deps.agentRuntime
       );
@@ -276,9 +292,7 @@ async function handleWebhook(
   reply: FastifyReply,
   profile: BotProfileConfig,
   router: FunctionRouterPort,
-  adminActionRouter: AdminActionRouterPort | undefined,
   adminActionRegistry: AdminActionRegistry,
-  functionRegistry: FunctionRegistry,
   postbackHandlers: PostbackHandlerRegistry,
   textMessageHandlers: TextMessageHandlerRegistry,
   adminHandlers: AdminHandlerRegistry,
@@ -292,7 +306,8 @@ async function handleWebhook(
   accessStore: AccessStore,
   registrationInviteCodeStore: RegistrationInviteCodeStore,
   diagnostics: AppDiagnostics,
-  inFlightStore: InFlightStore,
+  agentTurnRuntime: AgentTurnRuntime,
+  agentTraceStore: AgentTraceStore,
   textGenerator: TextGenerationProvider | undefined,
   agentRuntime: AgentRuntime | undefined
 ) {
@@ -452,6 +467,7 @@ async function handleWebhook(
           accessStore,
           adminActionRegistry,
           diagnostics,
+          agentTraceStore,
           requestId
         );
       } catch (error) {
@@ -543,325 +559,22 @@ async function handleWebhook(
       continue;
     }
 
-    const agentPreRouteResult = await agentRuntime?.handleTextBeforeRouting({
-      text: event.message.text,
-      context: { profile: effectiveProfile, event, requestId, requesterDisplayName }
-    });
-    if (agentPreRouteResult) {
-      await emitRouteEvent(routeObserver, {
-        kind: "text_handler",
-        profileName: profile.name,
-        sourceType: event.source.type,
-        requestId,
-        handler: "agent_runtime",
-        ok: agentPreRouteResult.ok
-      });
-      await line.replyText(
-        event.replyToken,
-        agentPreRouteResult.replyText,
-        agentPreRouteResult.quickReplies
-          ? { quickReplies: agentPreRouteResult.quickReplies }
-          : undefined
-      );
-      continue;
-    }
+    const routingAllowed = !groupEngagement || groupEngagementAllowsReply(groupEngagement);
 
-    const textMessageHandler = await matchingTextMessageHandler(
+    const agentTurnResult = await agentTurnRuntime.handleTextTurn({
+      profile: effectiveProfile,
       event,
-      effectiveProfile,
-      textMessageHandlers,
-      requesterDisplayName
-    );
-    if (textMessageHandler) {
-      const handlerStartedAt = Date.now();
-      const result = await textMessageHandler.handler.handle(
-        { text: event.message.text },
-        { profile: effectiveProfile, event, requestId, requesterDisplayName }
-      );
-      await emitRouteEvent(routeObserver, {
-        kind: "text_handler",
-        profileName: profile.name,
-        sourceType: event.source.type,
-        requestId,
-        handler: textMessageHandler.name,
-        ok: result?.ok,
-        durationMs: elapsedMs(handlerStartedAt)
-      });
-      if (result) {
-        const textHandlerFunctionName = functionNameForAgentResource(
-          result.agentResource?.resourceType
-        );
-        if (textHandlerFunctionName) {
-          await agentRuntime?.afterFunctionResult({
-            context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
-            action: textHandlerFunctionName,
-            arguments: {},
-            result
-          });
-        }
-        await line.replyText(
-          event.replyToken,
-          result.replyText,
-          result.quickReplies ? { quickReplies: result.quickReplies } : undefined
-        );
-      }
-      continue;
-    }
-
-    if (groupEngagement && !groupEngagementAllowsReply(groupEngagement)) {
-      continue;
-    }
-
-    const adminActionResult = await handleNaturalLanguageAdminAction(
-      event.message.text,
-      effectiveProfile,
-      event,
-      adminActionRouter,
-      adminActionRegistry,
-      accessStore,
-      routeObserver,
-      lastRouteStore,
-      requestId
-    );
-    if (adminActionResult) {
-      await line.replyText(
-        event.replyToken,
-        adminActionResult.replyText,
-        adminActionResult.quickReplies
-          ? { quickReplies: adminActionResult.quickReplies }
-          : undefined
-      );
-      continue;
-    }
-
-    const routeStartedAt = Date.now();
-    let route;
-    try {
-      route = await router.route({
-        profileName: effectiveProfile.name,
-        text: event.message.text,
-        enabledFunctions: effectiveProfile.enabledFunctions,
-        source: event.source
-      });
-    } catch (error) {
-      await lastErrorStore.record({
-        requestId,
-        occurredAt: new Date().toISOString(),
-        profileName: profile.name,
-        sourceType: event.source.type,
-        phase: "router",
-        errorName: error instanceof Error ? error.name : typeof error,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      await line.replyText(event.replyToken, messages.requestFailed);
-      continue;
-    }
-    await emitRouteEvent(routeObserver, {
-      kind: "route",
-      profileName: profile.name,
-      sourceType: event.source.type,
       requestId,
-      provider: route.provider,
-      outcome: route.type,
-      action: route.type === "execute" || route.type === "respond" ? route.action : undefined,
-      reason: route.type === "deny" ? route.reason : undefined,
-      confidence:
-        route.type === "execute" || route.type === "respond" ? route.confidence : undefined,
-      fallbackProvider: route.fallbackProvider,
-      fallbackReason: route.fallbackReason,
+      requesterDisplayName,
       engagement: groupEngagement?.kind,
-      durationMs: elapsedMs(routeStartedAt)
+      allowRouting: routingAllowed
     });
-    await lastRouteStore.record({
-      requestId,
-      occurredAt: new Date().toISOString(),
-      profileName: profile.name,
-      sourceType: event.source.type,
-      phase: "route",
-      provider: route.provider,
-      outcome: route.type,
-      action: route.type === "execute" || route.type === "respond" ? route.action : undefined,
-      reason: route.type === "deny" ? route.reason : undefined,
-      fallbackProvider: route.fallbackProvider,
-      fallbackReason: route.fallbackReason,
-      ...(route.type === "execute" ? summarizeRouteArguments(route.arguments) : {}),
-      durationMs: elapsedMs(routeStartedAt)
-    });
-
-    if (route.type === "respond") {
-      if (route.action === "introduce_bot") {
-        const intro = createIntroReply(effectiveProfile, event.message.text, {
-          force: true,
-          variant: introVariantRouteArgument(route.arguments)
-        });
-        await line.replyText(
-          event.replyToken,
-          intro?.replyText ?? messages.requestFailed,
-          intro?.quickReplies ? { quickReplies: intro.quickReplies } : undefined
-        );
-        continue;
-      }
-      if (route.action === "small_talk") {
-        const category = smallTalkCategoryFromArguments(route.arguments);
-        const result = await createControlledSmallTalkReply({
-          profile: effectiveProfile,
-          text: event.message.text,
-          category,
-          generator: textGenerator
-        });
-        await line.replyText(event.replyToken, result.replyText, undefined);
-        continue;
-      }
-      await line.replyText(event.replyToken, messages.unsupported);
-      continue;
-    }
-
-    if (route.type === "deny") {
-      const quickReplies = buildFunctionQuickReplies(effectiveProfile);
+    if (agentTurnResult) {
       await line.replyText(
         event.replyToken,
-        quickReplies.length > 0 ? messages.unsupportedWithSuggestions : messages.unsupported,
-        quickReplies.length > 0 ? { quickReplies } : undefined
+        agentTurnResult.replyText,
+        agentTurnResult.quickReplies ? { quickReplies: agentTurnResult.quickReplies } : undefined
       );
-      continue;
-    }
-
-    const handler = functionRegistry[route.action];
-    if (!handler) {
-      await line.replyText(event.replyToken, messages.functionNotConfigured);
-      continue;
-    }
-
-    const agentBeforeFunctionResult = await agentRuntime?.handleBeforeFunctionExecution({
-      context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
-      action: route.action,
-      arguments: route.arguments
-    });
-    if (agentBeforeFunctionResult) {
-      await emitRouteEvent(routeObserver, {
-        kind: "function_result",
-        profileName: profile.name,
-        sourceType: event.source.type,
-        requestId,
-        action: route.action,
-        ok: agentBeforeFunctionResult.ok,
-        dedup: "agent_memory"
-      });
-      await line.replyText(
-        event.replyToken,
-        agentBeforeFunctionResult.replyText,
-        agentBeforeFunctionResult.quickReplies
-          ? { quickReplies: agentBeforeFunctionResult.quickReplies }
-          : undefined
-      );
-      continue;
-    }
-
-    const inFlight = buildInFlightKey(
-      effectiveProfile.name,
-      event.source,
-      route.action,
-      route.arguments
-    );
-    if (inFlight) {
-      const startResult = await inFlightStore.tryStart(inFlight.key, IN_FLIGHT_TTL_MS);
-      if (startResult === "busy") {
-        await emitRouteEvent(routeObserver, {
-          kind: "function_result",
-          profileName: profile.name,
-          sourceType: event.source.type,
-          requestId,
-          action: route.action,
-          ok: false,
-          dedup: "busy",
-          queryHash: inFlight.queryHash
-        });
-        await line.replyText(
-          event.replyToken,
-          withRequesterDisplayName({ requesterDisplayName }, "我還在找這個，等我一下就好。"),
-          undefined
-        );
-        continue;
-      }
-    }
-
-    const functionStartedAt = Date.now();
-    try {
-      const result = await handler(route.arguments, {
-        profile: effectiveProfile,
-        event,
-        requestId,
-        requesterDisplayName
-      });
-      await agentRuntime?.afterFunctionResult({
-        context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
-        action: route.action,
-        arguments: route.arguments,
-        result
-      });
-      await emitRouteEvent(routeObserver, {
-        kind: "function_result",
-        profileName: profile.name,
-        sourceType: event.source.type,
-        requestId,
-        action: route.action,
-        ok: result.ok,
-        dedup: inFlight ? "started" : undefined,
-        queryHash: inFlight?.queryHash,
-        durationMs: elapsedMs(functionStartedAt)
-      });
-      await lastRouteStore.record({
-        requestId,
-        occurredAt: new Date().toISOString(),
-        profileName: profile.name,
-        sourceType: event.source.type,
-        phase: "function",
-        action: route.action,
-        ok: result.ok,
-        durationMs: elapsedMs(functionStartedAt)
-      });
-      await line.replyText(
-        event.replyToken,
-        result.replyText,
-        result.quickReplies ? { quickReplies: result.quickReplies } : undefined
-      );
-    } catch (error) {
-      await lastErrorStore.record({
-        requestId,
-        occurredAt: new Date().toISOString(),
-        profileName: profile.name,
-        sourceType: event.source.type,
-        phase: "function",
-        action: route.action,
-        errorName: error instanceof Error ? error.name : typeof error,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      await emitRouteEvent(routeObserver, {
-        kind: "function_error",
-        profileName: profile.name,
-        sourceType: event.source.type,
-        requestId,
-        action: route.action,
-        ok: false,
-        errorName: error instanceof Error ? error.name : typeof error,
-        durationMs: elapsedMs(functionStartedAt)
-      });
-      await lastRouteStore.record({
-        requestId,
-        occurredAt: new Date().toISOString(),
-        profileName: profile.name,
-        sourceType: event.source.type,
-        phase: "function",
-        action: route.action,
-        ok: false,
-        errorName: error instanceof Error ? error.name : typeof error,
-        durationMs: elapsedMs(functionStartedAt)
-      });
-      await line.replyText(event.replyToken, messages.requestFailed);
-    } finally {
-      if (inFlight) {
-        await releaseInFlight(inFlightStore, inFlight.key);
-      }
     }
   }
 
@@ -1304,160 +1017,6 @@ async function shouldPromptManagedRegistration(
   );
 }
 
-async function handleNaturalLanguageAdminAction(
-  text: string,
-  profile: BotProfileConfig,
-  event: LineEvent,
-  adminActionRouter: AdminActionRouterPort | undefined,
-  adminActionRegistry: AdminActionRegistry,
-  accessStore: AccessStore,
-  routeObserver: RouteObserver | undefined,
-  lastRouteStore: LastRouteStore,
-  requestId: string
-): Promise<FunctionExecutionResult | undefined> {
-  if (!matchesNaturalLanguageAdminActionHint(text)) {
-    return undefined;
-  }
-
-  if (!(await isAdminUser(profile, event.source.userId, accessStore))) {
-    return undefined;
-  }
-
-  if (event.source.type !== "user") {
-    return { ok: true, replyText: "管理操作請到個人對話使用。" };
-  }
-
-  if (!adminActionRouter) {
-    return { ok: true, replyText: adminNaturalLanguageUnsupportedReply() };
-  }
-
-  const routeStartedAt = Date.now();
-  const route = await adminActionRouter.route({
-    profileName: profile.name,
-    text,
-    enabledActions: enabledNaturalLanguageAdminActionNames(),
-    source: event.source
-  });
-  const routeDurationMs = elapsedMs(routeStartedAt);
-  await recordAdminActionRoute({
-    routeObserver,
-    lastRouteStore,
-    requestId,
-    profile,
-    event,
-    provider: route.provider,
-    outcome: route.type,
-    action: route.type === "execute" ? route.action : undefined,
-    reason: route.type === "deny" ? route.reason : undefined,
-    confidence: route.type === "execute" ? route.confidence : undefined,
-    fallbackProvider: route.type === "deny" ? route.fallbackProvider : undefined,
-    fallbackReason: route.type === "deny" ? route.fallbackReason : undefined,
-    durationMs: routeDurationMs
-  });
-
-  if (route.type === "deny") {
-    return { ok: true, replyText: adminNaturalLanguageUnsupportedReply() };
-  }
-
-  const actionStartedAt = Date.now();
-  const result = await adminActionRegistry.execute({
-    action: route.action,
-    profile,
-    event
-  });
-  await recordAdminActionResult({
-    routeObserver,
-    lastRouteStore,
-    requestId,
-    profile,
-    event,
-    action: route.action,
-    ok: result.ok,
-    durationMs: elapsedMs(actionStartedAt)
-  });
-  return result;
-}
-
-async function recordAdminActionRoute(input: {
-  routeObserver: RouteObserver | undefined;
-  lastRouteStore: LastRouteStore;
-  requestId: string;
-  profile: BotProfileConfig;
-  event: LineEvent;
-  provider: "ollama" | "router";
-  outcome: "execute" | "deny";
-  action?: string;
-  reason?: string;
-  confidence?: number;
-  fallbackProvider?: "ollama";
-  fallbackReason?: string;
-  durationMs: number;
-}): Promise<void> {
-  await emitRouteEvent(input.routeObserver, {
-    kind: "admin_action_route",
-    profileName: input.profile.name,
-    sourceType: input.event.source.type,
-    requestId: input.requestId,
-    provider: input.provider,
-    outcome: input.outcome,
-    action: input.action,
-    reason: input.reason,
-    confidence: input.confidence,
-    fallbackProvider: input.fallbackProvider,
-    fallbackReason: input.fallbackReason,
-    durationMs: input.durationMs
-  });
-  await input.lastRouteStore.record({
-    requestId: input.requestId,
-    occurredAt: new Date().toISOString(),
-    profileName: input.profile.name,
-    sourceType: input.event.source.type,
-    phase: "admin_route",
-    provider: input.provider,
-    outcome: input.outcome,
-    action: input.action,
-    reason: input.reason,
-    fallbackProvider: input.fallbackProvider,
-    fallbackReason: input.fallbackReason,
-    durationMs: input.durationMs
-  });
-}
-
-async function recordAdminActionResult(input: {
-  routeObserver: RouteObserver | undefined;
-  lastRouteStore: LastRouteStore;
-  requestId: string;
-  profile: BotProfileConfig;
-  event: LineEvent;
-  action: string;
-  ok: boolean;
-  durationMs: number;
-}): Promise<void> {
-  await emitRouteEvent(input.routeObserver, {
-    kind: "admin_action_result",
-    profileName: input.profile.name,
-    sourceType: input.event.source.type,
-    requestId: input.requestId,
-    action: input.action,
-    ok: input.ok,
-    durationMs: input.durationMs
-  });
-  await input.lastRouteStore.record({
-    requestId: input.requestId,
-    occurredAt: new Date().toISOString(),
-    profileName: input.profile.name,
-    sourceType: input.event.source.type,
-    phase: "admin_action",
-    action: input.action,
-    ok: input.ok,
-    durationMs: input.durationMs
-  });
-}
-
-function adminNaturalLanguageUnsupportedReply(): string {
-  return "我目前只能協助產生註冊邀請碼，請改用 /invite-code-create 或 /help admin。";
-}
-
 async function handleAdminCommand(
   text: string,
   profile: BotProfileConfig,
@@ -1469,6 +1028,7 @@ async function handleAdminCommand(
   accessStore: AccessStore,
   adminActionRegistry: AdminActionRegistry,
   diagnostics: AppDiagnostics,
+  agentTraceStore: AgentTraceStore,
   requestId: string
 ): Promise<FunctionExecutionResult> {
   const parsed = parseAdminCommand(text);
@@ -1545,6 +1105,14 @@ async function handleAdminCommand(
       ok: true,
       replyText: formatLastRoutes(routes)
     }));
+  }
+
+  if (parsed.command === "last-agent-turns") {
+    const limit = Math.min(parsePositiveInt(parsed.args[0]) ?? 10, 50);
+    return {
+      ok: true,
+      replyText: formatAgentTurnTraces(await agentTraceStore.list(limit))
+    };
   }
 
   const accessResult = await handleAdminAccessCommand(
@@ -1983,15 +1551,6 @@ function formatFallbackDiagnostics(route: {
   ];
 }
 
-function summarizeRouteArguments(args: JsonRecord): Pick<LastRouteRecord, "query" | "fileType"> {
-  const queryValue = args.query;
-  const fileTypeValue = args.fileType;
-  return {
-    query: typeof queryValue === "string" ? (queryValue.trim() ? "present" : "empty") : "missing",
-    fileType: typeof fileTypeValue === "string" ? fileTypeValue : undefined
-  };
-}
-
 function functionNameForAgentResource(resourceType: AgentResourceType | undefined) {
   switch (resourceType) {
     case "ppt_slide":
@@ -2001,78 +1560,6 @@ function functionNameForAgentResource(resourceType: AgentResourceType | undefine
     default:
       return undefined;
   }
-}
-
-const IN_FLIGHT_TTL_MS = 120_000;
-const IN_FLIGHT_FUNCTIONS = new Set<FunctionName>([
-  "find_ppt_slides",
-  "find_pop_sheet_music",
-  "query_service_schedule"
-]);
-
-function buildInFlightKey(
-  profileName: string,
-  source: LineSource,
-  action: FunctionName,
-  args: JsonRecord
-): { key: InFlightKey; queryHash: string } | undefined {
-  if (!IN_FLIGHT_FUNCTIONS.has(action)) {
-    return undefined;
-  }
-  const queryHash = hashDedupPayload(normalizeDedupPayload(args));
-  return {
-    queryHash,
-    key: {
-      profileName,
-      sourceKey: sourceKey(source),
-      action,
-      queryHash
-    }
-  };
-}
-
-function normalizeDedupPayload(args: JsonRecord): string {
-  const query = typeof args.query === "string" ? args.query.normalize("NFKC").trim() : "";
-  const fileType = typeof args.fileType === "string" ? args.fileType.trim().toLowerCase() : "";
-  const dateIntent = typeof args.dateIntent === "string" ? args.dateIntent.trim() : "";
-  const meeting = typeof args.meeting === "string" ? args.meeting.trim() : "";
-  const role = typeof args.role === "string" ? args.role.trim() : "";
-  return JSON.stringify({ query, fileType, dateIntent, meeting, role });
-}
-
-function hashDedupPayload(payload: string): string {
-  return createHash("sha256").update(payload).digest("hex").slice(0, 16);
-}
-
-function sourceKey(source: LineSource): string {
-  switch (source.type) {
-    case "group":
-      return `group:${source.groupId ?? ""}`;
-    case "room":
-      return `room:${source.roomId ?? ""}`;
-    case "user":
-      return `user:${source.userId ?? ""}`;
-    default:
-      return `${source.type}:unknown`;
-  }
-}
-
-async function releaseInFlight(store: InFlightStore, key: InFlightKey): Promise<void> {
-  try {
-    await store.release(key);
-  } catch {
-    // A failed cleanup should not turn a successful LINE reply into an error.
-  }
-}
-
-function stringRouteArgument(args: JsonRecord, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function introVariantRouteArgument(args: JsonRecord): "identity" | "capabilities" | undefined {
-  const value = stringRouteArgument(args, "variant");
-  return value === "identity" || value === "capabilities" ? value : undefined;
 }
 
 function parseAdminCommand(text: string | undefined): ParsedAdminCommand | undefined {

@@ -4,6 +4,7 @@ import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { InMemoryRegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
 import { createAgentRuntime } from "../agent/agent-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
+import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
 import { createFindPptSlidesHandler } from "../functions/find-ppt-slides.js";
 import { createPendingFunctionTextMessageHandler } from "../functions/pending-function.js";
 import { signLineBody } from "../line-signature.js";
@@ -1778,6 +1779,59 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[1]?.[1]).toContain("query=present");
     expect(replyText.mock.calls[1]?.[1]).toContain("ok=true");
     expect(replyText.mock.calls[1]?.[1]).not.toContain("Amazing Grace");
+  });
+
+  it("exposes sanitized agent turn traces to slash admin last-agent-turns", async () => {
+    const agentTraceStore = new InMemoryAgentTraceStore(10);
+    await agentTraceStore.record({
+      requestId: "req-agent-1",
+      occurredAt: "2026-07-08T00:00:00.000Z",
+      profileName: "main",
+      sourceType: "group",
+      steps: [
+        {
+          phase: "route",
+          outcome: "execute",
+          provider: "ollama",
+          action: "find_ppt_slides",
+          query: "present"
+        },
+        {
+          phase: "function",
+          outcome: "executed",
+          action: "find_ppt_slides",
+          ok: true
+        }
+      ]
+    });
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      agentTraceStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/last-agent-turns" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(replyText.mock.calls[0]?.[1]).toContain("Agent turns");
+    expect(replyText.mock.calls[0]?.[1]).toContain("req-agent-1");
+    expect(replyText.mock.calls[0]?.[1]).toContain("route:execute");
+    expect(replyText.mock.calls[0]?.[1]).toContain("query:present");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("Amazing Grace");
   });
 
   it("rate limits repeated events for the same profile and source before routing", async () => {

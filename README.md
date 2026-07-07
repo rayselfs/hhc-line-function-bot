@@ -16,7 +16,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
-- Controlled agent runtime for recent file recall, explicit text memories, and resource aliases.
+- Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, explicit text memories, and resource aliases.
 - Optional Redis backend for sessions, cache, recent errors, rate limiting, and one-time registration invite codes.
 - Per-profile access policy with PostgreSQL-backed user/group/admin registration.
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
@@ -176,7 +176,11 @@ If a service schedule request is too generic, such as `查服事表`, the bot as
 
 ## Agent Runtime And Memory
 
-The agent runtime adds controlled memory without making the bot an unrestricted chat recorder.
+The agent turn runtime centralizes natural-language task execution after LINE entrance checks. It handles pre-route memory follow-ups, pending text sessions, admin natural-language actions, routing, missing-slot clarification, memory aliases, in-flight duplicate locks, function execution, and sanitized turn traces.
+
+This keeps new functions on a consistent contract: define the capability, normalize arguments, add any required slots, register the handler, and let the runtime apply the shared safety rails.
+
+The memory layer adds controlled memory without making the bot an unrestricted chat recorder.
 
 - Recent PPT and sheet music results store only resource metadata: profile, LINE scope, requester, file title, Graph drive id, and item id.
 - Temporary sharing links are never stored. When a user asks for the previous one again, the bot creates a fresh 24 hour Graph link.
@@ -247,10 +251,11 @@ Advanced commands:
 /route-test <text>
 /last-errors
 /last-routes
+/last-agent-turns [limit]
 /memory-status
 ```
 
-Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query.
+Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/last-agent-turns` shows the latest sanitized agent runtime phases so admins can debug whether a request stopped at memory, clarification, routing, in-flight locking, or function execution.
 
 ## OneDrive And Graph
 

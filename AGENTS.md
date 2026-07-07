@@ -50,7 +50,7 @@ The first-class functions are:
 When adding or changing a function:
 
 - Add or update the function definition.
-- Include capability metadata: `displayName`, `shortDescription`, `examples`, `requires`, `scope`, and `clarificationPrompt`.
+- Include capability metadata: `displayName`, `shortDescription`, `examples`, `requires`, `scope`, `sideEffectLevel`, `allowedSources`, `requiredSlots`, `resourcePolicy`, `memoryPolicy`, and `clarificationPrompt`.
 - Register the function module.
 - Update routing and argument extraction.
 - Add clarification behavior for missing required slots.
@@ -77,6 +77,9 @@ When adding or changing an admin action:
 - `src/keyword-router.ts`: conservative fallback routing when Ollama is unavailable or invalid.
 - `src/function-arguments.ts`: argument extraction and slot handling.
 - `src/functions/*`: function definitions, modules, and implementations.
+- `src/agent/turn-runtime.ts`: shared text-turn pipeline after LINE entrance checks.
+- `src/agent/slot-clarification.ts`: definition-driven required-slot clarification.
+- `src/agent/trace-store.ts`: sanitized recent agent turn diagnostics for `/last-agent-turns`.
 - `src/agent/*`: controlled agent runtime, resource metadata memory, explicit text memory, aliases, and Postgres/in-memory stores.
 - `src/clients/*`: external service clients for LINE, Ollama, Graph, and Notion.
 - `src/access/*`: access principals, Redis-backed registration invite codes, audit events, and stores.
@@ -131,6 +134,7 @@ When adding or changing an admin action:
 - Agent memory must not store temporary sharing links. Store Graph drive/item metadata and regenerate short-lived links on demand.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
 - Do not add automatic group-chat recording. Text memory must be explicit user intent.
+- Agent turn traces are diagnostic metadata only. Do not store raw user text, file names, invite codes, secrets, or generated sharing links in traces.
 - Do not assume multi-replica safety without Redis for sessions/cache/invite codes.
 - Group and room clarification/selection sessions are requester-scoped. They require the same `source.userId` to continue, and should not be created or matched when LINE does not provide a requester user id.
 - Soft display-name personalization is for task-state replies such as "what title?" or "please choose"; avoid adding names to final data-heavy function results unless the user asks.

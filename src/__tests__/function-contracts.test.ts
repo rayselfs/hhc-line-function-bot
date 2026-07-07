@@ -13,6 +13,13 @@ describe("function capability contracts", () => {
       expect(definition.requires.length, definition.name).toBeGreaterThan(0);
       expect(definition.scope, definition.name).toMatch(/^(profile|group_capable)$/);
       expect(definition.clarificationPrompt, definition.name).toBeTruthy();
+      expect(definition.sideEffectLevel, definition.name).toMatch(
+        /^(read|write|admin|destructive)$/
+      );
+      expect(definition.allowedSources.length, definition.name).toBeGreaterThan(0);
+      expect(definition.resourcePolicy, definition.name).toBeTruthy();
+      expect(definition.memoryPolicy, definition.name).toBeTruthy();
+      expect(definition.requiredSlots, definition.name).toBeDefined();
     }
   });
 

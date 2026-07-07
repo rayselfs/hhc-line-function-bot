@@ -79,6 +79,7 @@ const app = createApp(config, {
   registrationInviteCodeStore,
   confirmationStore,
   inFlightStore,
+  sessionStore,
   textGenerator: primary,
   agentRuntime: createAgentRuntime({ memoryStore, graph }),
   diagnostics: createDependencyDiagnostics({
