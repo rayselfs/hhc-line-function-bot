@@ -2,12 +2,18 @@ import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
+import { assertCanonicalWebhookPath } from "./profile-path.js";
 import { readTimeZone } from "./time-zone.js";
 import { FUNCTION_NAMES } from "./types.js";
 import type { AppConfig, FunctionName } from "./types.js";
 
 const profileSchema = z.object({
-  name: z.string().min(1),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, {
+      message: "Profile name must use lowercase letters, numbers, dash, or underscore"
+    }),
   webhookPath: z.string().startsWith("/"),
   channelSecret: z.string().min(1),
   channelAccessToken: z.string().min(1),
@@ -32,8 +38,14 @@ const profileSchema = z.object({
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   const profilesJson = readProfilesJson(env);
   const parsedProfiles = JSON.parse(profilesJson) as unknown;
+  if (!Array.isArray(parsedProfiles)) {
+    throw new Error("BOT_PROFILES_JSON or BOT_PROFILES_BASE64_JSON must be a JSON array");
+  }
   assertNoLegacyProfileFields(parsedProfiles);
   const profiles = z.array(profileSchema).min(1).parse(parsedProfiles);
+  for (const profile of profiles) {
+    assertCanonicalWebhookPath(profile.name, profile.webhookPath);
+  }
   assertUniqueValues(
     profiles.map((profile) => profile.webhookPath),
     "Duplicate profile webhookPath"

@@ -184,7 +184,7 @@ function inspectPropertyMapping(
 function handlerContext(): FunctionHandlerContext {
   const profile: BotProfileConfig = {
     name: "notion-check",
-    webhookPath: "/line/check/webhook",
+    webhookPath: "/api/line/webhook/check",
     channelSecret: "placeholder",
     channelAccessToken: "placeholder",
     allowDirectUser: true,

@@ -7,7 +7,7 @@ function baseEnv(): NodeJS.ProcessEnv {
     BOT_PROFILES_JSON: JSON.stringify([
       {
         name: "main",
-        webhookPath: "/line/main/webhook",
+        webhookPath: "/api/line/webhook/main",
         channelSecret: "secret",
         channelAccessToken: "token",
         enabledFunctions: ["query_service_schedule"]
@@ -35,6 +35,49 @@ describe("config", () => {
     );
   });
 
+  it("rejects profile config that is not a JSON array", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify({
+          name: "helper",
+          webhookPath: "/api/line/webhook/helper",
+          channelSecret: "secret",
+          channelAccessToken: "token"
+        })
+      })
+    ).toThrow("BOT_PROFILES_JSON or BOT_PROFILES_BASE64_JSON must be a JSON array");
+  });
+
+  it("rejects non-canonical profile names", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "Helper",
+            webhookPath: "/api/line/webhook/Helper",
+            channelSecret: "secret",
+            channelAccessToken: "token"
+          }
+        ])
+      })
+    ).toThrow("Profile name must use lowercase letters, numbers, dash, or underscore");
+  });
+
+  it("rejects webhook paths that do not match the profile name", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/line/helper/webhook",
+            channelSecret: "secret",
+            channelAccessToken: "token"
+          }
+        ])
+      })
+    ).toThrow('Profile "helper" webhookPath must be "/api/line/webhook/helper"');
+  });
+
   it("loads sheet music Graph configuration with safe defaults", () => {
     const config = loadConfigFromEnv({
       ...baseEnv(),
@@ -59,7 +102,7 @@ describe("config", () => {
       BOT_PROFILES_JSON: JSON.stringify([
         {
           name: "main",
-          webhookPath: "/line/main/webhook",
+          webhookPath: "/api/line/webhook/main",
           channelSecret: "secret",
           channelAccessToken: "token",
           enabledFunctions: ["query_service_schedule"],
@@ -273,13 +316,13 @@ describe("config", () => {
       loadConfigFromEnv({
         BOT_PROFILES_JSON: JSON.stringify([
           {
-            name: "main",
+            name: "helper",
             webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token"
           },
           {
-            name: "slides",
+            name: "helper",
             webhookPath: "/api/line/webhook/helper",
             channelSecret: "secret",
             channelAccessToken: "token"

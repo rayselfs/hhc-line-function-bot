@@ -32,6 +32,8 @@ Direct-message admin commands:
 
 ## Local Webhook Smoke Test
 
+Webhook paths are canonical and profile-scoped: `/api/line/webhook/{profileName}`. The profile name must match the path segment exactly.
+
 Use the smoke tool to sign a LINE-shaped webhook payload:
 
 ```powershell
@@ -39,6 +41,13 @@ pnpm smoke:webhook -- --url http://localhost:3000/api/line/webhook/helper --secr
 ```
 
 The tool prints status, request id when present, and response body. It must not print the channel secret or access token.
+
+For an unsigned public gateway check, `POST /api/line/webhook/{profileName}` should reach the app and return a missing-signature style `400`. The Container App itself should keep external ingress disabled; public access should go through the gateway.
+
+## Router Evals
+
+- `pnpm eval:router` is deterministic and offline. It replays the function-module corpus through conservative keyword fallback.
+- `pnpm eval:router:ollama` is manual and requires a reachable Ollama model. Do not run it in CI/CD unless the pipeline has an intentional model endpoint.
 
 ## Dependency Checks
 

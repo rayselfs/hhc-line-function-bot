@@ -17,7 +17,7 @@ import type {
 function profile(): BotProfileConfig {
   return {
     name: "main",
-    webhookPath: "/line/main/webhook",
+    webhookPath: "/api/line/webhook/main",
     channelSecret: "secret",
     channelAccessToken: "token",
     allowDirectUser: true,

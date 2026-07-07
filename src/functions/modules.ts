@@ -1,5 +1,6 @@
 import type { CacheStore } from "../cache/cache-store.js";
 import type { SessionStore } from "../state/session-store.js";
+import { FUNCTION_NAMES } from "../types.js";
 import type {
   AppConfig,
   FunctionName,
@@ -45,9 +46,19 @@ export interface FunctionModuleRegistrations {
 }
 
 export interface RouterEvalCase {
+  kind: "positive" | "missing_slot" | "typo" | "negative" | "disabled" | "cross_function";
   text: string;
-  action: FunctionName;
-  arguments: JsonRecord;
+  enabledFunctions?: FunctionName[];
+  expected:
+    | {
+        type: "execute";
+        action: FunctionName;
+        arguments: JsonRecord;
+      }
+    | {
+        type: "deny";
+        reason: string;
+      };
 }
 
 export interface FunctionModule {
@@ -63,14 +74,51 @@ export const FUNCTION_MODULES: FunctionModule[] = [
     definition: requiredDefinition("find_ppt_slides"),
     routerEvalCases: [
       {
+        kind: "positive",
         text: "小哈 查投影片 主日報告 pdf",
-        action: "find_ppt_slides",
-        arguments: { query: "主日報告", fileType: "pdf", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "主日報告", fileType: "pdf", matchMode: "fuzzy" }
+        }
       },
       {
+        kind: "missing_slot",
         text: "小哈 查投影片",
-        action: "find_ppt_slides",
-        arguments: { query: "", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "", matchMode: "fuzzy" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈 查奇易恩點的投影片",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "奇易恩點", matchMode: "fuzzy" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈 查詩歌 奇異恩典",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 查投影片 主日報告",
+        enabledFunctions: withoutFunction("find_ppt_slides"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 查流行歌曲樂譜 奇異恩典",
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "奇異恩典", fileType: "pdf", matchMode: "fuzzy" }
+        }
       }
     ],
     register: ({ config, clients }) => {
@@ -112,19 +160,60 @@ export const FUNCTION_MODULES: FunctionModule[] = [
     definition: requiredDefinition("query_service_schedule"),
     routerEvalCases: [
       {
+        kind: "positive",
         text: "小哈 下一場聚會服事表",
-        action: "query_service_schedule",
-        arguments: { query: "下一場聚會服事表" }
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "下一場聚會服事表" }
+        }
       },
       {
+        kind: "missing_slot",
         text: "小哈 查服事表",
-        action: "query_service_schedule",
-        arguments: { query: "服事表" }
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "服事表" }
+        }
       },
       {
+        kind: "typo",
+        text: "小哈 明天聚會服事仁員",
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "明天聚會服事仁員" }
+        }
+      },
+      {
+        kind: "positive",
         text: "小哈 明天聚會服事人員",
-        action: "query_service_schedule",
-        arguments: { query: "明天聚會服事人員" }
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "明天聚會服事人員" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈 幫我訂便當",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 下一場聚會服事表",
+        enabledFunctions: withoutFunction("query_service_schedule"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 查投影片 主日報告",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "主日報告", matchMode: "fuzzy" }
+        }
       }
     ],
     register: ({ config, clients }) => {
@@ -151,24 +240,69 @@ export const FUNCTION_MODULES: FunctionModule[] = [
     definition: requiredDefinition("find_pop_sheet_music"),
     routerEvalCases: [
       {
+        kind: "positive",
         text: "小哈 查流行歌譜 A TIME FOR US",
-        action: "find_pop_sheet_music",
-        arguments: { query: "A TIME FOR US", fileType: "pdf", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "A TIME FOR US", fileType: "pdf", matchMode: "fuzzy" }
+        }
       },
       {
+        kind: "positive",
         text: "小哈 查歌譜 Yesterday jpg",
-        action: "find_pop_sheet_music",
-        arguments: { query: "Yesterday", fileType: "image", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "Yesterday", fileType: "image", matchMode: "fuzzy" }
+        }
       },
       {
+        kind: "positive",
         text: "小哈，幫我找 Yesterday 的流行歌曲樂譜",
-        action: "find_pop_sheet_music",
-        arguments: { query: "Yesterday", fileType: "pdf", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "Yesterday", fileType: "pdf", matchMode: "fuzzy" }
+        }
       },
       {
+        kind: "missing_slot",
         text: "小哈 查流行歌曲樂譜",
-        action: "find_pop_sheet_music",
-        arguments: { query: "", fileType: "pdf", matchMode: "fuzzy" }
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "", fileType: "pdf", matchMode: "fuzzy" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈 查流行歌譜 Yestarday",
+        expected: {
+          type: "execute",
+          action: "find_pop_sheet_music",
+          arguments: { query: "Yestarday", fileType: "pdf", matchMode: "fuzzy" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈 查流行歌 Yesterday",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 查流行歌譜 Yesterday",
+        enabledFunctions: withoutFunction("find_pop_sheet_music"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 查投影片 奇異恩典",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "奇異恩典", matchMode: "fuzzy" }
+        }
       }
     ],
     register: ({ config, clients }) => {
@@ -220,6 +354,10 @@ export const FUNCTION_MODULES: FunctionModule[] = [
 
 export function getRouterEvalCases(): RouterEvalCase[] {
   return FUNCTION_MODULES.flatMap((module) => module.routerEvalCases);
+}
+
+function withoutFunction(name: FunctionName): FunctionName[] {
+  return FUNCTION_NAMES.filter((functionName) => functionName !== name);
 }
 
 function requiredDefinition(name: FunctionName): FunctionDefinition {

@@ -1,17 +1,16 @@
-import { createKeywordFallbackRouter } from "../keyword-router.js";
-import { createFunctionRouter } from "../router.js";
+import { createOllamaProvider } from "../clients/ollama.js";
 import { getRouterEvalCases, type RouterEvalCase } from "../functions/modules.js";
+import { createFunctionRouter } from "../router.js";
 import { FUNCTION_NAMES } from "../types.js";
-import type { ChatProvider, RouteResult } from "../types.js";
-
-const invalidProvider: ChatProvider = {
-  completeJson: async () => "not-json"
-};
+import type { RouteResult } from "../types.js";
 
 const router = createFunctionRouter({
-  primary: invalidProvider,
-  keywordFallback: createKeywordFallbackRouter(),
-  keywordFallbackEnabled: true
+  primary: createOllamaProvider({
+    baseUrl: process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
+    model: process.env.OLLAMA_MODEL || "qwen3:4b-instruct",
+    timeoutMs: readInt(process.env.OLLAMA_TIMEOUT_MS, 8000)
+  }),
+  keywordFallbackEnabled: false
 });
 
 const failures: string[] = [];
@@ -38,13 +37,22 @@ for (const entry of getRouterEvalCases()) {
 
 function matchesExpectedResult(result: RouteResult, expected: RouterEvalCase["expected"]): boolean {
   if (expected.type === "deny") {
-    return result.type === "deny" && result.reason === expected.reason;
+    return result.type === "deny";
   }
 
   return (
     result.type === "execute" &&
     result.action === expected.action &&
-    stableJson(result.arguments) === stableJson(expected.arguments)
+    isObjectSubset(expected.arguments, result.arguments)
+  );
+}
+
+function isObjectSubset(
+  expected: Record<string, unknown>,
+  actual: Record<string, unknown>
+): boolean {
+  return Object.entries(expected).every(
+    ([key, value]) => stableJson(actual[key]) === stableJson(value)
   );
 }
 
@@ -62,10 +70,18 @@ function stableJson(value: unknown): string {
   );
 }
 
+function readInt(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 if (failures.length > 0) {
-  console.error(`Router eval failed: ${failures.length} case(s)`);
+  console.error(`Ollama router eval failed: ${failures.length} case(s)`);
   console.error(failures.join("\n\n"));
   process.exitCode = 1;
 } else {
-  console.log(`Router eval passed: ${getRouterEvalCases().length} case(s)`);
+  console.log(`Ollama router eval passed: ${getRouterEvalCases().length} case(s)`);
 }

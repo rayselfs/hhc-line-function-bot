@@ -1275,6 +1275,7 @@ async function handleAdminCommand(
       replyText: [
         "Profile",
         `name: ${profile.name}`,
+        `webhookPath: ${profile.webhookPath}`,
         `source: ${event.source.type}`,
         `functions: ${profile.enabledFunctions.join(", ") || "(none)"}`,
         `adminDirectOnly: ${profile.adminDirectOnly !== false}`

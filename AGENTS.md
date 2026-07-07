@@ -22,7 +22,8 @@ Read these first when starting work:
 
 ## Current Product Shape
 
-- One service can host multiple LINE bot profiles on different webhook paths, for example `/api/line/webhook/helper`.
+- One service can host multiple LINE bot profiles on canonical webhook paths, for example `/api/line/webhook/helper`.
+- Profile names must be lowercase URL-safe names, and `webhookPath` must equal `/api/line/webhook/{profileName}`. Do not reintroduce `/line/{profile}/webhook`.
 - Each profile has its own LINE credentials, access policy, wake-word behavior, enabled functions, and bootstrap `adminUserId`.
 - The intended split is:
   - `helper`: managed direct users, managed groups, registration enabled.
@@ -67,6 +68,7 @@ When adding or changing an admin action:
 
 - `src/index.ts`: app bootstrapping and dependency wiring.
 - `src/config.ts`: env parsing and profile validation.
+- `src/profile-path.ts`: canonical profile name and webhook path contract.
 - `src/server.ts`: Fastify routes, LINE webhook entrance, access gates, admin commands, and postbacks.
 - `src/router.ts`: primary Ollama routing and router result model.
 - `src/keyword-router.ts`: conservative fallback routing when Ollama is unavailable or invalid.
@@ -107,6 +109,13 @@ When adding or changing an admin action:
 - Use `/function-grant <functionName> [groupId]`, `/function-revoke <functionName> [groupId]`, and `/function-scopes [groupId]` for group function scope management.
 - In a group, admins can omit `groupId` for those function-scope commands. In direct chat, admins must provide `groupId`.
 
+## Function Module Contract
+
+- Every `FUNCTION_NAMES` entry must have a matching `FUNCTION_MODULES` module and function definition.
+- Each module owns its router eval cases. Include positive, missing-slot, typo, negative, disabled, and cross-function cases.
+- Use `expected: { type: "execute", ... }` or `expected: { type: "deny", ... }` so evals can check both allowed and blocked behavior.
+- Keep `pnpm eval:router` deterministic and offline. Use `pnpm eval:router:ollama` only for manual live-model checks.
+
 ## State And Persistence
 
 - In-memory stores are acceptable for single-replica local/dev behavior.
@@ -128,6 +137,7 @@ When adding or changing an admin action:
   - `pnpm test`
   - `pnpm build`
 - For router behavior changes, also run `pnpm eval:router` when relevant.
+- For live Ollama model validation, run `pnpm eval:router:ollama` manually; do not add it to CI.
 - For admin natural-language routing changes, also run `pnpm eval:admin`.
 - For webhook entrance changes, consider `pnpm smoke:webhook` against a local dev server or deployed URL.
 - Update tests when changing routing, LINE webhook entrance behavior, access control, admin commands, or function execution behavior.

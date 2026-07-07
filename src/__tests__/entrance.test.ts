@@ -24,7 +24,7 @@ function testConfig(): AppConfig {
     profiles: [
       {
         name: "main",
-        webhookPath: "/line/main/webhook",
+        webhookPath: "/api/line/webhook/main",
         channelSecret: "main-secret",
         channelAccessToken: "main-token",
         allowDirectUser: true,
@@ -41,7 +41,7 @@ function testConfig(): AppConfig {
       },
       {
         name: "slides",
-        webhookPath: "/line/slides/webhook",
+        webhookPath: "/api/line/webhook/slides",
         channelSecret: "slides-secret",
         channelAccessToken: "slides-token",
         allowDirectUser: false,
@@ -146,7 +146,7 @@ function accessConfig(): AppConfig {
       },
       {
         name: "main",
-        webhookPath: "/line/main-public/webhook",
+        webhookPath: "/api/line/webhook/main-public",
         channelSecret: "main-secret",
         channelAccessToken: "main-token",
         allowDirectUser: true,
@@ -187,7 +187,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: { "content-type": "application/json", "x-line-signature": "bad" },
       payload: body
     });
@@ -218,7 +218,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/slides/webhook",
+      url: "/api/line/webhook/slides",
       headers: signedHeaders(body, "slides-secret"),
       payload: body
     });
@@ -269,7 +269,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -328,7 +328,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -358,7 +358,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -387,7 +387,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -413,7 +413,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -443,7 +443,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -487,7 +487,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -531,7 +531,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -575,7 +575,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -606,7 +606,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -632,7 +632,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -661,7 +661,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -690,7 +690,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -732,13 +732,13 @@ describe("LINE entrance", () => {
 
     await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(grantBody, "main-secret"),
       payload: grantBody
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(routeBody, "main-secret"),
       payload: routeBody
     });
@@ -783,7 +783,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -847,7 +847,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/slides/webhook",
+      url: "/api/line/webhook/slides",
       headers: signedHeaders(body, "slides-secret"),
       payload: body
     });
@@ -879,7 +879,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -906,7 +906,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -950,7 +950,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -982,7 +982,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1021,7 +1021,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1049,7 +1049,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1082,7 +1082,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1111,7 +1111,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1149,7 +1149,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1192,7 +1192,7 @@ describe("LINE entrance", () => {
     });
     await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(userBody, "main-secret"),
       payload: userBody
     });
@@ -1205,7 +1205,7 @@ describe("LINE entrance", () => {
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(adminBody, "main-secret"),
       payload: adminBody
     });
@@ -1248,7 +1248,7 @@ describe("LINE entrance", () => {
     });
     await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(userBody, "main-secret"),
       payload: userBody
     });
@@ -1261,7 +1261,7 @@ describe("LINE entrance", () => {
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(adminBody, "main-secret"),
       payload: adminBody
     });
@@ -1299,13 +1299,13 @@ describe("LINE entrance", () => {
     const secondBody = lineBody({ ...event, replyToken: "reply-token-2" });
     await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(firstBody, "main-secret"),
       payload: firstBody
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(secondBody, "main-secret"),
       payload: secondBody
     });
@@ -1331,7 +1331,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1782,7 +1782,7 @@ describe("LINE entrance", () => {
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1815,7 +1815,7 @@ describe("LINE entrance", () => {
     });
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -1987,7 +1987,7 @@ describe("LINE entrance", () => {
     });
     const directRes = await app.inject({
       method: "POST",
-      url: "/line/main-public/webhook",
+      url: "/api/line/webhook/main-public",
       headers: signedHeaders(directBody, "main-secret"),
       payload: directBody
     });
@@ -2000,7 +2000,7 @@ describe("LINE entrance", () => {
     });
     const groupRes = await app.inject({
       method: "POST",
-      url: "/line/main-public/webhook",
+      url: "/api/line/webhook/main-public",
       headers: signedHeaders(groupBody, "main-secret"),
       payload: groupBody
     });
@@ -2072,7 +2072,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -2109,7 +2109,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -2157,7 +2157,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });
@@ -2214,7 +2214,7 @@ describe("LINE entrance", () => {
 
     const res = await app.inject({
       method: "POST",
-      url: "/line/main/webhook",
+      url: "/api/line/webhook/main",
       headers: signedHeaders(body, "main-secret"),
       payload: body
     });

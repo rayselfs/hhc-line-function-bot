@@ -56,11 +56,12 @@ GET /readyz
 ## Bot Profiles
 
 Profiles are configured by `BOT_PROFILES_JSON` or `BOT_PROFILES_BASE64_JSON`.
+`BOT_PROFILES_BASE64_JSON` is preferred for Azure Container Apps because it avoids shell quoting and newline issues. The decoded value must always be a JSON array, even when only one profile is configured.
 
 Each profile controls:
 
 - LINE channel secret and access token.
-- Webhook path.
+- Webhook path. It must be the canonical `/api/line/webhook/{profileName}` path.
 - Direct and group access policy.
 - Optional registration flow.
 - Wake keywords and mention handling.
@@ -93,6 +94,8 @@ Example shape:
   }
 ]
 ```
+
+Profile names must use lowercase letters, numbers, dash, or underscore. The `webhookPath` must match the profile name exactly; for example, profile `helper` must use `/api/line/webhook/helper`.
 
 Use `adminUserId` for the single bootstrap superadmin. Legacy `adminUserIds`, `allowedUserIds`, and `allowedGroupIds` are rejected.
 
@@ -153,6 +156,8 @@ Primary routing uses Ollama. Keyword fallback is intentionally narrow:
 Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
 
 For sheet music requests, Ollama can extract the song title, optional artist, requested file type, and fuzzy/exact match preference. Keyword fallback stays conservative and only routes requests that explicitly mention sheet music wording.
+
+Router behavior is guarded by a deterministic offline eval corpus in each function module. Run `pnpm eval:router` for CI-safe keyword fallback checks. Run `pnpm eval:router:ollama` manually when validating a live Ollama model.
 
 ## Time Zone
 
@@ -245,7 +250,7 @@ For the current HHC media service schedule database, use these property mappings
 
 Do not commit real `.env` files. In Azure Container Apps, store runtime values in ACA secrets, especially:
 
-- `BOT_PROFILES_JSON`
+- `BOT_PROFILES_BASE64_JSON` preferred, or `BOT_PROFILES_JSON` for local/dev
 - `OLLAMA_BASE_URL`
 - LINE channel secrets and tokens inside the profile JSON
 - `NOTION_TOKEN`
@@ -299,4 +304,10 @@ pnpm test
 pnpm eval:router
 pnpm eval:admin
 pnpm build
+```
+
+Optional live local-model check:
+
+```powershell
+pnpm eval:router:ollama
 ```
