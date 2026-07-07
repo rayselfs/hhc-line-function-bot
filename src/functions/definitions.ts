@@ -15,6 +15,12 @@ export interface FunctionKeywordFallback {
 
 export interface FunctionDefinition {
   name: FunctionName;
+  displayName: string;
+  shortDescription: string;
+  examples: string[];
+  requires: Array<"graph" | "notion" | "session" | "cache">;
+  scope: "profile" | "group_capable";
+  clarificationPrompt: string;
   description: string;
   argumentSchema: z.ZodType;
   quickReply: {
@@ -30,6 +36,12 @@ const commonStripWords = ["小哈", "請", "幫我", "幫忙", "查詢", "查", 
 export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   {
     name: "find_ppt_slides",
+    displayName: "查投影片",
+    shortDescription: "幫你找聚會或詩歌需要的投影片。",
+    examples: ["小哈 查投影片 奇異恩典", "小哈 查主日報告投影片"],
+    requires: ["graph", "session"],
+    scope: "group_capable",
+    clarificationPrompt: "要查哪一份投影片？請直接回覆名稱。",
     description:
       '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "fileType":"ppt|pdf|any optional", "includePdf": boolean optional, "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
     argumentSchema: findPptSlidesArgumentsSchema,
@@ -46,6 +58,12 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   },
   {
     name: "query_service_schedule",
+    displayName: "查服事表",
+    shortDescription: "幫你看近期聚會的服事安排。",
+    examples: ["小哈 下一場聚會服事表", "小哈 查主日服事"],
+    requires: ["notion"],
+    scope: "group_capable",
+    clarificationPrompt: "要查哪一場聚會或哪一天的服事？",
     description:
       '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"original user request text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.',
     argumentSchema: queryServiceScheduleArgumentsSchema,
@@ -61,6 +79,12 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   },
   {
     name: "find_pop_sheet_music",
+    displayName: "查流行歌譜",
+    shortDescription: "協助查找流行歌曲樂譜，適合同工臨時找譜使用。",
+    examples: ["小哈 查流行歌譜 Yesterday", "小哈 幫我找 A TIME FOR US 的樂譜"],
+    requires: ["graph", "cache"],
+    scope: "group_capable",
+    clarificationPrompt: "要查哪一首流行歌曲樂譜？請直接回覆歌名。",
     description:
       '- find_pop_sheet_music: find pop song sheet music PDF/image files by title or artist. Arguments: {"query":"song title keyword", "artist":"artist optional", "fileType":"pdf|image|any optional", "matchMode":"fuzzy|exact optional"}. Use this only for 流行歌譜, 流行歌曲樂譜, 樂譜, or sheet music requests.',
     argumentSchema: findPopSheetMusicArgumentsSchema,

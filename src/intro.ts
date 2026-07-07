@@ -1,6 +1,6 @@
 import { getFunctionDefinitions } from "./functions/definitions.js";
 import { buildFunctionQuickReplies } from "./line-reply.js";
-import type { BotProfileConfig, FunctionExecutionResult, FunctionName } from "./types.js";
+import type { BotProfileConfig, FunctionExecutionResult } from "./types.js";
 
 interface IntroReplyOptions {
   force?: boolean;
@@ -18,12 +18,6 @@ const introTriggers = [
   "小哈你會什麼",
   "小哈會什麼"
 ];
-
-const introDescriptions: Partial<Record<FunctionName, string>> = {
-  find_ppt_slides: "幫你找聚會或詩歌需要的投影片。",
-  query_service_schedule: "幫你看近期聚會的服事安排。",
-  find_pop_sheet_music: "幫你找流行歌曲樂譜。"
-};
 
 export function createIntroReply(
   profile: BotProfileConfig,
@@ -54,10 +48,7 @@ export function createIntroReply(
       "需要資料時可以叫我一聲，我可以幫忙：",
       "",
       ...definitions.map(
-        (definition) =>
-          `- ${definition.quickReply.label}：${
-            introDescriptions[definition.name] ?? "幫你查詢已開放的資料。"
-          }`
+        (definition) => `- ${definition.displayName}：${definition.shortDescription}`
       ),
       "",
       "可以直接點下方按鈕，或用一句話告訴我想查什麼。"
