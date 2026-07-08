@@ -32,6 +32,9 @@ export type ActionName = FunctionName | SystemActionName | AdminActionName;
 
 export type JsonRecord = Record<string, unknown>;
 
+export type ModelProviderName = "ollama" | "openai_codex_oauth";
+export type RouteProviderName = ModelProviderName | "keyword" | "router";
+
 export type DirectAccessPolicy = "managed" | "public" | "blocked";
 
 export type GroupAccessPolicy = "managed" | "blocked";
@@ -43,6 +46,17 @@ export interface RegistrationConfig {
 export interface SmallTalkConfig {
   mode: "template" | "llm";
   maxChars: number;
+}
+
+export interface GeneralAgentConfig {
+  enabled: boolean;
+  conversationWindowSeconds: number;
+}
+
+export interface LongRunningJobsConfig {
+  enabled: boolean;
+  inlineReplyTimeoutMs: number;
+  resultTtlMinutes: number;
 }
 
 export interface BotProfileConfig {
@@ -63,12 +77,31 @@ export interface BotProfileConfig {
   groupAccessPolicy?: GroupAccessPolicy;
   registration?: RegistrationConfig;
   smallTalk?: SmallTalkConfig;
+  llmProvider?: ModelProviderName;
+  generalAgent?: GeneralAgentConfig;
+  longRunningJobs?: LongRunningJobsConfig;
 }
 
 export interface LlmConfig {
+  provider?: ModelProviderName;
+  fallbackProvider?: ModelProviderName;
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaKeepAlive?: string | number;
+  openaiCodexBaseUrl?: string;
+  openaiCodexModel?: string;
+  openaiCodexAuthProfile?: string;
+  openaiCodexOAuthAuthorizeUrl?: string;
+  openaiCodexOAuthTokenUrl?: string;
+  openaiCodexOAuthClientId?: string;
+  publicBaseUrl?: string;
+  authLoginStateTtlMinutes?: number;
+  authEncryptionKey?: string;
+  contextWindowTokens?: number;
+  runtimeContextBudgetTokens?: number;
+  contextCompressionThresholdRatio?: number;
+  generalMaxOutputTokens?: number;
+  routeMaxOutputTokens?: number;
   timeoutMs: number;
   keywordFallbackEnabled: boolean;
 }
@@ -216,6 +249,7 @@ export interface RouteInput {
   text: string;
   enabledFunctions: FunctionName[];
   source: LineSource;
+  runtimeContext?: string;
 }
 
 export type RouteResult =
@@ -224,8 +258,8 @@ export type RouteResult =
       action: FunctionName;
       arguments: JsonRecord;
       confidence?: number;
-      provider: "ollama" | "keyword";
-      fallbackProvider?: "ollama";
+      provider: ModelProviderName | "keyword";
+      fallbackProvider?: ModelProviderName;
       fallbackReason?: string;
     }
   | {
@@ -233,15 +267,15 @@ export type RouteResult =
       action: SystemActionName;
       arguments: JsonRecord;
       confidence?: number;
-      provider: "ollama" | "keyword";
-      fallbackProvider?: "ollama";
+      provider: ModelProviderName | "keyword";
+      fallbackProvider?: ModelProviderName;
       fallbackReason?: string;
     }
   | {
       type: "deny";
       reason: string;
-      provider: "ollama" | "keyword" | "router";
-      fallbackProvider?: "ollama";
+      provider: RouteProviderName;
+      fallbackProvider?: ModelProviderName;
       fallbackReason?: string;
     };
 
@@ -262,13 +296,15 @@ export type AdminActionRouteResult =
       action: AdminActionName;
       arguments: JsonRecord;
       confidence?: number;
-      provider: "ollama";
+      provider: ModelProviderName;
+      fallbackProvider?: ModelProviderName;
+      fallbackReason?: string;
     }
   | {
       type: "deny";
       reason: string;
-      provider: "ollama" | "router";
-      fallbackProvider?: "ollama";
+      provider: ModelProviderName | "router";
+      fallbackProvider?: ModelProviderName;
       fallbackReason?: string;
     };
 
@@ -296,7 +332,7 @@ export interface RouteObserverEvent {
   action?: FunctionName | string;
   reason?: string;
   confidence?: number;
-  fallbackProvider?: "ollama";
+  fallbackProvider?: ModelProviderName;
   fallbackReason?: string;
   handler?: string;
   command?: string;
@@ -319,6 +355,7 @@ export interface ChatProviderRequest {
 }
 
 export interface ChatProvider {
+  providerName?: ModelProviderName;
   completeJson(request: ChatProviderRequest): Promise<string>;
 }
 
@@ -331,6 +368,7 @@ export interface TextGenerationRequest {
 }
 
 export interface TextGenerationProvider {
+  providerName?: ModelProviderName;
   completeText(request: TextGenerationRequest): Promise<string>;
 }
 

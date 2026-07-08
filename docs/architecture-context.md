@@ -13,7 +13,12 @@ functions, and admin gates.
 
 The service is local-first for routing:
 
-- Ollama is the primary natural-language router.
+- Ollama is the default natural-language router.
+- `openai_codex_oauth` is an optional smarter provider behind encrypted
+  PostgreSQL auth profiles.
+- OpenAI/Codex OAuth browser login uses service-level GET routes under
+  `/api/line/llm-auth/openai-codex/*`; these are not LINE webhook routes and
+  should be forwarded by the gateway without path rewriting.
 - Keyword fallback is conservative and only runs when Ollama is unavailable,
   times out, or returns invalid JSON.
 - Explicit model deny decisions do not fall back.
@@ -23,6 +28,8 @@ The service is local-first for routing:
   text memory is saved only when requested, and short-lived links are regenerated.
 - User-provided external links can be saved as scoped resource memories only
   when the user explicitly asks the bot to remember them.
+- Runtime context is selective: safety context plus same-requester recent turns,
+  not full group chat transcripts.
 
 ## Request Flow
 
@@ -33,23 +40,35 @@ For normal LINE webhook messages, read the flow in this order:
 3. LINE signature and profile path select the `BotProfileConfig`.
 4. Access policy checks direct user, group, registration, and admin identity.
 5. Group engagement decides whether the bot was actually addressed.
-6. Slash commands stay in `src/server.ts`; normal text turns enter
+6. A short requester-scoped group conversation window may allow the same user to
+   continue without repeating the wake word.
+7. Slash commands stay in `src/server.ts`; normal text turns enter
    `src/agent/turn-runtime.ts`.
-7. Pending text sessions and agent-memory follow-ups can short-circuit the
+8. Pending text sessions and agent-memory follow-ups can short-circuit the
    router.
-8. Intro and small-talk system actions can respond without function execution.
-9. `src/router.ts` asks Ollama for a strict JSON route.
-10. `src/keyword-router.ts` may provide conservative fallback.
-11. Definition-driven slot clarification asks for missing required metadata
+9. Intro and small-talk system actions can respond without function execution.
+10. `src/agent/context-manager.ts` builds a bounded runtime context.
+11. `src/router.ts` asks the configured LLM provider for a strict JSON route.
+12. `src/keyword-router.ts` may provide conservative fallback.
+13. Definition-driven slot clarification asks for missing required metadata
     before handlers run.
-12. Agent memory can resolve aliases before expensive file searches.
-13. The turn runtime applies in-flight locks, calls the registered handler, and
+14. Agent memory can resolve aliases before expensive file searches.
+15. The turn runtime applies in-flight locks, calls the registered handler, and
     records sanitized route/function/turn diagnostics.
-14. Successful file handlers can record resource metadata for later recall.
-15. Handler output is replied through the LINE client.
+16. Slow turns can be stored as long-running jobs and returned through a
+    requester-scoped LINE postback.
+17. Successful file handlers can record resource metadata for later recall.
+18. Handler output is replied through the LINE client.
 
 The main entrance behavior lives in `src/server.ts`; tests for it live mostly in
 `src/__tests__/entrance.test.ts`.
+
+For OpenAI/Codex OAuth login, the bootstrap superadmin sends `/llm-login` in
+direct chat. `src/server.ts` creates a one-time Redis state, returns a browser
+URL, redirects the `/start` route to the configured OAuth authorize URL, and
+consumes the state in `/callback` before exchanging the code and saving
+encrypted tokens in PostgreSQL. `/llm-status` reports auth state without
+printing tokens.
 
 ## Action Types
 
@@ -96,7 +115,10 @@ Routing is deliberately layered:
   in-flight locks, function execution, and sanitized traces.
 - `src/agent/slot-clarification.ts`: required-slot handling driven by function
   definition metadata.
-- `src/router.ts`: primary Ollama JSON router.
+- `src/router.ts`: primary JSON router with provider/fallback diagnostics.
+- `src/clients/openai-codex-oauth.ts`: optional Codex OAuth provider client.
+- `src/llm/auth.ts`: encrypted OAuth token profile storage and refresh manager.
+- `src/llm/oauth-state-store.ts`: Redis/in-memory one-time OAuth state store.
 - `src/keyword-router.ts`: narrow fallback when Ollama fails.
 - `src/function-arguments.ts` and `src/functions/argument-normalization.ts`:
   slot validation and cleanup.
@@ -143,6 +165,9 @@ handler:
 - text-turn orchestration after access and engagement checks
 - definition-driven missing-slot clarification
 - in-flight duplicate protection for long-running lookups
+- requester-scoped conversation windows for natural follow-up messages
+- bounded runtime context building and compression
+- postback-based long-running job result retrieval
 - recent file recall such as "再給我一次"
 - scope-local aliases such as "以後 X 就用這份"
 - explicit external resource links such as "幫我記住這份投影片 https://..."
@@ -191,6 +216,9 @@ multiple replicas or restarts matter.
 - `src/agent/*`: controlled recent resources, aliases, explicit text memories,
   and Postgres/in-memory memory stores.
 - `src/in-flight/*`: duplicate in-flight function locks.
+- `src/agent/jobs.ts`: requester-scoped long-running job results.
+- `src/agent/context-manager.ts`: requester-scoped conversation window and
+  context budget/compression.
 - `src/observability/*`: recent routes and recent errors.
 - `src/access/*`: Postgres access principals, audit, and invite-code stores.
 
@@ -205,12 +233,23 @@ In-flight locks currently protect long-running function requests by
 `profileName + sourceKey + action + queryHash`. With Redis configured, this is
 cross-instance using Redis `NX` and `PX`. Without Redis, it is process-local.
 
+Long-running job results are separate from in-flight locks. They are keyed by a
+random job id but can only be read from the same profile, LINE source, and
+requester user id. With Redis configured, job results survive app restarts until
+their TTL expires.
+
+Controlled web lookup must go through `src/web/allowlist.ts`. The store is
+profile-scoped, supports PostgreSQL persistence, and the guard only allows HTTPS
+domains/path prefixes while denying localhost and private-network targets even
+if an admin accidentally adds them.
+
 ## External Dependencies
 
 Function dependencies are intentionally behind ports/clients:
 
 - LINE: `src/clients/line.ts`
 - Ollama: `src/clients/ollama.ts`
+- OpenAI/Codex OAuth provider: `src/clients/openai-codex-oauth.ts`
 - Microsoft Graph: `src/clients/graph.ts`
 - Notion: `src/clients/notion.ts`
 - Postgres access store: `src/access/postgres-access-store.ts`
@@ -238,10 +277,19 @@ Use this map for common issues:
   requester-scoped session tests.
 - Duplicate long task replies: `src/in-flight/*` and the in-flight block in
   `src/agent/turn-runtime.ts`.
+- User asks twice because a task is slow: `src/agent/jobs.ts` and
+  `handleAgentTextTurnWithLongJob` in `src/server.ts`.
+- Follow-up without wake word fails for same user: `src/agent/context-manager.ts`
+  and the conversation window checks in `src/server.ts`.
+- Web lookup route denies a URL: `src/web/allowlist.ts` and admin
+  `/web-allowlist` commands.
 - Follow-up recall or aliases fail: `src/agent/agent-runtime.ts`,
   `src/agent/*memory-store.ts`, and `src/__tests__/agent-memory.test.ts`.
 - Admin command denied: `adminUserId`, DB admin principals, `adminDirectOnly`,
   admin command parser, action policy tests.
+- `/llm-login` does not work: verify direct chat source, bootstrap
+  `adminUserId`, `LLM_PROVIDER=openai_codex_oauth`, `PUBLIC_BASE_URL`, Redis,
+  Postgres, `LLM_AUTH_ENCRYPTION_KEY`, and the gateway OAuth GET routes.
 - Need to know where a text request stopped: admin direct-chat
   `/last-agent-turns`.
 - Readiness failed: public `/readyz` checks only Postgres and Redis; detailed

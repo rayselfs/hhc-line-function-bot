@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { InMemoryRegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
+import { InMemoryConversationWindowStore } from "../agent/context-manager.js";
+import { InMemoryAgentJobStore } from "../agent/jobs.js";
 import { createAgentRuntime } from "../agent/agent-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
@@ -10,6 +12,7 @@ import { createPendingFunctionTextMessageHandler } from "../functions/pending-fu
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
 import { InMemorySessionStore } from "../state/session-store.js";
+import { InMemoryWebAllowlistStore } from "../web/allowlist.js";
 import type {
   AppConfig,
   FunctionExecutionResult,
@@ -2184,6 +2187,61 @@ describe("LINE entrance", () => {
     );
   });
 
+  it("lets admins manage the controlled web allowlist", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = new InMemoryAccessStore();
+    const webAllowlistStore = new InMemoryWebAllowlistStore({
+      now: () => new Date("2026-07-08T10:00:00.000Z")
+    });
+    const app = createApp(accessConfig(), {
+      router: { route },
+      accessStore,
+      webAllowlistStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const addBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/web-allowlist-add example.org /news" }
+    });
+    const addRes = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/helper",
+      headers: signedHeaders(addBody, "helper-secret"),
+      payload: addBody
+    });
+
+    expect(addRes.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("example.org");
+
+    const listBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "/web-allowlist" }
+    });
+    const listRes = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/helper",
+      headers: signedHeaders(listBody, "helper-secret"),
+      payload: listBody
+    });
+
+    expect(listRes.statusCode).toBe(200);
+    expect(replyText.mock.calls[1]?.[1]).toContain("path=/news");
+    expect(accessStore.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "web_allowlist.add",
+          targetType: "web_allowlist"
+        })
+      ])
+    );
+  });
+
   it("lets admins create an invite code through direct natural language", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const adminRoute = vi.fn().mockResolvedValue({
@@ -2686,6 +2744,118 @@ describe("LINE entrance", () => {
     expect(replyText).toHaveBeenCalledWith("reply-token", "已選擇第 1 個投影片", undefined);
   });
 
+  it("stores slow agent turns and lets the same requester retrieve the result by postback", async () => {
+    const config = testConfig();
+    config.profiles[0] = {
+      ...config.profiles[0],
+      longRunningJobs: { enabled: true, inlineReplyTimeoutMs: 1, resultTtlMinutes: 10 }
+    };
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const deferred = createDeferred<FunctionExecutionResult | undefined>();
+    const agentTurnRuntime = {
+      handleTextTurn: vi.fn().mockReturnValue(deferred.promise)
+    };
+    const app = createTestApp(config, {
+      router: { route: vi.fn() },
+      agentTurnRuntime,
+      agentJobStore: new InMemoryAgentJobStore(),
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "lookup" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    const quickReplies = replyText.mock.calls[0]?.[2]?.quickReplies ?? [];
+    expect(String(replyText.mock.calls[0]?.[1])).toContain("處理");
+    expect(quickReplies[0]?.action.type).toBe("postback");
+    const data =
+      quickReplies[0]?.action.type === "postback" ? quickReplies[0].action.data : undefined;
+
+    deferred.resolve({ ok: true, replyText: "finished result" });
+    await deferred.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const postbackBody = lineBody({
+      type: "postback",
+      replyToken: "reply-token-2",
+      source: { type: "user", userId: "Uallowed" },
+      postback: { data }
+    });
+    const postbackRes = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(postbackBody, "main-secret"),
+      payload: postbackBody
+    });
+
+    expect(postbackRes.statusCode).toBe(200);
+    expect(replyText).toHaveBeenLastCalledWith("reply-token-2", "finished result", undefined);
+  });
+
+  it("keeps group follow-up routing scoped to the same requester conversation window", async () => {
+    const config = testConfig();
+    config.profiles[0] = {
+      ...config.profiles[0],
+      wakeKeywords: ["bot"],
+      smallTalk: { mode: "template", maxChars: 80 },
+      generalAgent: { enabled: true, conversationWindowSeconds: 90 }
+    };
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const conversationWindowStore = new InMemoryConversationWindowStore({
+      now: () => new Date("2026-07-08T10:00:00.000Z")
+    });
+    const app = createTestApp(config, {
+      router: { route },
+      conversationWindowStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const firstBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "bot hello" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(firstBody, "main-secret"),
+      payload: firstBody
+    });
+
+    const secondBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "group", groupId: "Cmain", userId: "U1" },
+      message: { type: "text", text: "I want to look up data" }
+    });
+    const secondRes = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(secondBody, "main-secret"),
+      payload: secondBody
+    });
+
+    expect(secondRes.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(expect.objectContaining({ text: "I want to look up data" }));
+  });
+
   it("handles numeric PPT selections in groups without routing them", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
@@ -2799,3 +2969,13 @@ describe("LINE entrance", () => {
     expect(res.json()).not.toHaveProperty("llm");
   });
 });
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}

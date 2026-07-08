@@ -38,7 +38,21 @@ const profileSchema = z.object({
       mode: z.enum(["template", "llm"]).default("template"),
       maxChars: z.number().int().min(20).max(120).default(80)
     })
-    .default({ mode: "template", maxChars: 80 })
+    .default({ mode: "template", maxChars: 80 }),
+  llmProvider: z.enum(["ollama", "openai_codex_oauth"]).optional(),
+  generalAgent: z
+    .object({
+      enabled: z.boolean().default(false),
+      conversationWindowSeconds: z.number().int().min(10).max(900).default(90)
+    })
+    .default({ enabled: false, conversationWindowSeconds: 90 }),
+  longRunningJobs: z
+    .object({
+      enabled: z.boolean().default(false),
+      inlineReplyTimeoutMs: z.number().int().min(500).max(20_000).default(4000),
+      resultTtlMinutes: z.number().int().min(1).max(1440).default(30)
+    })
+    .default({ enabled: false, inlineReplyTimeoutMs: 4000, resultTtlMinutes: 30 })
 });
 
 export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
@@ -74,9 +88,30 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       enabledFunctions: profile.enabledFunctions as FunctionName[]
     })),
     llm: {
+      provider: readModelProvider(env.LLM_PROVIDER, "ollama"),
+      fallbackProvider: readModelProvider(env.LLM_FALLBACK_PROVIDER, "ollama"),
       ollamaBaseUrl: env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
       ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
       ollamaKeepAlive: readOllamaKeepAlive(env.OLLAMA_KEEP_ALIVE),
+      openaiCodexBaseUrl: env.OPENAI_CODEX_BASE_URL || "https://chatgpt.com/backend-api/codex",
+      openaiCodexModel: env.OPENAI_CODEX_MODEL || "gpt-5.1-codex",
+      openaiCodexAuthProfile: env.OPENAI_CODEX_AUTH_PROFILE || "helper",
+      openaiCodexOAuthAuthorizeUrl:
+        env.OPENAI_CODEX_OAUTH_AUTHORIZE_URL || "https://auth.openai.com/oauth/authorize",
+      openaiCodexOAuthTokenUrl:
+        env.OPENAI_CODEX_OAUTH_TOKEN_URL || "https://auth.openai.com/oauth/token",
+      openaiCodexOAuthClientId: env.OPENAI_CODEX_OAUTH_CLIENT_ID || "app_EMoamEEZ73f0CkXaXp7hrann",
+      publicBaseUrl: env.PUBLIC_BASE_URL || undefined,
+      authLoginStateTtlMinutes: readInt(env.LLM_AUTH_LOGIN_STATE_TTL_MINUTES, 10),
+      authEncryptionKey: env.LLM_AUTH_ENCRYPTION_KEY || undefined,
+      contextWindowTokens: readInt(env.LLM_CONTEXT_WINDOW_TOKENS, 128_000),
+      runtimeContextBudgetTokens: readInt(env.LLM_RUNTIME_CONTEXT_BUDGET_TOKENS, 24_000),
+      contextCompressionThresholdRatio: readFloat(
+        env.LLM_CONTEXT_COMPRESSION_THRESHOLD_RATIO,
+        0.75
+      ),
+      generalMaxOutputTokens: readInt(env.LLM_GENERAL_MAX_OUTPUT_TOKENS, 512),
+      routeMaxOutputTokens: readInt(env.LLM_ROUTE_MAX_OUTPUT_TOKENS, 256),
       timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000),
       keywordFallbackEnabled: readBool(env.KEYWORD_FALLBACK_ENABLED, true)
     },
@@ -278,6 +313,21 @@ function readBool(value: string | undefined, fallback: boolean): boolean {
     return fallback;
   }
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function readFloat(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readModelProvider(
+  value: string | undefined,
+  fallback: "ollama" | "openai_codex_oauth"
+): "ollama" | "openai_codex_oauth" {
+  return value === "openai_codex_oauth" ? "openai_codex_oauth" : fallback;
 }
 
 function readOllamaKeepAlive(value: string | undefined): string | number | undefined {

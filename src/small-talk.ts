@@ -41,15 +41,19 @@ export async function createControlledSmallTalkReply(
   }
 
   try {
+    const maxChars =
+      input.generator.providerName === "openai_codex_oauth"
+        ? Math.max(config.maxChars, 320)
+        : config.maxChars;
     const reply = sanitizeGeneratedReply(
       await input.generator.completeText({
-        prompt: buildSmallTalkPrompt(input.category, config.maxChars),
+        prompt: buildSmallTalkPrompt(input.category, maxChars),
         profileName: input.profile.name,
         text: input.text,
         category: input.category,
-        maxChars: config.maxChars
+        maxChars
       }),
-      config.maxChars
+      maxChars
     );
     return reply ? { ok: true, replyText: reply } : fallback;
   } catch {

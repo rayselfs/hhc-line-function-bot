@@ -15,6 +15,7 @@ import type { LastRouteRecord, LastRouteStore } from "../observability/last-rout
 import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
 import type { SessionStore } from "../state/session-store.js";
 import type { InFlightKey, InFlightStore } from "../in-flight/in-flight-store.js";
+import type { ContextManager, ConversationWindowStore } from "./context-manager.js";
 import type {
   AdminActionRouterPort,
   BotProfileConfig,
@@ -26,8 +27,10 @@ import type {
   JsonRecord,
   LineEvent,
   LineSource,
+  ModelProviderName,
   RouteObserver,
   RouteObserverEvent,
+  RouteProviderName,
   TextGenerationProvider,
   TextMessageHandlerRegistry
 } from "../types.js";
@@ -53,6 +56,8 @@ export interface AgentTurnRuntimeOptions {
   lastRouteStore: LastRouteStore;
   routeObserver?: RouteObserver;
   textGenerator?: TextGenerationProvider;
+  contextManager?: ContextManager;
+  conversationWindowStore?: ConversationWindowStore;
   now?: () => Date;
 }
 
@@ -202,6 +207,14 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, adminActionResult);
       }
 
+      const runtimeContext = await buildRuntimeContext(options, input, text);
+      if (runtimeContext) {
+        steps.push({
+          phase: "context",
+          outcome: runtimeContext.compressed ? "compressed" : "full"
+        });
+      }
+
       const routeStartedAt = Date.now();
       let route;
       try {
@@ -209,7 +222,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           profileName: input.profile.name,
           text,
           enabledFunctions: input.profile.enabledFunctions,
-          source: input.event.source
+          source: input.event.source,
+          runtimeContext: runtimeContext?.prompt
         });
       } catch (error) {
         await recordRuntimeError({
@@ -587,6 +601,38 @@ async function isAdminUser(
   );
 }
 
+async function buildRuntimeContext(
+  options: AgentTurnRuntimeOptions,
+  input: AgentTextTurnInput,
+  text: string
+) {
+  if (!options.contextManager) {
+    return undefined;
+  }
+  const scope = {
+    profileName: input.profile.name,
+    sourceKey: sourceKey(input.event.source),
+    requesterUserId: input.event.source.userId
+  };
+  const recentTurns = await options.conversationWindowStore?.recentTurns(scope, 6);
+  const adminAllowed =
+    options.accessStore && input.event.source.userId
+      ? await isAdminUser(input.profile, input.event.source.userId, options.accessStore)
+      : false;
+  return options.contextManager.build({
+    safety: {
+      profileName: input.profile.name,
+      sourceKey: scope.sourceKey,
+      requesterUserId: input.event.source.userId,
+      enabledFunctions: input.profile.enabledFunctions,
+      adminAllowed,
+      webAllowlistDecision: "not_requested"
+    },
+    currentMessage: text,
+    recentTurns
+  });
+}
+
 async function matchingTextMessageHandler(
   event: LineEvent,
   profile: BotProfileConfig,
@@ -609,12 +655,12 @@ async function recordRoute(input: {
   routeObserver: RouteObserver | undefined;
   lastRouteStore: LastRouteStore;
   input: AgentTextTurnInput;
-  provider: "ollama" | "keyword" | "router";
+  provider: RouteProviderName;
   outcome: "execute" | "respond" | "deny";
   action?: string;
   reason?: string;
   confidence?: number;
-  fallbackProvider?: "ollama";
+  fallbackProvider?: ModelProviderName;
   fallbackReason?: string;
   arguments?: JsonRecord;
   durationMs: number;

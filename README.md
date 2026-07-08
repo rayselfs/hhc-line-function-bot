@@ -7,7 +7,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Fastify webhook server with LINE signature validation.
 - Multiple bot profiles in one service, each on its own webhook path.
 - Per-profile access policy, wake words, message type filtering, and function toggles.
-- Function router that uses Ollama `qwen3:4b-instruct` first.
+- Function router that uses Ollama `qwen3:4b-instruct` by default, with optional Codex OAuth provider support.
 - Action catalog that separates user functions, admin actions, and system actions.
 - Policy gate and admin action registry for natural-language admin operations.
 - Conservative keyword fallback when Ollama times out, is unreachable, or returns invalid JSON.
@@ -17,6 +17,9 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
 - Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, explicit text/resource memories, and resource aliases.
+- Requester-scoped short conversation windows, so group follow-up messages can continue naturally without letting other users inherit context.
+- Long-running task handoff: slow turns can reply with a "check result" postback instead of using LINE push quota.
+- Controlled web allowlist storage and admin commands for future safe web lookup features.
 - Optional Redis backend for sessions, cache, recent errors, rate limiting, and one-time registration invite codes.
 - Per-profile access policy with PostgreSQL-backed user/group/admin registration.
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
@@ -46,6 +49,11 @@ Set the LINE webhook URL per bot profile, for example:
 
 - `/api/line/webhook/helper`
 - `/api/line/webhook/slides`
+
+If the Codex OAuth provider is enabled, expose these GET endpoints through the gateway without rewriting the path:
+
+- `/api/line/llm-auth/openai-codex/start`
+- `/api/line/llm-auth/openai-codex/callback`
 
 Health and readiness:
 
@@ -93,6 +101,19 @@ Example shape:
     "groupAccessPolicy": "managed",
     "registration": {
       "enabled": true
+    },
+    "smallTalk": {
+      "mode": "llm",
+      "maxChars": 80
+    },
+    "generalAgent": {
+      "enabled": true,
+      "conversationWindowSeconds": 90
+    },
+    "longRunningJobs": {
+      "enabled": true,
+      "inlineReplyTimeoutMs": 8000,
+      "resultTtlMinutes": 10
     }
   }
 ]
@@ -150,7 +171,39 @@ Function toggles are profile-scoped:
 
 ## Routing
 
-Primary routing uses Ollama. Keyword fallback is intentionally narrow:
+Primary routing uses Ollama unless `LLM_PROVIDER=openai_codex_oauth` is configured. If the Codex OAuth provider is enabled, the app stores encrypted OAuth tokens in PostgreSQL and can fall back to Ollama when the primary provider returns invalid JSON, times out, or is unavailable. Explicit model deny decisions do not fall back.
+
+Relevant env vars:
+
+```text
+LLM_PROVIDER=ollama
+LLM_FALLBACK_PROVIDER=ollama
+OPENAI_CODEX_BASE_URL=...
+OPENAI_CODEX_MODEL=...
+OPENAI_CODEX_AUTH_PROFILE=helper
+OPENAI_CODEX_OAUTH_AUTHORIZE_URL=https://auth.openai.com/oauth/authorize
+OPENAI_CODEX_OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
+OPENAI_CODEX_OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
+PUBLIC_BASE_URL=https://www.alive.org.tw
+LLM_AUTH_LOGIN_STATE_TTL_MINUTES=10
+LLM_AUTH_ENCRYPTION_KEY=...
+LLM_RUNTIME_CONTEXT_BUDGET_TOKENS=2000
+LLM_CONTEXT_COMPRESSION_THRESHOLD_RATIO=0.75
+LLM_GENERAL_MAX_OUTPUT_TOKENS=160
+LLM_ROUTE_MAX_OUTPUT_TOKENS=256
+```
+
+Bootstrap superadmin direct-chat commands for OAuth:
+
+```text
+/llm-login
+/llm-logout
+/llm-status
+```
+
+`/llm-login` creates a short-lived one-time Redis state and returns a browser login link. The callback exchanges the OAuth code server-side and stores encrypted tokens in PostgreSQL. The LINE reply never includes tokens or callback codes.
+
+Keyword fallback is intentionally narrow:
 
 - `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`
 - `query_service_schedule`: `服事表`, `服事`
@@ -167,6 +220,10 @@ Router behavior is guarded by a deterministic offline eval corpus in each functi
 Set `TIME_ZONE` for all calendar date range decisions, including `今天`, `明天`, `後天`, and upcoming service schedule queries. The default is `Asia/Taipei`.
 
 ## State
+
+When `generalAgent.enabled=true`, group conversations get a short requester-scoped follow-up window. If one user has just addressed the bot, that same user can send the next related message without repeating the wake word. Other group members do not inherit that window.
+
+When `longRunningJobs.enabled=true`, slow text turns race against `inlineReplyTimeoutMs`. If the turn is still running, the bot replies with a Quick Reply postback to check the result later. The stored result is scoped by profile, LINE source, and requester user id, and should use Redis in production.
 
 Multi-result PPT and sheet music searches store short-lived in-memory sessions and reply with LINE postback Quick Replies. Users can also reply with a plain number such as `1` to select from the latest active candidate list for the same profile, LINE source, and requester. Numeric replies without an active selection session are ignored instead of being routed or answered.
 
@@ -205,7 +262,7 @@ Useful memory commands:
 
 The first version is single-instance friendly. If the Container App scales beyond one replica or restarts, pending selections can expire; use Redis or another shared store before enabling multiple replicas.
 
-Set `REDIS_URL` to move sessions, cache, recent errors, and rate-limit state to Redis. If `REDIS_URL` is unset, the app uses in-memory stores. If `REDIS_URL` is set but Redis cannot connect, startup fails.
+Set `REDIS_URL` to move sessions, cache, recent errors, rate-limit state, conversation windows, and long-running job results to Redis. If `REDIS_URL` is unset, the app uses in-memory stores. If `REDIS_URL` is set but Redis cannot connect, startup fails.
 
 Set `DATABASE_URL` to persist access state and agent memory. If PostgreSQL is configured, the app creates both access tables and agent memory tables on startup. Agent resource storage supports Graph file metadata and user-provided external links. If PostgreSQL is missing, agent memory falls back to in-memory and is lost on restart.
 
@@ -223,6 +280,16 @@ Admin natural-language requests pass through a conservative local hint check, th
 
 Destructive admin actions must be confirmed with `/confirm <code>`. Invite-code creation is a `security_change` action and remains admin direct-chat only plus audited, but does not require confirmation.
 
+Controlled web allowlist commands are admin direct-chat commands. They prepare safe, profile-scoped web lookup by allowing only HTTPS domains and optional path prefixes. Private-network and localhost targets are still denied by code-level guardrails.
+
+```text
+/web-allowlist
+/web-allowlist-add <domain> [pathPrefix]
+/web-allowlist-enable <id>
+/web-allowlist-disable <id>
+/web-allowlist-remove <id>
+```
+
 Common commands:
 
 ```text
@@ -238,6 +305,7 @@ Common commands:
 /function-revoke <functionName> [groupId]
 /function-scopes [groupId]
 /audit-list [limit]
+/web-allowlist
 ```
 
 Advanced commands:
@@ -257,6 +325,12 @@ Advanced commands:
 /last-routes
 /last-agent-turns [limit]
 /memory-status
+/llm-login
+/llm-logout
+/web-allowlist-add <domain> [pathPrefix]
+/web-allowlist-enable <id>
+/web-allowlist-disable <id>
+/web-allowlist-remove <id>
 ```
 
 Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/last-agent-turns` shows the latest sanitized agent runtime phases so admins can debug whether a request stopped at memory, clarification, routing, in-flight locking, or function execution.

@@ -7,7 +7,8 @@ import type {
   AdminActionRouteInput,
   AdminActionRouteResult,
   AdminActionRouterPort,
-  ChatProvider
+  ChatProvider,
+  ModelProviderName
 } from "./types.js";
 
 const modelDecisionSchema = z.object({
@@ -19,6 +20,7 @@ const modelDecisionSchema = z.object({
 
 export interface AdminActionRouterOptions {
   primary: ChatProvider;
+  modelFallback?: ChatProvider;
 }
 
 export function createAdminActionRouter(options: AdminActionRouterOptions): AdminActionRouterPort {
@@ -32,21 +34,56 @@ class AdminActionRouter implements AdminActionRouterPort {
     const prompt = buildAdminRouterPrompt(input.enabledActions);
     try {
       return parseProviderDecision(
+        this.primaryProviderName(),
         await this.options.primary.completeJson({ ...input, enabledFunctions: [], prompt }),
         input
       );
     } catch (error) {
+      if (error instanceof ProviderResponseError && this.options.modelFallback) {
+        try {
+          const result = parseProviderDecision(
+            this.modelFallbackProviderName(),
+            await this.options.modelFallback.completeJson({
+              ...input,
+              enabledFunctions: [],
+              prompt
+            }),
+            input
+          );
+          return {
+            ...result,
+            fallbackProvider: this.primaryProviderName(),
+            fallbackReason: providerErrorReason(error)
+          };
+        } catch (fallbackError) {
+          return {
+            type: "deny",
+            reason: providerErrorReason(fallbackError),
+            provider: "router",
+            fallbackProvider: this.modelFallbackProviderName()
+          };
+        }
+      }
       return {
         type: "deny",
         reason: providerErrorReason(error),
         provider: "router",
-        fallbackProvider: "ollama"
+        fallbackProvider: this.primaryProviderName()
       };
     }
+  }
+
+  private primaryProviderName(): ModelProviderName {
+    return this.options.primary.providerName ?? "ollama";
+  }
+
+  private modelFallbackProviderName(): ModelProviderName {
+    return this.options.modelFallback?.providerName ?? "ollama";
   }
 }
 
 function parseProviderDecision(
+  provider: ModelProviderName,
   rawContent: string,
   input: AdminActionRouteInput
 ): AdminActionRouteResult {
@@ -61,16 +98,16 @@ function parseProviderDecision(
     return {
       type: "deny",
       reason: parsed.data.reason?.trim() || "not_matched",
-      provider: "ollama"
+      provider
     };
   }
 
   if (!isAdminActionName(action)) {
-    return { type: "deny", reason: "unknown_action", provider: "ollama" };
+    return { type: "deny", reason: "unknown_action", provider };
   }
 
   if (!input.enabledActions.includes(action)) {
-    return { type: "deny", reason: "admin_action_disabled", provider: "ollama" };
+    return { type: "deny", reason: "admin_action_disabled", provider };
   }
 
   return {
@@ -78,7 +115,7 @@ function parseProviderDecision(
     action,
     arguments: coerceFunctionArguments(parsed.data.arguments),
     confidence: parsed.data.confidence,
-    provider: "ollama"
+    provider
   };
 }
 

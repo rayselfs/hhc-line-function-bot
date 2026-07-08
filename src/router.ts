@@ -9,6 +9,7 @@ import type {
   FunctionName,
   FunctionRouterPort,
   JsonRecord,
+  ModelProviderName,
   RouteInput,
   RouteResult
 } from "./types.js";
@@ -30,6 +31,7 @@ export class ProviderResponseError extends Error {
 
 export interface FunctionRouterOptions {
   primary: ChatProvider;
+  modelFallback?: ChatProvider;
   keywordFallback?: KeywordFallbackRouter;
   keywordFallbackEnabled: boolean;
 }
@@ -42,23 +44,41 @@ class FunctionRouter implements FunctionRouterPort {
   constructor(private readonly options: FunctionRouterOptions) {}
 
   async route(input: RouteInput): Promise<RouteResult> {
-    const prompt = buildRouterPrompt(input.enabledFunctions);
+    const prompt = buildRouterPrompt(input.enabledFunctions, input.runtimeContext);
     let fallbackReason: string | undefined;
+    let keywordFallbackProvider = this.primaryProviderName();
 
     try {
       return parseProviderDecision(
-        "ollama",
+        this.primaryProviderName(),
         await this.options.primary.completeJson({ ...input, prompt }),
         input
       );
     } catch (error) {
       fallbackReason = providerErrorReason(error);
+      if (this.shouldFallback(error) && this.options.modelFallback) {
+        const modelFallbackProvider = this.modelFallbackProviderName();
+        try {
+          return withFallbackDiagnostics(
+            parseProviderDecision(
+              modelFallbackProvider,
+              await this.options.modelFallback.completeJson({ ...input, prompt }),
+              input
+            ),
+            this.primaryProviderName(),
+            fallbackReason
+          );
+        } catch (fallbackError) {
+          fallbackReason = providerErrorReason(fallbackError);
+          keywordFallbackProvider = modelFallbackProvider;
+        }
+      }
       if (!this.shouldFallback(error)) {
         return {
           type: "deny",
           reason: "router_failed",
           provider: "router",
-          fallbackProvider: "ollama",
+          fallbackProvider: this.primaryProviderName(),
           fallbackReason
         };
       }
@@ -69,12 +89,16 @@ class FunctionRouter implements FunctionRouterPort {
         type: "deny",
         reason: "keyword_fallback_not_configured",
         provider: "router",
-        fallbackProvider: "ollama",
+        fallbackProvider: this.primaryProviderName(),
         fallbackReason
       };
     }
 
-    return withFallbackDiagnostics(this.options.keywordFallback.route(input), fallbackReason);
+    return withFallbackDiagnostics(
+      this.options.keywordFallback.route(input),
+      keywordFallbackProvider,
+      fallbackReason
+    );
   }
 
   private shouldFallback(error: unknown): boolean {
@@ -83,10 +107,19 @@ class FunctionRouter implements FunctionRouterPort {
     }
     return error instanceof ProviderResponseError;
   }
+
+  private primaryProviderName(): ModelProviderName {
+    return this.options.primary.providerName ?? "ollama";
+  }
+
+  private modelFallbackProviderName(): ModelProviderName {
+    return this.options.modelFallback?.providerName ?? "ollama";
+  }
 }
 
 function withFallbackDiagnostics(
   result: RouteResult,
+  fallbackProvider: ModelProviderName,
   fallbackReason: string | undefined
 ): RouteResult {
   if (!fallbackReason) {
@@ -94,7 +127,7 @@ function withFallbackDiagnostics(
   }
   return {
     ...result,
-    fallbackProvider: "ollama",
+    fallbackProvider,
     fallbackReason
   };
 }
@@ -110,7 +143,7 @@ function providerErrorReason(error: unknown): string {
 }
 
 function parseProviderDecision(
-  provider: "ollama",
+  provider: ModelProviderName,
   rawContent: string,
   input: RouteInput
 ): RouteResult {
@@ -181,7 +214,7 @@ function parseJsonObject(content: string): unknown {
   }
 }
 
-function buildRouterPrompt(enabledFunctions: FunctionName[]): string {
+function buildRouterPrompt(enabledFunctions: FunctionName[], runtimeContext?: string): string {
   const available = getFunctionDefinitions(enabledFunctions)
     .map((definition) => definition.description)
     .join("\n");
@@ -200,8 +233,11 @@ function buildRouterPrompt(enabledFunctions: FunctionName[]): string {
     "- introduce_bot: controlled introduction/help response. Do not write the final reply text.",
     "- small_talk: controlled short chat response. Do not write the final reply text.",
     "Available functions:",
-    available || "(none)"
-  ].join("\n");
+    available || "(none)",
+    runtimeContext ? ["", "Runtime context:", runtimeContext].join("\n") : undefined
+  ]
+    .filter((line): line is string => typeof line === "string")
+    .join("\n");
 }
 
 export function coerceFunctionArguments(args: unknown): JsonRecord {

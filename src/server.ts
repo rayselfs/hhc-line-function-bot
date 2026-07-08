@@ -12,6 +12,13 @@ import {
 } from "./access/registration-invite-code-store.js";
 import type { AgentRuntime } from "./agent/agent-runtime.js";
 import { createAgentTurnRuntime, type AgentTurnRuntime } from "./agent/turn-runtime.js";
+import { InMemoryAgentJobStore, type AgentJobScope, type AgentJobStore } from "./agent/jobs.js";
+import {
+  createContextManager,
+  InMemoryConversationWindowStore,
+  type ConversationWindowScope,
+  type ConversationWindowStore
+} from "./agent/context-manager.js";
 import {
   formatAgentTurnTraces,
   InMemoryAgentTraceStore,
@@ -25,15 +32,22 @@ import {
   groupEngagementIgnoredReason
 } from "./engagement.js";
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
+import {
+  buildOpenAICodexOAuthAuthorizeUrl,
+  exchangeOpenAICodexOAuthCode
+} from "./clients/openai-codex-oauth.js";
 import { getFunctionDefinitions } from "./functions/definitions.js";
 import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-store.js";
 import { createIntroReply } from "./intro.js";
-import { buildFunctionQuickReplies } from "./line-reply.js";
+import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
+import { InMemoryLlmAuthStore, type LlmAuthStore } from "./llm/auth.js";
+import { InMemoryLlmOAuthStateStore, type LlmOAuthStateStore } from "./llm/oauth-state-store.js";
 import { messages } from "./messages.js";
 import { sanitizeActionTelemetryEvent } from "./observability/action-telemetry.js";
 import { resolveRequesterDisplayName } from "./requester-personalization.js";
 import { createControlledSmallTalkReply } from "./small-talk.js";
+import { InMemoryWebAllowlistStore, type WebAllowlistStore } from "./web/allowlist.js";
 import {
   formatLastErrors,
   InMemoryLastErrorStore,
@@ -95,6 +109,12 @@ export interface AppDependencies {
   agentTurnRuntime?: AgentTurnRuntime;
   agentTraceStore?: AgentTraceStore;
   sessionStore?: SessionStore;
+  agentJobStore?: AgentJobStore;
+  conversationWindowStore?: ConversationWindowStore;
+  webAllowlistStore?: WebAllowlistStore;
+  llmAuthStore?: LlmAuthStore;
+  llmOAuthStateStore?: LlmOAuthStateStore;
+  llmOAuthFetch?: typeof fetch;
 }
 
 interface AllowResult {
@@ -140,6 +160,16 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
     ]
   },
   {
+    title: "Web allowlist",
+    entries: [
+      { usage: "/web-allowlist", description: "list controlled web targets" },
+      { usage: "/web-allowlist-add <domain> [pathPrefix]", description: "allow a HTTPS domain" },
+      { usage: "/web-allowlist-enable <id>", description: "enable a web target" },
+      { usage: "/web-allowlist-disable <id>", description: "disable a web target" },
+      { usage: "/web-allowlist-remove <id>", description: "remove a web target" }
+    ]
+  },
+  {
     title: "查詢",
     common: true,
     entries: [
@@ -156,7 +186,9 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
     title: "Superadmin",
     entries: [
       { usage: "/admin-add <userId>", description: "superadmin 新增 admin" },
-      { usage: "/admin-remove <userId>", description: "superadmin 停用 admin" }
+      { usage: "/admin-remove <userId>", description: "superadmin 停用 admin" },
+      { usage: "/llm-login", description: "superadmin direct chat OAuth login" },
+      { usage: "/llm-logout", description: "superadmin direct chat OAuth logout" }
     ]
   },
   {
@@ -221,6 +253,17 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const textGenerator = deps.textGenerator;
   const agentTraceStore =
     deps.agentTraceStore ?? new InMemoryAgentTraceStore(config.lastErrors?.maxEntries ?? 20);
+  const agentJobStore = deps.agentJobStore ?? new InMemoryAgentJobStore();
+  const conversationWindowStore =
+    deps.conversationWindowStore ?? new InMemoryConversationWindowStore();
+  const webAllowlistStore = deps.webAllowlistStore ?? new InMemoryWebAllowlistStore();
+  const llmAuthStore = deps.llmAuthStore ?? new InMemoryLlmAuthStore();
+  const llmOAuthStateStore = deps.llmOAuthStateStore ?? new InMemoryLlmOAuthStateStore();
+  const llmOAuthFetch = deps.llmOAuthFetch ?? fetch;
+  const contextManager = createContextManager({
+    runtimeContextBudgetTokens: config.llm.runtimeContextBudgetTokens ?? 2000,
+    compressionThresholdRatio: config.llm.contextCompressionThresholdRatio ?? 0.75
+  });
   const agentTurnRuntime =
     deps.agentTurnRuntime ??
     createAgentTurnRuntime({
@@ -237,7 +280,9 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
       lastErrorStore,
       lastRouteStore,
       routeObserver: deps.routeObserver,
-      textGenerator
+      textGenerator,
+      contextManager,
+      conversationWindowStore
     });
 
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
@@ -255,12 +300,85 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
     return reply.code(readiness.status === "ok" ? 200 : 503).send(readiness);
   });
 
+  app.get("/api/line/llm-auth/openai-codex/start", async (request, reply) => {
+    const state = readQueryParam(request.query, "state");
+    if (!state) {
+      return sendLlmAuthHtml(reply, 400, "Login link invalid", "Missing OAuth state.");
+    }
+    const record = await llmOAuthStateStore.peek(state);
+    if (!record) {
+      return sendLlmAuthHtml(
+        reply,
+        400,
+        "Login link expired",
+        "This login link is invalid or expired. Please create a new one from LINE."
+      );
+    }
+    return reply.redirect(
+      buildOpenAICodexOAuthAuthorizeUrl({
+        authorizeUrl: config.llm.openaiCodexOAuthAuthorizeUrl,
+        clientId: config.llm.openaiCodexOAuthClientId,
+        redirectUri: llmOAuthRedirectUri(config),
+        state: record.state
+      })
+    );
+  });
+
+  app.get("/api/line/llm-auth/openai-codex/callback", async (request, reply) => {
+    const state = readQueryParam(request.query, "state");
+    const code = readQueryParam(request.query, "code");
+    if (!state || !code) {
+      return sendLlmAuthHtml(reply, 400, "Login failed", "Missing OAuth callback parameters.");
+    }
+    const record = await llmOAuthStateStore.consume(state);
+    if (!record) {
+      return sendLlmAuthHtml(
+        reply,
+        400,
+        "Login link expired",
+        "This login link is invalid, already used, or expired."
+      );
+    }
+    try {
+      const token = await exchangeOpenAICodexOAuthCode({
+        code,
+        redirectUri: llmOAuthRedirectUri(config),
+        tokenUrl: config.llm.openaiCodexOAuthTokenUrl,
+        clientId: config.llm.openaiCodexOAuthClientId,
+        fetchImpl: llmOAuthFetch
+      });
+      await llmAuthStore.save({
+        provider: "openai_codex_oauth",
+        profileName: record.authProfile,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        expiresAt: token.expiresAt,
+        accountId: token.accountId,
+        status: "active"
+      });
+      return sendLlmAuthHtml(
+        reply,
+        200,
+        "Login complete",
+        "You can close this page and return to LINE."
+      );
+    } catch {
+      return sendLlmAuthHtml(
+        reply,
+        502,
+        "Login failed",
+        "OAuth token exchange failed. Please create a new login link from LINE."
+      );
+    }
+  });
+
   for (const profile of config.profiles) {
     app.post(profile.webhookPath, async (request, reply) => {
       await handleWebhook(
         request,
         reply,
         profile,
+        config,
         deps.router,
         adminActionRegistry,
         deps.postbackHandlers ?? {},
@@ -279,7 +397,12 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         agentTurnRuntime,
         agentTraceStore,
         textGenerator,
-        deps.agentRuntime
+        deps.agentRuntime,
+        agentJobStore,
+        conversationWindowStore,
+        webAllowlistStore,
+        llmAuthStore,
+        llmOAuthStateStore
       );
     });
   }
@@ -291,6 +414,7 @@ async function handleWebhook(
   request: FastifyRequest,
   reply: FastifyReply,
   profile: BotProfileConfig,
+  config: AppConfig,
   router: FunctionRouterPort,
   adminActionRegistry: AdminActionRegistry,
   postbackHandlers: PostbackHandlerRegistry,
@@ -309,7 +433,12 @@ async function handleWebhook(
   agentTurnRuntime: AgentTurnRuntime,
   agentTraceStore: AgentTraceStore,
   textGenerator: TextGenerationProvider | undefined,
-  agentRuntime: AgentRuntime | undefined
+  agentRuntime: AgentRuntime | undefined,
+  agentJobStore: AgentJobStore,
+  conversationWindowStore: ConversationWindowStore,
+  webAllowlistStore: WebAllowlistStore,
+  llmAuthStore: LlmAuthStore,
+  llmOAuthStateStore: LlmOAuthStateStore
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -330,7 +459,13 @@ async function handleWebhook(
   const ignoredCounts = new Map<string, number>();
 
   for (const event of payload.events) {
-    const allow = await allowEvent(profile, event, textMessageHandlers, accessStore);
+    const allow = await allowEvent(
+      profile,
+      event,
+      textMessageHandlers,
+      accessStore,
+      conversationWindowStore
+    );
     if (allow.allowed) {
       allowedEvents.push(event);
     } else {
@@ -363,7 +498,8 @@ async function handleWebhook(
         effectiveProfile,
         postbackHandlers,
         requestId,
-        requesterDisplayName
+        requesterDisplayName,
+        agentJobStore
       );
       const postbackFunctionName = functionNameForAgentResource(result.agentResource?.resourceType);
       if (postbackFunctionName) {
@@ -460,6 +596,7 @@ async function handleWebhook(
           event.message.text,
           effectiveProfile,
           event,
+          config,
           adminHandlers,
           router,
           lastErrorStore,
@@ -468,7 +605,10 @@ async function handleWebhook(
           adminActionRegistry,
           diagnostics,
           agentTraceStore,
-          requestId
+          requestId,
+          webAllowlistStore,
+          llmAuthStore,
+          llmOAuthStateStore
         );
       } catch (error) {
         await lastErrorStore.record({
@@ -510,6 +650,12 @@ async function handleWebhook(
       event.source.type === "group"
         ? classifyGroupEngagement(effectiveProfile, event.message)
         : undefined;
+    const conversationScope = buildConversationWindowScope(effectiveProfile, event);
+    const conversationWindowActive =
+      event.source.type === "group" &&
+      Boolean(effectiveProfile.generalAgent?.enabled) &&
+      Boolean(conversationScope) &&
+      (await conversationWindowStore.isActive(conversationScope as ConversationWindowScope));
     if (groupEngagement?.kind === "intro") {
       const intro = createIntroReply(effectiveProfile, event.message.text, { force: true });
       await emitRouteEvent(routeObserver, {
@@ -526,6 +672,9 @@ async function handleWebhook(
         intro?.replyText ?? messages.requestFailed,
         intro?.quickReplies ? { quickReplies: intro.quickReplies } : undefined
       );
+      if (intro) {
+        await recordConversationReply(conversationWindowStore, effectiveProfile, event, intro);
+      }
       continue;
     }
     if (groupEngagement?.kind === "small_talk" && groupEngagement.smallTalkCategory) {
@@ -546,6 +695,7 @@ async function handleWebhook(
         smallTalkCategory: groupEngagement.smallTalkCategory
       });
       await line.replyText(event.replyToken, result.replyText, undefined);
+      await recordConversationReply(conversationWindowStore, effectiveProfile, event, result);
       continue;
     }
 
@@ -556,17 +706,21 @@ async function handleWebhook(
         intro.replyText,
         intro.quickReplies ? { quickReplies: intro.quickReplies } : undefined
       );
+      await recordConversationReply(conversationWindowStore, effectiveProfile, event, intro);
       continue;
     }
 
-    const routingAllowed = !groupEngagement || groupEngagementAllowsReply(groupEngagement);
+    const routingAllowed =
+      !groupEngagement || groupEngagementAllowsReply(groupEngagement) || conversationWindowActive;
 
-    const agentTurnResult = await agentTurnRuntime.handleTextTurn({
+    const agentTurnResult = await handleAgentTextTurnWithLongJob({
+      runtime: agentTurnRuntime,
+      jobStore: agentJobStore,
       profile: effectiveProfile,
       event,
       requestId,
       requesterDisplayName,
-      engagement: groupEngagement?.kind,
+      engagement: conversationWindowActive ? "conversation_window" : groupEngagement?.kind,
       allowRouting: routingAllowed
     });
     if (agentTurnResult) {
@@ -574,6 +728,12 @@ async function handleWebhook(
         event.replyToken,
         agentTurnResult.replyText,
         agentTurnResult.quickReplies ? { quickReplies: agentTurnResult.quickReplies } : undefined
+      );
+      await recordConversationReply(
+        conversationWindowStore,
+        effectiveProfile,
+        event,
+        agentTurnResult
       );
     }
   }
@@ -619,11 +779,15 @@ async function handlePostbackEvent(
   profile: BotProfileConfig,
   postbackHandlers: PostbackHandlerRegistry,
   requestId: string,
-  requesterDisplayName?: string
+  requesterDisplayName: string | undefined,
+  agentJobStore: AgentJobStore
 ) {
   const request = parsePostbackData(event.postback?.data ?? "");
   if (!request) {
     return { ok: true, replyText: messages.postbackUnsupported };
+  }
+  if (request.action === "agent_job_result") {
+    return handleAgentJobResultPostback(request, profile, event, agentJobStore);
   }
   const handler = postbackHandlers[request.action];
   if (!handler) {
@@ -639,6 +803,141 @@ function parsePostbackData(data: string): PostbackRequest | null {
     return null;
   }
   return { action, params };
+}
+
+async function handleAgentTextTurnWithLongJob(input: {
+  runtime: AgentTurnRuntime;
+  jobStore: AgentJobStore;
+  profile: BotProfileConfig;
+  event: LineEvent;
+  requestId: string;
+  requesterDisplayName?: string;
+  engagement?: string;
+  allowRouting: boolean;
+}): Promise<FunctionExecutionResult | undefined> {
+  const turnPromise = input.runtime.handleTextTurn({
+    profile: input.profile,
+    event: input.event,
+    requestId: input.requestId,
+    requesterDisplayName: input.requesterDisplayName,
+    engagement: input.engagement,
+    allowRouting: input.allowRouting
+  });
+  const config = input.profile.longRunningJobs;
+  if (!config?.enabled || config.inlineReplyTimeoutMs <= 0) {
+    return turnPromise;
+  }
+  const scope = buildAgentJobScope(input.profile, input.event);
+  if (!scope) {
+    return turnPromise;
+  }
+  const timeout = sleep(config.inlineReplyTimeoutMs).then(() => timeoutSymbol);
+  const first = await Promise.race([turnPromise, timeout]);
+  if (first === timeoutSymbol) {
+    const job = await input.jobStore.createPending({
+      scope,
+      label: input.event.message?.text?.slice(0, 40) || "agent-turn",
+      ttlMs: config.resultTtlMinutes * 60_000
+    });
+    turnPromise
+      .then((result) =>
+        input.jobStore.complete(
+          job.id,
+          result ?? { ok: true, replyText: "這次沒有需要回覆的結果。" }
+        )
+      )
+      .catch((error: unknown) =>
+        input.jobStore.fail(job.id, error instanceof Error ? error.message : String(error))
+      );
+
+    return {
+      ok: true,
+      replyText: waitingForAgentJobReply(input.requesterDisplayName),
+      quickReplies: [buildAgentJobQuickReply(job.id)]
+    };
+  }
+  return first as FunctionExecutionResult | undefined;
+}
+
+async function handleAgentJobResultPostback(
+  request: PostbackRequest,
+  profile: BotProfileConfig,
+  event: LineEvent,
+  jobStore: AgentJobStore
+): Promise<FunctionExecutionResult> {
+  const jobId = request.params.jobId;
+  const scope = buildAgentJobScope(profile, event);
+  if (!jobId || !scope) {
+    return { ok: true, replyText: messages.postbackUnsupported };
+  }
+  const job = await jobStore.get(jobId, scope);
+  if (!job) {
+    return { ok: true, replyText: "找不到這筆結果，可能已經過期，請再問一次。" };
+  }
+  if (job.status === "pending") {
+    return {
+      ok: true,
+      replyText: "我還在處理，稍後可以再按一次查看結果。",
+      quickReplies: [buildAgentJobQuickReply(job.id)]
+    };
+  }
+  if (job.status === "failed") {
+    return { ok: true, replyText: "剛剛處理時遇到問題，請再問一次。" };
+  }
+  return job.result ?? { ok: true, replyText: "這筆任務沒有可顯示的結果。" };
+}
+
+function buildAgentJobQuickReply(jobId: string) {
+  return buildPostbackQuickReply(
+    "查看結果",
+    `action=agent_job_result&jobId=${encodeURIComponent(jobId)}`,
+    "查看結果"
+  );
+}
+
+function buildAgentJobScope(
+  profile: BotProfileConfig,
+  event: LineEvent
+): AgentJobScope | undefined {
+  const source = sourceKey(event.source);
+  if (!source) {
+    return undefined;
+  }
+  if (event.source.type !== "user" && !event.source.userId) {
+    return undefined;
+  }
+  return {
+    profileName: profile.name,
+    sourceKey: source,
+    requesterUserId: event.source.userId
+  };
+}
+
+function waitingForAgentJobReply(displayName: string | undefined): string {
+  return displayName
+    ? `${displayName}，我先處理這個查詢。等一下可以按「查看結果」。`
+    : "我先處理這個查詢。等一下可以按「查看結果」。";
+}
+
+const timeoutSymbol = Symbol("agent_turn_timeout");
+
+function sleep(ms: number): Promise<typeof timeoutSymbol> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(timeoutSymbol), ms);
+  });
+}
+
+function sourceKey(source: LineEvent["source"]): string | undefined {
+  switch (source.type) {
+    case "group":
+      return source.groupId ? `group:${source.groupId}` : undefined;
+    case "room":
+      return source.roomId ? `room:${source.roomId}` : undefined;
+    case "user":
+      return source.userId ? `user:${source.userId}` : undefined;
+    default:
+      return undefined;
+  }
 }
 
 function parseWebhookPayload(body: Buffer): LineWebhookPayload | null {
@@ -678,7 +977,8 @@ async function allowEvent(
   profile: BotProfileConfig,
   event: LineEvent,
   textMessageHandlers: TextMessageHandlerRegistry,
-  accessStore: AccessStore
+  accessStore: AccessStore,
+  conversationWindowStore: ConversationWindowStore
 ): Promise<AllowResult> {
   const eventType = event.type?.trim().toLowerCase();
   const sourceType = event.source?.type?.trim().toLowerCase();
@@ -722,6 +1022,9 @@ async function allowEvent(
       const engagement = classifyGroupEngagement(profile, event.message);
       if (!profile.groupRequireWakeWord || groupEngagementAllowsReply(engagement)) {
         return { allowed: true, reason: `group_${engagement.kind}_matched` };
+      }
+      if (await hasActiveConversationWindow(profile, event, conversationWindowStore)) {
+        return { allowed: true, reason: "group_conversation_window_active" };
       }
       if (
         await matchingTextMessageHandler(
@@ -985,6 +1288,60 @@ function nonBlank(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
+
+async function hasActiveConversationWindow(
+  profile: BotProfileConfig,
+  event: LineEvent,
+  store: ConversationWindowStore
+): Promise<boolean> {
+  if (!profile.generalAgent?.enabled) {
+    return false;
+  }
+  const scope = buildConversationWindowScope(profile, event);
+  return scope ? store.isActive(scope) : false;
+}
+
+async function recordConversationReply(
+  store: ConversationWindowStore,
+  profile: BotProfileConfig,
+  event: LineEvent,
+  result: FunctionExecutionResult
+): Promise<void> {
+  const ttlMs = conversationWindowTtlMs(profile);
+  const scope = buildConversationWindowScope(profile, event);
+  const userText = event.message?.text;
+  if (!ttlMs || !scope || !userText || !result.replyText) {
+    return;
+  }
+  await store.recordTurn({ scope, role: "user", text: userText, ttlMs });
+  await store.recordTurn({ scope, role: "assistant", text: result.replyText, ttlMs });
+}
+
+function buildConversationWindowScope(
+  profile: BotProfileConfig,
+  event: LineEvent
+): ConversationWindowScope | undefined {
+  if (event.source.type !== "group" || !event.source.groupId || !event.source.userId) {
+    return undefined;
+  }
+  const key = sourceKey(event.source);
+  if (!key) {
+    return undefined;
+  }
+  return {
+    profileName: profile.name,
+    sourceKey: key,
+    requesterUserId: event.source.userId
+  };
+}
+
+function conversationWindowTtlMs(profile: BotProfileConfig): number {
+  if (!profile.generalAgent?.enabled) {
+    return 0;
+  }
+  return Math.max(1, profile.generalAgent.conversationWindowSeconds) * 1000;
+}
+
 function registrationPrompt(profile: BotProfileConfig, event: LineEvent): string {
   if (profile.registration?.enabled) {
     if (event.source.type === "group") {
@@ -1021,6 +1378,7 @@ async function handleAdminCommand(
   text: string,
   profile: BotProfileConfig,
   event: LineEvent,
+  config: AppConfig,
   adminHandlers: AdminHandlerRegistry,
   router: FunctionRouterPort,
   lastErrorStore: LastErrorStore,
@@ -1029,7 +1387,10 @@ async function handleAdminCommand(
   adminActionRegistry: AdminActionRegistry,
   diagnostics: AppDiagnostics,
   agentTraceStore: AgentTraceStore,
-  requestId: string
+  requestId: string,
+  webAllowlistStore: WebAllowlistStore,
+  llmAuthStore: LlmAuthStore,
+  llmOAuthStateStore: LlmOAuthStateStore
 ): Promise<FunctionExecutionResult> {
   const parsed = parseAdminCommand(text);
   if (!parsed) {
@@ -1042,6 +1403,14 @@ async function handleAdminCommand(
 
   if (!(await adminAllowed(profile, event, accessStore, parsed.command))) {
     return { ok: true, replyText: messages.adminUnauthorized };
+  }
+
+  if (parsed.command === "llm-login") {
+    return handleLlmLoginCommand(config, profile, event, llmOAuthStateStore);
+  }
+
+  if (parsed.command === "llm-logout") {
+    return handleLlmLogoutCommand(config, profile, event, llmAuthStore);
   }
 
   if (parsed.command === "status") {
@@ -1121,7 +1490,8 @@ async function handleAdminCommand(
     profile,
     event,
     accessStore,
-    adminActionRegistry
+    adminActionRegistry,
+    webAllowlistStore
   );
   if (accessResult) {
     return accessResult;
@@ -1135,13 +1505,75 @@ async function handleAdminCommand(
   return { ok: true, replyText: "目前不支援這個 admin 指令。" };
 }
 
+async function handleLlmLoginCommand(
+  config: AppConfig,
+  profile: BotProfileConfig,
+  event: LineEvent,
+  stateStore: LlmOAuthStateStore
+): Promise<FunctionExecutionResult> {
+  const actorUserId = event.source.userId;
+  if (!isBootstrapSuperAdmin(profile, actorUserId) || event.source.type !== "user") {
+    return { ok: true, replyText: "No permission. LLM login is superadmin direct chat only." };
+  }
+  if (config.llm.provider !== "openai_codex_oauth") {
+    return { ok: true, replyText: "LLM OAuth is not enabled for this service." };
+  }
+  if (!config.redis) {
+    return { ok: true, replyText: "Redis is required before creating an LLM OAuth login link." };
+  }
+  if (!config.database || !config.llm.authEncryptionKey) {
+    return {
+      ok: true,
+      replyText: "PostgreSQL and LLM_AUTH_ENCRYPTION_KEY are required before LLM OAuth login."
+    };
+  }
+  const record = await stateStore.create({
+    profileName: profile.name,
+    actorUserId: actorUserId as string,
+    authProfile: config.llm.openaiCodexAuthProfile ?? profile.name,
+    ttlMinutes: config.llm.authLoginStateTtlMinutes ?? 10
+  });
+  const loginUrl = `${llmOAuthPublicBaseUrl(config)}/api/line/llm-auth/openai-codex/start?state=${encodeURIComponent(
+    record.state
+  )}`;
+  return {
+    ok: true,
+    replyText: [
+      "LLM login link",
+      loginUrl,
+      "",
+      `Expires at: ${record.expiresAt}`,
+      "Open the link in your browser. Do not share this link."
+    ].join("\n")
+  };
+}
+
+async function handleLlmLogoutCommand(
+  config: AppConfig,
+  profile: BotProfileConfig,
+  event: LineEvent,
+  authStore: LlmAuthStore
+): Promise<FunctionExecutionResult> {
+  const actorUserId = event.source.userId;
+  if (!isBootstrapSuperAdmin(profile, actorUserId) || event.source.type !== "user") {
+    return { ok: true, replyText: "No permission. LLM logout is superadmin direct chat only." };
+  }
+  await authStore.markReauthRequired({
+    provider: "openai_codex_oauth",
+    profileName: config.llm.openaiCodexAuthProfile ?? profile.name,
+    lastError: "manual_logout"
+  });
+  return { ok: true, replyText: "Logged out LLM OAuth profile." };
+}
+
 async function handleAdminAccessCommand(
   command: string,
   args: string[],
   profile: BotProfileConfig,
   event: LineEvent,
   accessStore: AccessStore,
-  adminActionRegistry: AdminActionRegistry
+  adminActionRegistry: AdminActionRegistry,
+  webAllowlistStore: WebAllowlistStore
 ): Promise<FunctionExecutionResult | undefined> {
   const actorUserId = event.source.userId;
   if (!actorUserId) {
@@ -1167,6 +1599,102 @@ async function handleAdminAccessCommand(
             }`
         )
       ].join("\n")
+    };
+  }
+
+  if (command === "web-allowlist") {
+    const entries = await webAllowlistStore.list(profile.name);
+    return {
+      ok: true,
+      replyText:
+        entries.length === 0
+          ? "Web allowlist\n(none)"
+          : [
+              "Web allowlist",
+              ...entries.map((entry) =>
+                [
+                  `- ${entry.id}`,
+                  entry.enabled ? "enabled" : "disabled",
+                  entry.domain,
+                  entry.pathPrefix ? `path=${entry.pathPrefix}` : undefined,
+                  entry.label ? `label=${entry.label}` : undefined
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              )
+            ].join("\n")
+    };
+  }
+
+  if (command === "web-allowlist-add") {
+    const domain = args[0];
+    if (!domain) {
+      return { ok: true, replyText: "Usage: /web-allowlist-add <domain> [pathPrefix]" };
+    }
+    const entry = await webAllowlistStore.add({
+      profileName: profile.name,
+      domain,
+      pathPrefix: args[1],
+      createdBy: actorUserId
+    });
+    await accessStore.recordAudit({
+      profileName: profile.name,
+      actorUserId,
+      action: "web_allowlist.add",
+      targetType: "web_allowlist",
+      targetId: entry.id,
+      metadata: { domain: entry.domain, pathPrefix: entry.pathPrefix }
+    });
+    return {
+      ok: true,
+      replyText: `Added web allowlist\nid: ${entry.id}\ndomain: ${entry.domain}${
+        entry.pathPrefix ? `\npath: ${entry.pathPrefix}` : ""
+      }`
+    };
+  }
+
+  if (command === "web-allowlist-enable" || command === "web-allowlist-disable") {
+    const id = args[0];
+    if (!id) {
+      return { ok: true, replyText: `Usage: /${command} <id>` };
+    }
+    const enabled = command === "web-allowlist-enable";
+    const changed = await webAllowlistStore.setEnabled(profile.name, id, enabled);
+    if (changed) {
+      await accessStore.recordAudit({
+        profileName: profile.name,
+        actorUserId,
+        action: enabled ? "web_allowlist.enable" : "web_allowlist.disable",
+        targetType: "web_allowlist",
+        targetId: id
+      });
+    }
+    return {
+      ok: true,
+      replyText: changed
+        ? `${enabled ? "Enabled" : "Disabled"} web allowlist ${id}`
+        : "Web allowlist entry not found"
+    };
+  }
+
+  if (command === "web-allowlist-remove") {
+    const id = args[0];
+    if (!id) {
+      return { ok: true, replyText: "Usage: /web-allowlist-remove <id>" };
+    }
+    const removed = await webAllowlistStore.remove(profile.name, id);
+    if (removed) {
+      await accessStore.recordAudit({
+        profileName: profile.name,
+        actorUserId,
+        action: "web_allowlist.remove",
+        targetType: "web_allowlist",
+        targetId: id
+      });
+    }
+    return {
+      ok: true,
+      replyText: removed ? `Removed web allowlist ${id}` : "Web allowlist entry not found"
     };
   }
 
@@ -1560,6 +2088,62 @@ function functionNameForAgentResource(resourceType: AgentResourceType | undefine
     default:
       return undefined;
   }
+}
+
+function readQueryParam(query: unknown, key: string): string | undefined {
+  if (!query || typeof query !== "object") {
+    return undefined;
+  }
+  const value = (query as Record<string, unknown>)[key];
+  if (Array.isArray(value)) {
+    return typeof value[0] === "string" ? value[0] : undefined;
+  }
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function llmOAuthRedirectUri(config: AppConfig): string {
+  return `${llmOAuthPublicBaseUrl(config)}/api/line/llm-auth/openai-codex/callback`;
+}
+
+function llmOAuthPublicBaseUrl(config: AppConfig): string {
+  return (config.llm.publicBaseUrl ?? "https://www.alive.org.tw").replace(/\/+$/u, "");
+}
+
+function sendLlmAuthHtml(
+  reply: FastifyReply,
+  statusCode: number,
+  title: string,
+  message: string
+): FastifyReply {
+  return reply
+    .code(statusCode)
+    .header("content-type", "text/html; charset=utf-8")
+    .header("cache-control", "no-store")
+    .send(
+      [
+        "<!doctype html>",
+        '<html lang="zh-Hant">',
+        "<head>",
+        '<meta charset="utf-8" />',
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+        `<title>${escapeHtml(title)}</title>`,
+        "</head>",
+        "<body>",
+        `<h1>${escapeHtml(title)}</h1>`,
+        `<p>${escapeHtml(message)}</p>`,
+        "</body>",
+        "</html>"
+      ].join("")
+    );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function parseAdminCommand(text: string | undefined): ParsedAdminCommand | undefined {

@@ -19,6 +19,8 @@ export function createOllamaProvider(
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
 
   return {
+    providerName: "ollama",
+
     async completeJson(request: ChatProviderRequest): Promise<string> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), options.timeoutMs);

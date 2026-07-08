@@ -6,6 +6,9 @@
 - The bot is a restricted church helper, not an open-ended chat bot.
 - It should feel smart inside explicitly enabled functions, but deny or clarify requests outside those functions.
 - Runtime behavior is controlled by bot profiles, function toggles, access control, and state stores.
+- LLM routing defaults to Ollama, with optional `openai_codex_oauth` provider support through encrypted PostgreSQL auth profiles.
+- Group follow-up context is requester-scoped and short-lived; never feed raw whole-group chat into the model.
+- Slow tasks may be stored as long-running jobs and returned through a LINE postback button; do not use LINE push quota for those results.
 - Public `/healthz` is minimal liveness. Public `/readyz` checks only Postgres and Redis.
 - Detailed dependency status belongs in admin-only direct-chat `/diag`, not public endpoints.
 - Keep public repo safety in mind: never commit real `.env` files, tokens, IDs, or secrets.
@@ -31,6 +34,7 @@ Read these first when starting work:
   - future `main`: public direct users, groups blocked, registration disabled.
 - Access registration is profile-scoped. Do not make user/group registration global unless the user explicitly asks.
 - `adminUserId` is the single bootstrap superadmin. Legacy `adminUserIds`, `allowedUserIds`, and `allowedGroupIds` should not be reintroduced.
+- OAuth browser login endpoints are service-level paths, not profile webhook paths: `/api/line/llm-auth/openai-codex/start` and `/api/line/llm-auth/openai-codex/callback`.
 
 ## Function Surface
 
@@ -75,10 +79,14 @@ When adding or changing an admin action:
 - `src/profile-path.ts`: canonical profile name and webhook path contract.
 - `src/server.ts`: Fastify routes, LINE webhook entrance, access gates, admin commands, and postbacks.
 - `src/router.ts`: primary Ollama routing and router result model.
+- `src/clients/openai-codex-oauth.ts` and `src/llm/auth.ts`: optional Codex OAuth provider and encrypted auth profile storage.
+- `src/llm/oauth-state-store.ts`: one-time OAuth login state storage; use Redis in production.
 - `src/keyword-router.ts`: conservative fallback routing when Ollama is unavailable or invalid.
 - `src/function-arguments.ts`: argument extraction and slot handling.
 - `src/functions/*`: function definitions, modules, and implementations.
 - `src/agent/turn-runtime.ts`: shared text-turn pipeline after LINE entrance checks.
+- `src/agent/context-manager.ts`: runtime context budget/compression plus requester-scoped conversation windows.
+- `src/agent/jobs.ts`: long-running job results scoped by profile/source/requester.
 - `src/agent/slot-clarification.ts`: definition-driven required-slot clarification.
 - `src/agent/trace-store.ts`: sanitized recent agent turn diagnostics for `/last-agent-turns`.
 - `src/agent/*`: controlled agent runtime, resource metadata memory, explicit text memory, aliases, and Postgres/in-memory stores.
@@ -88,6 +96,7 @@ When adding or changing an admin action:
 - `src/cache/*`: shared cache abstractions, including Redis-backed cache.
 - `src/observability/*`: recent errors and route diagnostics used by admin commands.
 - `src/diagnostics/*`: public data-layer readiness and admin-only dependency diagnostics.
+- `src/web/allowlist.ts`: controlled profile-scoped HTTPS allowlist for future safe web lookup.
 - `src/tools/*`: local verification helpers such as router eval, Notion checks, and signed webhook smoke tests.
 
 ## Access And Admin Model
@@ -129,9 +138,12 @@ When adding or changing an admin action:
 - In-memory stores are acceptable for single-replica local/dev behavior.
 - `REDIS_URL` moves sessions, cache, recent errors, rate-limit state, and registration invite codes to Redis.
 - `REDIS_URL` also moves destructive-action confirmation codes to Redis.
+- `REDIS_URL` also moves requester-scoped conversation windows and long-running job results to Redis.
+- `REDIS_URL` also stores one-time LLM OAuth login states created by `/llm-login`.
 - Redis rate limiting must use atomic counters, not read-modify-write JSON buckets.
 - PostgreSQL backs managed access principals and audit events when registration is enabled.
 - PostgreSQL backs agent memory when configured. The app creates access and agent memory tables on startup.
+- PostgreSQL backs encrypted `llm_auth_profiles` for `openai_codex_oauth`; `/llm-login` should require Redis, Postgres, and `LLM_AUTH_ENCRYPTION_KEY`.
 - Agent memory must not store temporary sharing links. Store Graph drive/item metadata and regenerate short-lived links on demand.
 - External resource memories may store user-provided URLs, but only when the user explicitly asks the bot to remember/save/store that resource.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
@@ -140,6 +152,7 @@ When adding or changing an admin action:
 - Agent turn traces are diagnostic metadata only. Do not store raw user text, file names, invite codes, secrets, or generated sharing links in traces.
 - Do not assume multi-replica safety without Redis for sessions/cache/invite codes.
 - Group and room clarification/selection sessions are requester-scoped. They require the same `source.userId` to continue, and should not be created or matched when LINE does not provide a requester user id.
+- Long-running job result retrieval follows the same requester/source rule. A group user must not be able to fetch another user's job result.
 - Soft display-name personalization is for task-state replies such as "what title?" or "please choose"; avoid adding names to final data-heavy function results unless the user asks.
 
 ## Workflow

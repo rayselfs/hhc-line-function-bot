@@ -12,15 +12,21 @@ Direct-message admin commands:
 
 ```text
 /diag
+/llm-login
+/llm-logout
 /llm-status
 /last-routes
 /last-errors
+/last-agent-turns
+/web-allowlist
 /help
 /help admin
 /help admin all
 ```
 
 `/diag` may show dependency status for Ollama, Redis, Postgres, Graph, and Notion, but must not print tenant IDs, database IDs, folder IDs, LINE IDs, tokens, secrets, credential URLs, raw user messages, or invite codes.
+
+`/llm-login` and `/llm-logout` are bootstrap superadmin direct-chat only. `/llm-login` requires Redis, Postgres, and `LLM_AUTH_ENCRYPTION_KEY`; it returns a short-lived browser URL and never sends tokens through LINE. The OAuth callback exchanges the code server-side and stores encrypted tokens in `llm_auth_profiles`.
 
 ## Registration And Admin Safety
 
@@ -44,6 +50,13 @@ The tool prints status, request id when present, and response body. It must not 
 
 For an unsigned public gateway check, `POST /api/line/webhook/{profileName}` should reach the app and return a missing-signature style `400`. The Container App itself should keep external ingress disabled; public access should go through the gateway.
 
+If the Codex OAuth provider is enabled, the public gateway must also forward these GET-only paths to the line bot app without rewriting:
+
+```text
+/api/line/llm-auth/openai-codex/start
+/api/line/llm-auth/openai-codex/callback
+```
+
 ## Router Evals
 
 - `pnpm eval:router` is deterministic and offline. It replays the function-module corpus through conservative keyword fallback.
@@ -52,7 +65,9 @@ For an unsigned public gateway check, `POST /api/line/webhook/{profileName}` sho
 ## Dependency Checks
 
 - Redis: verify the ACA secret `REDIS_URL` is set and `/readyz` shows Redis `ok`.
+- Redis also stores requester-scoped conversation windows and long-running job results. If Redis is down, production should fail startup instead of silently losing those results.
 - Postgres: verify `DATABASE_URL` and `DATABASE_SSL` are set and `/readyz` shows Postgres `ok`.
+- Postgres stores access principals, audit events, agent memory, LLM OAuth auth profiles, and controlled web allowlist entries.
 - Ollama: use `/llm-status` or `/diag`, not `/readyz`.
 - Graph: use function smoke tests through LINE, then `/diag` for configured/not configured state.
 - Notion: use `pnpm check:notion` locally or function smoke tests through LINE, then `/diag` for configured/not configured state.
@@ -87,3 +102,18 @@ Do not paste these into LINE, logs, commits, screenshots, or public issues:
 - Graph tenant/client/folder/drive IDs.
 - Notion token or database ID.
 - Raw user messages from production.
+
+## Controlled Web Lookup Prep
+
+Future web lookup functions must use the profile-scoped allowlist before fetching any URL.
+Manage entries from direct admin chat:
+
+```text
+/web-allowlist
+/web-allowlist-add <domain> [pathPrefix]
+/web-allowlist-enable <id>
+/web-allowlist-disable <id>
+/web-allowlist-remove <id>
+```
+
+The guard allows HTTPS only and still blocks localhost/private-network targets even when an entry exists.

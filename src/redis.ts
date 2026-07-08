@@ -9,6 +9,9 @@ import type { RedisInFlightClient } from "./in-flight/in-flight-store.js";
 import type { RedisLastErrorClient } from "./observability/create-last-error-store.js";
 import type { RedisRateLimitClient } from "./rate-limit.js";
 import type { RedisSessionClient } from "./state/redis-session-store.js";
+import type { RedisAgentJobClient } from "./agent/jobs.js";
+import type { RedisConversationWindowClient } from "./agent/context-manager.js";
+import type { RedisLlmOAuthStateClient } from "./llm/oauth-state-store.js";
 
 export interface RedisRuntime {
   client: RedisCacheClient &
@@ -18,7 +21,10 @@ export interface RedisRuntime {
     RedisRegistrationInviteCodeClient &
     RedisConfirmationClient &
     DiagnosticRedisClient &
-    RedisInFlightClient;
+    RedisInFlightClient &
+    RedisAgentJobClient &
+    RedisConversationWindowClient &
+    RedisLlmOAuthStateClient;
   keyPrefix: string;
 }
 
