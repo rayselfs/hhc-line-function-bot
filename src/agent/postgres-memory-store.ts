@@ -8,13 +8,17 @@ import {
   type AgentMemoryStore,
   type AgentMemorySummary,
   type AgentResourceRecord,
+  type AgentScheduleEntryRecord,
+  type AgentScheduleMemoryRecord,
   type AgentTextMemoryRecord,
   type FindAgentResourceByAliasInput,
   type FindRecentAgentResourceInput,
   type ForgetAgentMemoryInput,
   type RecordAgentResourceInput,
   type RememberAgentAliasInput,
+  type SaveAgentScheduleMemoryInput,
   type SaveAgentTextMemoryInput,
+  type SearchAgentScheduleEntriesInput,
   type SearchAgentResourcesInput,
   type SearchAgentTextMemoriesInput
 } from "./memory-store.js";
@@ -258,6 +262,113 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     return this.searchTextMemories({ ...input, query: undefined });
   }
 
+  async saveScheduleMemory(
+    input: SaveAgentScheduleMemoryInput
+  ): Promise<AgentScheduleMemoryRecord> {
+    const scope = scopeFromSource(input.source);
+    const memoryId = randomUUID();
+    const expiresAt = input.expiresAt ?? this.defaultExpiresAt();
+    const memoryResult = await this.db.query(
+      `
+      insert into agent_schedule_memories
+        (id, profile_name, scope_type, scope_id, schedule_type, title, original_text, created_by, expires_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      returning *
+      `,
+      [
+        memoryId,
+        input.profileName,
+        scope.type,
+        scope.id,
+        input.scheduleType,
+        input.title,
+        input.originalText,
+        input.createdBy ?? null,
+        expiresAt
+      ]
+    );
+
+    const entries: AgentScheduleEntryRecord[] = [];
+    for (const entry of input.entries) {
+      const entryResult = await this.db.query(
+        `
+        insert into agent_schedule_entries
+          (id, schedule_memory_id, service_date, weekday, meeting_name, role, assignee, family_name, notes)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        returning *
+        `,
+        [
+          randomUUID(),
+          memoryId,
+          entry.serviceDate,
+          entry.weekday ?? null,
+          entry.meetingName,
+          entry.role ?? null,
+          entry.assignee,
+          entry.familyName ?? null,
+          entry.notes ?? null
+        ]
+      );
+      entries.push(mapScheduleEntry({ ...entryResult.rows[0], ...memoryResult.rows[0] }));
+    }
+
+    return mapScheduleMemory(memoryResult.rows[0], entries);
+  }
+
+  async searchScheduleEntries(
+    input: SearchAgentScheduleEntriesInput
+  ): Promise<AgentScheduleEntryRecord[]> {
+    const scope = scopeFromSource(input.source);
+    const values: unknown[] = [input.profileName, scope.type, scope.id];
+    const filters: string[] = [];
+    if (input.scheduleType) {
+      values.push(input.scheduleType);
+      filters.push(`and m.schedule_type = $${values.length}`);
+    }
+    if (input.date) {
+      values.push(input.date);
+      filters.push(`and e.service_date = $${values.length}::date`);
+    }
+    const limitParam = values.length + 1;
+    values.push(Math.max(input.limit ?? 10, 50));
+    const result = await this.db.query(
+      `
+      select
+        e.*,
+        m.id as memory_id,
+        m.profile_name,
+        m.scope_type,
+        m.scope_id,
+        m.schedule_type,
+        m.title as schedule_title,
+        m.created_at as memory_created_at,
+        m.expires_at,
+        m.deleted_at
+      from agent_schedule_entries e
+      join agent_schedule_memories m on m.id = e.schedule_memory_id
+      where m.profile_name = $1
+        and m.scope_type = $2
+        and m.scope_id = $3
+        and m.deleted_at is null
+        and m.expires_at > now()
+        ${filters.join("\n        ")}
+      order by e.service_date asc, m.created_at desc, e.meeting_name asc
+      limit $${limitParam}
+      `,
+      values
+    );
+    const query = normalizeLookupText(input.query ?? "");
+    const meetingName = normalizeLookupText(input.meetingName ?? "");
+    return result.rows
+      .map(mapScheduleEntry)
+      .filter(
+        (entry) =>
+          (!meetingName || normalizeLookupText(entry.meetingName).includes(meetingName)) &&
+          (!query || normalizeLookupText(scheduleEntrySearchText(entry)).includes(query))
+      )
+      .slice(0, input.limit ?? 10);
+  }
+
   async forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
     const scope = scopeFromSource(input.source);
     const result = await this.db.query(
@@ -299,6 +410,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       resources: string;
       external_resources: string;
       text_memories: string;
+      schedule_memories: string;
+      schedule_entries: string;
       aliases: string;
     }>(
       `
@@ -306,6 +419,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         (select count(*) from agent_resources where deleted_at is null and expires_at > now())::text as resources,
         (select count(*) from agent_resources where storage_provider = 'external_link' and deleted_at is null and expires_at > now())::text as external_resources,
         (select count(*) from agent_text_memories where deleted_at is null and expires_at > now())::text as text_memories,
+        (select count(*) from agent_schedule_memories where deleted_at is null and expires_at > now())::text as schedule_memories,
+        (select count(*) from agent_schedule_entries e join agent_schedule_memories m on m.id = e.schedule_memory_id where m.deleted_at is null and m.expires_at > now())::text as schedule_entries,
         (select count(*) from agent_resource_aliases)::text as aliases
       `
     );
@@ -314,6 +429,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       resources: Number(row?.resources ?? 0),
       externalResources: Number(row?.external_resources ?? 0),
       textMemories: Number(row?.text_memories ?? 0),
+      scheduleMemories: Number(row?.schedule_memories ?? 0),
+      scheduleEntries: Number(row?.schedule_entries ?? 0),
       aliases: Number(row?.aliases ?? 0)
     };
   }
@@ -367,6 +484,46 @@ function mapTextMemory(row: Record<string, unknown>): AgentTextMemoryRecord {
   };
 }
 
+function mapScheduleMemory(
+  row: Record<string, unknown>,
+  entries: AgentScheduleEntryRecord[]
+): AgentScheduleMemoryRecord {
+  return {
+    id: String(row.id),
+    profileName: String(row.profile_name),
+    scope: mapScope(row),
+    scheduleType: row.schedule_type as AgentScheduleMemoryRecord["scheduleType"],
+    title: String(row.title),
+    originalText: String(row.original_text),
+    entries,
+    createdBy: optionalString(row.created_by),
+    createdAt: toIso(row.created_at),
+    expiresAt: toIso(row.expires_at),
+    deletedAt: optionalIso(row.deleted_at)
+  };
+}
+
+function mapScheduleEntry(row: Record<string, unknown>): AgentScheduleEntryRecord {
+  return {
+    id: String(row.id),
+    memoryId: String(row.memory_id ?? row.schedule_memory_id),
+    profileName: String(row.profile_name),
+    scope: mapScope(row),
+    scheduleType: row.schedule_type as AgentScheduleEntryRecord["scheduleType"],
+    scheduleTitle: String(row.schedule_title ?? row.title),
+    serviceDate: toDateKey(row.service_date),
+    weekday: optionalString(row.weekday),
+    meetingName: String(row.meeting_name),
+    role: optionalString(row.role),
+    assignee: String(row.assignee),
+    familyName: optionalString(row.family_name),
+    notes: optionalString(row.notes),
+    createdAt: toIso(row.memory_created_at ?? row.created_at),
+    expiresAt: toIso(row.expires_at),
+    deletedAt: optionalIso(row.deleted_at)
+  };
+}
+
 function mapScope(row: Record<string, unknown>): AgentMemoryScope {
   return {
     type: row.scope_type as AgentMemoryScope["type"],
@@ -376,6 +533,22 @@ function mapScope(row: Record<string, unknown>): AgentMemoryScope {
 
 function memorySearchText(record: AgentTextMemoryRecord): string {
   return [record.title, record.query, record.content].filter(Boolean).join(" ");
+}
+
+function scheduleEntrySearchText(record: AgentScheduleEntryRecord): string {
+  return [
+    record.scheduleTitle,
+    record.scheduleType,
+    record.serviceDate,
+    record.weekday,
+    record.meetingName,
+    record.role,
+    record.assignee,
+    record.familyName,
+    record.notes
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function resourceSearchText(record: AgentResourceRecord): string {
@@ -403,4 +576,11 @@ function toIso(value: unknown): string {
     return value.toISOString();
   }
   return String(value);
+}
+
+function toDateKey(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
 }

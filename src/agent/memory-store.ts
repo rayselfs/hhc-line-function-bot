@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { AgentResourceReference, AgentResourceType, LineSource } from "../types.js";
 
 export type AgentMemoryScopeType = "user" | "group" | "room";
+export type AgentScheduleType =
+  "morning_prayer_family" | "street_sign_service" | "custom_service_schedule";
 
 export interface AgentMemoryScope {
   type: AgentMemoryScopeType;
@@ -26,6 +28,42 @@ export interface AgentTextMemoryRecord {
   title?: string;
   content: string;
   query?: string;
+  createdBy?: string;
+  createdAt: string;
+  expiresAt: string;
+  deletedAt?: string;
+}
+
+export interface AgentScheduleEntryInput {
+  serviceDate: string;
+  weekday?: string;
+  meetingName: string;
+  role?: string;
+  assignee: string;
+  familyName?: string;
+  notes?: string;
+}
+
+export interface AgentScheduleEntryRecord extends AgentScheduleEntryInput {
+  id: string;
+  memoryId: string;
+  profileName: string;
+  scope: AgentMemoryScope;
+  scheduleType: AgentScheduleType;
+  scheduleTitle: string;
+  createdAt: string;
+  expiresAt: string;
+  deletedAt?: string;
+}
+
+export interface AgentScheduleMemoryRecord {
+  id: string;
+  profileName: string;
+  scope: AgentMemoryScope;
+  scheduleType: AgentScheduleType;
+  title: string;
+  originalText: string;
+  entries: AgentScheduleEntryRecord[];
   createdBy?: string;
   createdAt: string;
   expiresAt: string;
@@ -75,6 +113,27 @@ export interface SaveAgentTextMemoryInput {
   expiresAt?: string;
 }
 
+export interface SaveAgentScheduleMemoryInput {
+  profileName: string;
+  source: LineSource;
+  createdBy?: string;
+  scheduleType: AgentScheduleType;
+  title: string;
+  originalText: string;
+  entries: AgentScheduleEntryInput[];
+  expiresAt?: string;
+}
+
+export interface SearchAgentScheduleEntriesInput {
+  profileName: string;
+  source: LineSource;
+  scheduleType?: AgentScheduleType;
+  date?: string;
+  meetingName?: string;
+  query?: string;
+  limit?: number;
+}
+
 export interface SearchAgentTextMemoriesInput {
   profileName: string;
   source: LineSource;
@@ -101,6 +160,8 @@ export interface AgentMemorySummary {
   resources: number;
   externalResources: number;
   textMemories: number;
+  scheduleMemories: number;
+  scheduleEntries: number;
   aliases: number;
 }
 
@@ -115,6 +176,10 @@ export interface AgentMemoryStore {
   saveTextMemory(input: SaveAgentTextMemoryInput): Promise<AgentTextMemoryRecord>;
   searchTextMemories(input: SearchAgentTextMemoriesInput): Promise<AgentTextMemoryRecord[]>;
   listTextMemories(input: SearchAgentTextMemoriesInput): Promise<AgentTextMemoryRecord[]>;
+  saveScheduleMemory(input: SaveAgentScheduleMemoryInput): Promise<AgentScheduleMemoryRecord>;
+  searchScheduleEntries(
+    input: SearchAgentScheduleEntriesInput
+  ): Promise<AgentScheduleEntryRecord[]>;
   forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean>;
   forgetResource(input: ForgetAgentMemoryInput): Promise<boolean>;
   summary(): Promise<AgentMemorySummary>;
@@ -142,6 +207,8 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   private readonly ttlMs: number;
   private readonly resources = new Map<string, AgentResourceRecord>();
   private readonly textMemories = new Map<string, AgentTextMemoryRecord>();
+  private readonly scheduleMemories = new Map<string, AgentScheduleMemoryRecord>();
+  private readonly scheduleEntries = new Map<string, AgentScheduleEntryRecord>();
   private readonly aliases = new Map<string, AgentAliasRecord>();
 
   constructor(options: InMemoryAgentMemoryStoreOptions = {}) {
@@ -270,6 +337,72 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     return this.searchTextMemories({ ...input, query: undefined });
   }
 
+  async saveScheduleMemory(
+    input: SaveAgentScheduleMemoryInput
+  ): Promise<AgentScheduleMemoryRecord> {
+    const scope = scopeFromSource(input.source);
+    const createdAt = this.now().toISOString();
+    const expiresAt = input.expiresAt ?? this.defaultExpiresAt();
+    const memoryId = randomUUID();
+    const entries = input.entries.map((entry) => ({
+      id: randomUUID(),
+      memoryId,
+      profileName: input.profileName,
+      scope,
+      scheduleType: input.scheduleType,
+      scheduleTitle: input.title,
+      serviceDate: entry.serviceDate,
+      weekday: entry.weekday,
+      meetingName: entry.meetingName,
+      role: entry.role,
+      assignee: entry.assignee,
+      familyName: entry.familyName,
+      notes: entry.notes,
+      createdAt,
+      expiresAt
+    }));
+    const record: AgentScheduleMemoryRecord = {
+      id: memoryId,
+      profileName: input.profileName,
+      scope,
+      scheduleType: input.scheduleType,
+      title: input.title,
+      originalText: input.originalText,
+      entries,
+      createdBy: input.createdBy,
+      createdAt,
+      expiresAt
+    };
+    this.scheduleMemories.set(record.id, record);
+    for (const entry of entries) {
+      this.scheduleEntries.set(entry.id, entry);
+    }
+    return record;
+  }
+
+  async searchScheduleEntries(
+    input: SearchAgentScheduleEntriesInput
+  ): Promise<AgentScheduleEntryRecord[]> {
+    const scope = scopeFromSource(input.source);
+    const query = normalizeLookupText(input.query ?? "");
+    const meetingName = normalizeLookupText(input.meetingName ?? "");
+    return Array.from(this.scheduleEntries.values())
+      .filter(
+        (record) =>
+          record.profileName === input.profileName &&
+          sameScope(record.scope, scope) &&
+          this.active(record) &&
+          (!input.scheduleType || record.scheduleType === input.scheduleType) &&
+          (!input.date || record.serviceDate === input.date) &&
+          (!meetingName || normalizeLookupText(record.meetingName).includes(meetingName))
+      )
+      .filter(
+        (record) => !query || normalizeLookupText(scheduleEntrySearchText(record)).includes(query)
+      )
+      .sort(ascendingScheduleDateThenCreatedAt)
+      .slice(0, input.limit ?? 10);
+  }
+
   async forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
     const scope = scopeFromSource(input.source);
     const record = this.textMemories.get(input.id);
@@ -307,6 +440,12 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       ).length,
       textMemories: Array.from(this.textMemories.values()).filter((record) => this.active(record))
         .length,
+      scheduleMemories: Array.from(this.scheduleMemories.values()).filter((record) =>
+        this.active(record)
+      ).length,
+      scheduleEntries: Array.from(this.scheduleEntries.values()).filter((record) =>
+        this.active(record)
+      ).length,
       aliases: this.aliases.size
     };
   }
@@ -369,8 +508,35 @@ function descendingCreatedAt<T extends { createdAt: string }>(left: T, right: T)
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
 }
 
+function ascendingScheduleDateThenCreatedAt(
+  left: AgentScheduleEntryRecord,
+  right: AgentScheduleEntryRecord
+): number {
+  const dateDiff = left.serviceDate.localeCompare(right.serviceDate);
+  if (dateDiff !== 0) {
+    return dateDiff;
+  }
+  return descendingCreatedAt(left, right);
+}
+
 function memorySearchText(record: AgentTextMemoryRecord): string {
   return [record.title, record.query, record.content].filter(Boolean).join(" ");
+}
+
+function scheduleEntrySearchText(record: AgentScheduleEntryRecord): string {
+  return [
+    record.scheduleTitle,
+    record.scheduleType,
+    record.serviceDate,
+    record.weekday,
+    record.meetingName,
+    record.role,
+    record.assignee,
+    record.familyName,
+    record.notes
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function resourceSearchText(record: AgentResourceRecord): string {

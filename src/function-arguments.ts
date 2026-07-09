@@ -10,6 +10,11 @@ const numericLimitSchema = z.preprocess((value) => {
 }, z.number().int().min(1).max(10));
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const scheduleTypeSchema = z.enum([
+  "morning_prayer_family",
+  "street_sign_service",
+  "custom_service_schedule"
+]);
 
 export const findPptSlidesArgumentsSchema = z
   .object({
@@ -75,11 +80,36 @@ export const retrieveMemoryArgumentsSchema = z
   })
   .strip();
 
+export const saveScheduleMemoryArgumentsSchema = z
+  .object({
+    scheduleType: scheduleTypeSchema.optional(),
+    title: z.string().optional(),
+    content: z.string().optional().default(""),
+    query: z.string().optional(),
+    confirm: z.boolean().optional(),
+    cancel: z.boolean().optional()
+  })
+  .strip();
+
+export const queryScheduleMemoryArgumentsSchema = z
+  .object({
+    scheduleType: scheduleTypeSchema.optional(),
+    query: z.string().optional().default(""),
+    date: dateKeySchema.optional(),
+    dateIntent: z.enum(["today", "tomorrow", "this_week", "specific_date", "upcoming"]).optional(),
+    specificDate: dateKeySchema.optional(),
+    meeting: z.string().optional(),
+    limit: numericLimitSchema.optional()
+  })
+  .strip();
+
 export type FindPptSlidesArguments = z.infer<typeof findPptSlidesArgumentsSchema>;
 export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleArgumentsSchema>;
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
 export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
 export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
+export type SaveScheduleMemoryArguments = z.infer<typeof saveScheduleMemoryArgumentsSchema>;
+export type QueryScheduleMemoryArguments = z.infer<typeof queryScheduleMemoryArgumentsSchema>;
 
 export function parseFunctionArguments(
   action: FunctionName,
@@ -90,7 +120,9 @@ export function parseFunctionArguments(
     query_service_schedule: queryServiceScheduleArgumentsSchema,
     find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
     save_memory: saveMemoryArgumentsSchema,
-    retrieve_memory: retrieveMemoryArgumentsSchema
+    retrieve_memory: retrieveMemoryArgumentsSchema,
+    save_schedule_memory: saveScheduleMemoryArgumentsSchema,
+    query_schedule_memory: queryScheduleMemoryArgumentsSchema
   }[action];
   const parsed = schema.safeParse(rawArguments ?? {});
   return parsed.success ? (parsed.data as JsonRecord) : undefined;

@@ -221,7 +221,7 @@ function deriveFilters(
     filters.range = dayRange(now, 2, timeZone);
   }
 
-  if (!filters.range && /(本週|本周|這週|这周)/.test(query)) {
+  if (!filters.range && /(本週|本周|這週|這周|这週|这周)/.test(query)) {
     filters.range = upcomingRange(now, timeZone);
   }
 
@@ -283,8 +283,15 @@ function applyStructuredDateIntent(
 }
 
 function limitToFirstUpcomingGroup(rows: ServiceRow[], now: Date, timeZone: string): ServiceRow[] {
-  const [first] = groupRows(rows).filter((group) => !serviceGroupEnded(group, now, timeZone));
-  return first?.rows ?? [];
+  const [first] = groupRows(rows)
+    .map((group) => ({ group, window: inferServiceGroupWindow(group, timeZone) }))
+    .filter(({ window }) => !window?.end || window.end > now)
+    .sort((left, right) => {
+      const leftTime = left.window?.start.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightTime = right.window?.start.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime;
+    });
+  return first?.group.rows ?? [];
 }
 
 function upcomingRange(now: Date, timeZone: string): NonNullable<DerivedFilters["range"]> {
@@ -435,17 +442,61 @@ interface ServiceGroup {
 interface MeetingTimeRule {
   pattern: RegExp;
   weekdays?: number[];
+  startHour: number;
+  startMinute: number;
   endHour: number;
   endMinute: number;
 }
 
 const MEETING_TIME_RULES: MeetingTimeRule[] = [
-  { pattern: /晨更/u, weekdays: [2, 5], endHour: 8, endMinute: 30 },
-  { pattern: /仙履奇緣/u, weekdays: [4], endHour: 9, endMinute: 0 },
-  { pattern: /福音餐會/u, weekdays: [4], endHour: 14, endMinute: 0 },
-  { pattern: /門訓禱告會/u, weekdays: [5], endHour: 21, endMinute: 30 },
-  { pattern: /國度禱告會/u, weekdays: [6], endHour: 11, endMinute: 30 },
-  { pattern: /主日/u, weekdays: [0], endHour: 12, endMinute: 0 }
+  {
+    pattern: /晨更/u,
+    weekdays: [2, 5],
+    startHour: 6,
+    startMinute: 30,
+    endHour: 8,
+    endMinute: 30
+  },
+  {
+    pattern: /仙履奇緣/u,
+    weekdays: [4],
+    startHour: 6,
+    startMinute: 30,
+    endHour: 9,
+    endMinute: 0
+  },
+  {
+    pattern: /福音餐會/u,
+    weekdays: [4],
+    startHour: 12,
+    startMinute: 0,
+    endHour: 14,
+    endMinute: 0
+  },
+  {
+    pattern: /門訓禱告會/u,
+    weekdays: [5],
+    startHour: 19,
+    startMinute: 0,
+    endHour: 21,
+    endMinute: 30
+  },
+  {
+    pattern: /國度禱告會/u,
+    weekdays: [6],
+    startHour: 9,
+    startMinute: 0,
+    endHour: 11,
+    endMinute: 30
+  },
+  {
+    pattern: /主日/u,
+    weekdays: [0],
+    startHour: 9,
+    startMinute: 0,
+    endHour: 12,
+    endMinute: 0
+  }
 ];
 
 function groupRows(rows: ServiceRow[]): ServiceGroup[] {
@@ -461,42 +512,48 @@ function groupRows(rows: ServiceRow[]): ServiceGroup[] {
   return Array.from(groups.values());
 }
 
-function serviceGroupEnded(group: ServiceGroup, now: Date, timeZone: string): boolean {
-  const end = inferServiceGroupEnd(group, timeZone);
-  return end ? end <= now : false;
-}
-
-function inferServiceGroupEnd(group: ServiceGroup, timeZone: string): Date | undefined {
+function inferServiceGroupWindow(
+  group: ServiceGroup,
+  timeZone: string
+): { start: Date; end: Date } | undefined {
   const rawDate = group.rows[0]?.date ?? "";
-  const explicitEnd = parseLastDateTime(rawDate);
-  if (explicitEnd) {
-    return explicitEnd;
+  const explicitWindow = parseDateTimeWindow(rawDate);
+  if (explicitWindow) {
+    return explicitWindow;
   }
 
   if (!group.dateKey) {
     return undefined;
   }
-  const [hour, minute] = inferMeetingEndTime(group.meeting, group.dateKey);
-  return zonedDateTimeToUtc(group.dateKey, hour, minute, timeZone);
+  const rule = inferMeetingTimeRule(group.meeting, group.dateKey);
+  return {
+    start: zonedDateTimeToUtc(group.dateKey, rule.startHour, rule.startMinute, timeZone),
+    end: zonedDateTimeToUtc(group.dateKey, rule.endHour, rule.endMinute, timeZone)
+  };
 }
 
-function parseLastDateTime(value: string): Date | undefined {
+function parseDateTimeWindow(value: string): { start: Date; end: Date } | undefined {
   const matches = value.match(/\d{4}-\d{2}-\d{2}T[^\s~]+/g);
   if (!matches || matches.length === 0) {
     return undefined;
   }
-  const last = matches && matches.length > 1 ? matches.at(-1) : matches?.[0];
-  if (!last) {
+  const first = matches[0];
+  const last = matches.length > 1 ? matches.at(-1) : matches[0];
+  if (!first || !last) {
     return undefined;
   }
+  const start = new Date(first);
   const parsed = new Date(last);
-  if (Number.isNaN(parsed.getTime())) {
+  if (Number.isNaN(start.getTime()) || Number.isNaN(parsed.getTime())) {
     return undefined;
   }
-  return matches.length > 1 ? parsed : new Date(parsed.getTime() + 3 * 60 * 60 * 1000);
+  return {
+    start,
+    end: matches.length > 1 ? parsed : new Date(parsed.getTime() + 3 * 60 * 60 * 1000)
+  };
 }
 
-function inferMeetingEndTime(meeting: string, dateKey: string): [number, number] {
+function inferMeetingTimeRule(meeting: string, dateKey: string): MeetingTimeRule {
   const weekday = weekdayFromDateKey(dateKey);
   const rule = MEETING_TIME_RULES.find(
     (candidate) =>
@@ -504,9 +561,15 @@ function inferMeetingEndTime(meeting: string, dateKey: string): [number, number]
       (!candidate.weekdays || candidate.weekdays.includes(weekday))
   );
   if (rule) {
-    return [rule.endHour, rule.endMinute];
+    return rule;
   }
-  return [23, 59];
+  return {
+    pattern: /.*/u,
+    startHour: 0,
+    startMinute: 0,
+    endHour: 23,
+    endMinute: 59
+  };
 }
 
 function weekdayFromDateKey(dateKey: string): number {

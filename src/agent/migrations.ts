@@ -98,6 +98,46 @@ const migrations = [
   create index if not exists agent_text_memories_lookup_idx
   on agent_text_memories (profile_name, scope_type, scope_id, created_at desc)
   where deleted_at is null
+  `,
+  `
+  create table if not exists agent_schedule_memories (
+    id uuid primary key,
+    profile_name text not null,
+    scope_type text not null check (scope_type in ('user', 'group', 'room')),
+    scope_id text not null,
+    schedule_type text not null check (
+      schedule_type in ('morning_prayer_family', 'street_sign_service', 'custom_service_schedule')
+    ),
+    title text not null,
+    original_text text not null,
+    created_by text,
+    created_at timestamptz not null default now(),
+    expires_at timestamptz not null,
+    deleted_at timestamptz
+  )
+  `,
+  `
+  create index if not exists agent_schedule_memories_lookup_idx
+  on agent_schedule_memories (profile_name, scope_type, scope_id, schedule_type, created_at desc)
+  where deleted_at is null
+  `,
+  `
+  create table if not exists agent_schedule_entries (
+    id uuid primary key,
+    schedule_memory_id uuid not null references agent_schedule_memories(id) on delete cascade,
+    service_date date not null,
+    weekday text,
+    meeting_name text not null,
+    role text,
+    assignee text not null,
+    family_name text,
+    notes text,
+    created_at timestamptz not null default now()
+  )
+  `,
+  `
+  create index if not exists agent_schedule_entries_lookup_idx
+  on agent_schedule_entries (service_date, meeting_name)
   `
 ];
 

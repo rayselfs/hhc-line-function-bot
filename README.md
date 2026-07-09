@@ -33,6 +33,8 @@ LINE webhook service for routing selected church bot requests to local-first fun
   - `find_pop_sheet_music`: searches a configured OneDrive/SharePoint sheet music folder recursively, including shortcut folders, and returns 24 hour sharing links.
   - `save_memory`: saves text only when the user explicitly asks the bot to remember it.
   - `retrieve_memory`: retrieves explicitly saved text memories.
+  - `save_schedule_memory`: previews and saves pasted text-only service schedules as scoped 30 day structured memory.
+  - `query_schedule_memory`: queries structured schedule memories such as morning-prayer family schedules or street-sign service schedules without mixing them with the Notion media-team schedule.
 
 Disabled, unknown, unclear, or explicitly denied actions are denied. There is no Azure OpenAI fallback in this version.
 
@@ -91,7 +93,13 @@ Example shape:
     "groupRequireWakeWord": true,
     "wakeKeywords": ["小哈"],
     "acceptMention": true,
-    "enabledFunctions": ["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"],
+    "enabledFunctions": [
+      "find_ppt_slides",
+      "query_service_schedule",
+      "find_pop_sheet_music",
+      "save_schedule_memory",
+      "query_schedule_memory"
+    ],
     "adminUserId": "PLACEHOLDER_SUPERADMIN_LINE_USER_ID",
     "adminDirectOnly": true,
     "directAccessPolicy": "managed",
@@ -208,6 +216,8 @@ Keyword fallback is intentionally narrow:
 - `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`
 - `query_service_schedule`: `服事表`, `服事`
 - `find_pop_sheet_music`: `流行歌譜`, `流行歌曲樂譜`, `樂譜`, `歌譜`, `sheet music`
+- `save_schedule_memory`: `記住晨更`, `記住舉牌`, or pasted text schedules with date rows.
+- `query_schedule_memory`: `查舉牌`, `查晨更家族`, `查仙履奇緣`.
 
 Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
 
@@ -246,6 +256,8 @@ The memory layer adds controlled memory without making the bot an unrestricted c
 - Recent-result recall is requester-scoped. In a group, another user cannot accidentally recall someone else's latest result.
 - Resource aliases are scope-scoped. A user can say `以後 X 就用這份` after a successful result, and the bot will try that alias before doing a folder search in the same group or direct chat.
 - Text memories are saved only when the user clearly asks the bot to remember, save, or store content. Normal group chatter is not saved.
+- Structured schedule memories are separate from plain text memories. They store a schedule header plus date-based entries, scoped by profile and LINE source, and expire after 30 days.
+- Structured schedule memory is text-only in this version. The bot should ask for pasted text instead of trying to store or parse schedule images.
 - Text memories currently expire after 30 days.
 - LINE image/file attachment saving is not implemented in this version. Ask the bot to remember a title plus URL instead.
 

@@ -1,7 +1,13 @@
 import { FUNCTION_DEFINITIONS, type FunctionDefinition } from "./functions/definitions.js";
 import { normalizeFunctionArguments } from "./functions/argument-normalization.js";
 import { extractPptSlideQuery } from "./ppt-query.js";
-import type { JsonRecord, RouteInput, RouteResult, SmallTalkCategory } from "./types.js";
+import type {
+  FunctionName,
+  JsonRecord,
+  RouteInput,
+  RouteResult,
+  SmallTalkCategory
+} from "./types.js";
 
 type KeywordRule = FunctionDefinition & {
   keywordFallback: NonNullable<FunctionDefinition["keywordFallback"]>;
@@ -82,11 +88,13 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
 
 function extractMemoryIntent(
   text: string
-):
-  | { action: "save_memory"; arguments: JsonRecord }
-  | { action: "retrieve_memory"; arguments: JsonRecord }
-  | undefined {
+): { action: FunctionName; arguments: JsonRecord } | undefined {
   const value = stripWakeAddress(text.trim());
+  const scheduleMemoryIntent = extractScheduleMemoryIntent(value);
+  if (scheduleMemoryIntent) {
+    return scheduleMemoryIntent;
+  }
+
   const save = value.match(/^(?:幫我)?(?:記住|保存|儲存)(?:一下)?[：:\s]*(.*)$/u);
   if (save) {
     return {
@@ -113,6 +121,59 @@ function extractMemoryIntent(
     };
   }
   return undefined;
+}
+
+function extractScheduleMemoryIntent(
+  value: string
+): { action: FunctionName; arguments: JsonRecord } | undefined {
+  const content = extractScheduleMemoryContent(value);
+  if (content !== undefined) {
+    return {
+      action: "save_schedule_memory",
+      arguments: { content }
+    };
+  }
+
+  if (/^(?:查|找|看|給我|幫我查).*(?:舉牌|晨更家族|家族晨更|仙履奇緣)/u.test(value)) {
+    return {
+      action: "query_schedule_memory",
+      arguments: {
+        query: cleanScheduleMemoryRouteQuery(value),
+        ...(value.includes("舉牌") || value.includes("為耶穌")
+          ? { scheduleType: "street_sign_service" }
+          : {}),
+        ...(value.includes("晨更家族") || value.includes("家族晨更") || value.includes("仙履奇緣")
+          ? { scheduleType: "morning_prayer_family" }
+          : {})
+      }
+    };
+  }
+
+  return undefined;
+}
+
+function extractScheduleMemoryContent(value: string): string | undefined {
+  if (!/^(?:幫我|請|麻煩)?(?:記住|保存|儲存)/u.test(value)) {
+    return undefined;
+  }
+  const afterSeparator = value.match(/[：:]\s*([\s\S]+)$/u)?.[1]?.trim();
+  const isStructuredSchedule =
+    /(?:晨更|舉牌|仙履奇緣)/u.test(value) ||
+    Boolean(afterSeparator?.match(/(?:\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／]\s*\d{1,2}/u));
+  if (!isStructuredSchedule) {
+    return undefined;
+  }
+  if (afterSeparator) {
+    return afterSeparator;
+  }
+  return value
+    .replace(/^(?:幫我|請|麻煩)?(?:記住|保存|儲存)(?:這份|一下|這個月|這張|這個)?/u, "")
+    .replace(/^(?:晨更|舉牌|為耶穌舉牌)?服事表/u, "")
+    .trim();
+}
+
+function cleanScheduleMemoryRouteQuery(value: string): string {
+  return value.replace(/^(?:幫我)?(?:查|找|看|給我|幫我查)\s*/u, "").trim();
 }
 
 function includesKeyword(text: string, keyword: string): boolean {

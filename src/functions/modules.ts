@@ -27,6 +27,10 @@ import {
 } from "./find-pop-sheet-music.js";
 import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
 import { createRetrieveMemoryHandler, createSaveMemoryHandler } from "./agent-memory-functions.js";
+import {
+  createQueryScheduleMemoryHandler,
+  createSaveScheduleMemoryHandler
+} from "./schedule-memory.js";
 
 export interface FunctionModuleContext {
   config: AppConfig;
@@ -351,6 +355,158 @@ export const FUNCTION_MODULES: FunctionModule[] = [
               replyText: `已清除流行歌譜 cache（${removed} 筆），下次查詢會重新建立。`
             };
           }
+        }
+      };
+    }
+  },
+  {
+    name: "save_schedule_memory",
+    definition: requiredDefinition("save_schedule_memory"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
+        expected: {
+          type: "execute",
+          action: "save_schedule_memory",
+          arguments: { content: "七/10五黃弘家族2" }
+        }
+      },
+      {
+        kind: "positive",
+        text: "小哈保存舉牌服事表：7/19黃弘家族(音樂人)",
+        expected: {
+          type: "execute",
+          action: "save_schedule_memory",
+          arguments: { content: "7/19黃弘家族(音樂人)" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈記住晨更服事表",
+        expected: {
+          type: "execute",
+          action: "save_schedule_memory",
+          arguments: { content: "" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈保存仙履奇緣服事表：七/16四仙履奇緣",
+        expected: {
+          type: "execute",
+          action: "save_schedule_memory",
+          arguments: { content: "七/16四仙履奇緣" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈今天晚餐吃什麼",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
+        enabledFunctions: withoutFunction("save_schedule_memory"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查7/19舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule_memory",
+          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          save_schedule_memory: createSaveScheduleMemoryHandler({
+            memoryStore: clients.memoryStore,
+            sessionStore: clients.sessionStore,
+            now: clients.now,
+            requestIdFactory: clients.requestIdFactory
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "query_schedule_memory",
+    definition: requiredDefinition("query_schedule_memory"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈查7/19舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule_memory",
+          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
+        }
+      },
+      {
+        kind: "positive",
+        text: "小哈查7/17晨更家族服事",
+        expected: {
+          type: "execute",
+          action: "query_schedule_memory",
+          arguments: { query: "7/17晨更家族服事", scheduleType: "morning_prayer_family" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈查舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule_memory",
+          arguments: { query: "舉牌", scheduleType: "street_sign_service" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈找7/19舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule_memory",
+          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈查昨天吃什麼",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈查7/19舉牌",
+        enabledFunctions: withoutFunction("query_schedule_memory"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查服事表",
+        expected: {
+          type: "execute",
+          action: "query_service_schedule",
+          arguments: { query: "小哈查服事表" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          query_schedule_memory: createQueryScheduleMemoryHandler({
+            memoryStore: clients.memoryStore,
+            now: clients.now
+          })
         }
       };
     }

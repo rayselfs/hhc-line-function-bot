@@ -225,6 +225,70 @@ describe("AgentTurnRuntime", () => {
     });
   });
 
+  it("overrides an intro route when the user clearly asks for the next service schedule", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "respond",
+      action: "introduce_bot",
+      arguments: { variant: "capabilities" },
+      provider: "ollama"
+    });
+    const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "下一場聚會服事表"
+    });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: { query_service_schedule: handler }
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_service_schedule"]),
+      event: textEvent("小哈下一場聚會服事"),
+      requestId: "req-service-guard"
+    });
+
+    expect(result?.replyText).toBe("下一場聚會服事表");
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "小哈下一場聚會服事",
+        dateIntent: "next_meeting"
+      }),
+      expect.any(Object)
+    );
+  });
+
+  it("overrides an intro route when the user clearly asks for this week's service schedule", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "respond",
+      action: "introduce_bot",
+      arguments: { variant: "capabilities" },
+      provider: "ollama"
+    });
+    const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "聚會服事表"
+    });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: { query_service_schedule: handler }
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_service_schedule"]),
+      event: textEvent("小哈給我這週服事表"),
+      requestId: "req-service-week-guard"
+    });
+
+    expect(result?.replyText).toBe("聚會服事表");
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "小哈給我這週服事表",
+        dateIntent: "this_week"
+      }),
+      expect.any(Object)
+    );
+  });
+
   it("records sanitized trace for routed function execution", async () => {
     const traceStore = new InMemoryAgentTraceStore(10);
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({

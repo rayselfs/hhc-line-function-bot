@@ -177,6 +177,9 @@ handler:
 - scope-local aliases such as "以後 X 就用這份"
 - explicit external resource links such as "幫我記住這份投影片 https://..."
 - explicit text memories such as "幫我記住..."
+- structured text-only schedule memories such as morning-prayer family schedules
+  and street-sign service schedules. These use shared schedule tables with a
+  `schedule_type` discriminator instead of one table per schedule kind.
 - memory commands such as `/memories`, `/forget-memory <id>`, and
   `/memory-status`
 - sanitized turn diagnostics through `/last-agent-turns`

@@ -5,6 +5,7 @@ import {
   matchesGroupScopedNaturalLanguageAdminActionHint,
   matchesNaturalLanguageAdminActionHint
 } from "../actions/catalog.js";
+import { guardSystemRouteWithFunctionIntent } from "./function-intent-guard.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
 import { messages } from "../messages.js";
 import { buildFunctionQuickReplies } from "../line-reply.js";
@@ -242,6 +243,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         });
         return finish(input, steps, { ok: false, replyText: messages.requestFailed });
       }
+      route = guardSystemRouteWithFunctionIntent(route, text, input.profile.enabledFunctions);
 
       const routeDurationMs = elapsedMs(routeStartedAt);
       steps.push({

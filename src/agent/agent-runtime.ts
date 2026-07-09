@@ -334,6 +334,9 @@ function extractAliasRequest(text: string): string | undefined {
 }
 
 function extractSaveMemoryRequest(text: string): { title?: string; content: string } | undefined {
+  if (isStructuredScheduleMemoryRequest(text)) {
+    return undefined;
+  }
   const match = text.match(/^(?:幫我)?(?:記住|保存|儲存)(?:一下)?[：:\s]*(.+)$/u);
   const content = match?.[1]?.trim();
   if (!content) {
@@ -342,6 +345,10 @@ function extractSaveMemoryRequest(text: string): { title?: string; content: stri
   const [maybeTitle, ...rest] = content.split(/[：:]/u);
   const title = rest.length > 0 ? maybeTitle.trim() : inferTitle(content);
   return { title, content: rest.length > 0 ? rest.join(":").trim() : content };
+}
+
+function isStructuredScheduleMemoryRequest(text: string): boolean {
+  return /(?:記住|保存|儲存).*(?:晨更|舉牌|仙履奇緣)/u.test(text);
 }
 
 function extractSaveResourceRequest(text: string):
@@ -449,5 +456,10 @@ function parseMemoryCommand(text: string): { command: string; args: string[] } |
 }
 
 export function isMemoryFunctionName(action: FunctionName): boolean {
-  return action === "save_memory" || action === "retrieve_memory";
+  return (
+    action === "save_memory" ||
+    action === "retrieve_memory" ||
+    action === "save_schedule_memory" ||
+    action === "query_schedule_memory"
+  );
 }

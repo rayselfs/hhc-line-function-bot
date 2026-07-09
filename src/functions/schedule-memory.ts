@@ -1,0 +1,409 @@
+import { randomUUID } from "node:crypto";
+
+import {
+  queryScheduleMemoryArgumentsSchema,
+  saveScheduleMemoryArgumentsSchema,
+  type QueryScheduleMemoryArguments,
+  type SaveScheduleMemoryArguments
+} from "../function-arguments.js";
+import type {
+  AgentMemoryStore,
+  AgentScheduleEntryInput,
+  AgentScheduleEntryRecord,
+  AgentScheduleType
+} from "../agent/memory-store.js";
+import type { FunctionHandler } from "../types.js";
+import type { SessionStore } from "../state/session-store.js";
+import { storePendingFunctionQuery } from "./pending-function.js";
+
+const SCHEDULE_MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface ParsedScheduleMemory {
+  scheduleType: AgentScheduleType;
+  title: string;
+  entries: AgentScheduleEntryInput[];
+}
+
+export interface ParseScheduleMemoryContentInput {
+  content: string;
+  now?: Date;
+  scheduleType?: AgentScheduleType;
+  title?: string;
+}
+
+export interface ScheduleMemoryFunctionOptions {
+  memoryStore: AgentMemoryStore;
+  sessionStore?: SessionStore;
+  now?: () => Date;
+  requestIdFactory?: () => string;
+}
+
+export function parseScheduleMemoryContent(
+  input: ParseScheduleMemoryContentInput
+): ParsedScheduleMemory {
+  const now = input.now ?? new Date();
+  const scheduleType = input.scheduleType ?? inferScheduleType(input.content);
+  const title = input.title?.trim() || defaultScheduleTitle(scheduleType);
+  const entries = input.content
+    .split(/\r?\n/)
+    .map((line) => parseScheduleLine(line, scheduleType, now))
+    .filter((entry): entry is AgentScheduleEntryInput => Boolean(entry));
+
+  return { scheduleType, title, entries };
+}
+
+export function createSaveScheduleMemoryHandler(
+  options: ScheduleMemoryFunctionOptions
+): FunctionHandler {
+  const now = options.now ?? (() => new Date());
+  const requestIdFactory = options.requestIdFactory ?? randomUUID;
+  return async (rawArgs, context) => {
+    const args = saveScheduleMemoryArgumentsSchema.parse(rawArgs);
+    const content = scheduleMemoryContent(args);
+
+    if (args.cancel || isCancelText(args.query)) {
+      return { ok: true, replyText: "好，我先不保存。" };
+    }
+
+    if (!content) {
+      return { ok: true, replyText: "請貼上要記住的服事表文字內容。" };
+    }
+
+    const parsed = parseScheduleMemoryContent({
+      content,
+      now: now(),
+      scheduleType: args.scheduleType,
+      title: args.title
+    });
+
+    if (parsed.entries.length === 0) {
+      return {
+        ok: true,
+        replyText: "我還整理不出日期和服事內容，請貼文字版服事表，先不要傳圖片。"
+      };
+    }
+
+    if (!args.confirm && !isConfirmText(args.query)) {
+      if (options.sessionStore) {
+        await storePendingFunctionQuery({
+          sessionStore: options.sessionStore,
+          requestId: requestIdFactory(),
+          action: "save_schedule_memory",
+          arguments: {
+            scheduleType: parsed.scheduleType,
+            title: parsed.title,
+            content,
+            confirm: true
+          },
+          context,
+          now: now()
+        });
+      }
+
+      return {
+        ok: true,
+        replyText: formatSchedulePreview(parsed),
+        quickReplies: [
+          { label: "保存", action: { type: "message", label: "保存", text: "保存" } },
+          { label: "取消", action: { type: "message", label: "取消", text: "取消" } }
+        ]
+      };
+    }
+
+    const expiresAt = new Date(now().getTime() + SCHEDULE_MEMORY_TTL_MS).toISOString();
+    await options.memoryStore.saveScheduleMemory({
+      profileName: context.profile.name,
+      source: context.event.source,
+      createdBy: context.event.source.userId,
+      scheduleType: parsed.scheduleType,
+      title: parsed.title,
+      originalText: content,
+      entries: parsed.entries,
+      expiresAt
+    });
+    await options.memoryStore.saveTextMemory({
+      profileName: context.profile.name,
+      source: context.event.source,
+      createdBy: context.event.source.userId,
+      title: parsed.title,
+      content,
+      query: parsed.title,
+      expiresAt
+    });
+
+    return {
+      ok: true,
+      replyText: `已保存 ${parsed.entries.length} 筆${scheduleTypeLabel(parsed.scheduleType)}，之後可以請我查。`
+    };
+  };
+}
+
+export function createQueryScheduleMemoryHandler(
+  options: ScheduleMemoryFunctionOptions
+): FunctionHandler {
+  const now = options.now ?? (() => new Date());
+  return async (rawArgs, context) => {
+    const args = queryScheduleMemoryArgumentsSchema.parse(rawArgs);
+    const query = args.query.trim();
+    const inferredType = args.scheduleType ?? inferScheduleTypeFromQuery(query);
+    const date = inferQueryDate(args, now());
+    const cleanedQuery = cleanScheduleMemoryQuery(query);
+    const entries = await options.memoryStore.searchScheduleEntries({
+      profileName: context.profile.name,
+      source: context.event.source,
+      scheduleType: inferredType,
+      date,
+      meetingName: args.meeting,
+      query: cleanedQuery,
+      limit: args.limit ?? 10
+    });
+
+    if (entries.length === 0) {
+      return { ok: true, replyText: "我找不到符合的服事記憶。" };
+    }
+
+    return {
+      ok: true,
+      replyText: ["我找到這些服事記憶：", ...entries.map(formatScheduleEntry)].join("\n")
+    };
+  };
+}
+
+function parseScheduleLine(
+  line: string,
+  scheduleType: AgentScheduleType,
+  now: Date
+): AgentScheduleEntryInput | undefined {
+  const normalized = line.normalize("NFKC").trim();
+  const match = normalized.match(
+    /(?<month>\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／]\s*(?<day>\d{1,2})\s*(?<weekday>[一二三四五六日天])?\s*(?<rest>.+)$/u
+  );
+  if (!match?.groups) {
+    return undefined;
+  }
+
+  const month = parseMonth(match.groups.month);
+  const day = Number(match.groups.day);
+  const rest = cleanupScheduleAssignee(match.groups.rest);
+  if (!month || !day || !rest) {
+    return undefined;
+  }
+
+  const serviceDate = buildDateKey(now, month, day);
+  const weekday = normalizeWeekday(match.groups.weekday);
+
+  if (scheduleType === "street_sign_service") {
+    const { assignee, notes } = splitNotes(rest);
+    if (!assignee) {
+      return undefined;
+    }
+    return {
+      serviceDate,
+      weekday,
+      meetingName: "為耶穌舉牌",
+      role: "服事家族",
+      assignee,
+      familyName: assignee,
+      notes
+    };
+  }
+
+  if (scheduleType === "morning_prayer_family") {
+    const meetingName = rest.includes("仙履奇緣") ? "仙履奇緣" : "晨更";
+    return {
+      serviceDate,
+      weekday,
+      meetingName,
+      role: "帶領家族",
+      assignee: rest,
+      familyName: rest
+    };
+  }
+
+  return {
+    serviceDate,
+    weekday,
+    meetingName: inferCustomMeetingName(rest),
+    assignee: rest
+  };
+}
+
+function inferScheduleType(content: string): AgentScheduleType {
+  if (/舉牌|為耶穌/u.test(content)) {
+    return "street_sign_service";
+  }
+  if (/晨更|仙履奇緣|家族|家園/u.test(content)) {
+    return "morning_prayer_family";
+  }
+  return "custom_service_schedule";
+}
+
+function inferScheduleTypeFromQuery(query: string): AgentScheduleType | undefined {
+  if (/舉牌|為耶穌/u.test(query)) {
+    return "street_sign_service";
+  }
+  if (/晨更家族|家族晨更|仙履奇緣/u.test(query)) {
+    return "morning_prayer_family";
+  }
+  return undefined;
+}
+
+function defaultScheduleTitle(scheduleType: AgentScheduleType): string {
+  switch (scheduleType) {
+    case "morning_prayer_family":
+      return "晨更家族服事表";
+    case "street_sign_service":
+      return "為耶穌舉牌服事表";
+    default:
+      return "服事表";
+  }
+}
+
+function scheduleTypeLabel(scheduleType: AgentScheduleType): string {
+  switch (scheduleType) {
+    case "morning_prayer_family":
+      return "晨更家族服事";
+    case "street_sign_service":
+      return "舉牌服事";
+    default:
+      return "服事";
+  }
+}
+
+function scheduleMemoryContent(args: SaveScheduleMemoryArguments): string {
+  return (args.content || args.query || "").trim();
+}
+
+function formatSchedulePreview(parsed: ParsedScheduleMemory): string {
+  const sample = parsed.entries
+    .slice(0, 3)
+    .map(
+      (entry) => `- ${formatMonthDay(entry.serviceDate)} ${entry.meetingName}：${entry.assignee}`
+    );
+  return [
+    `我整理到 ${parsed.entries.length} 筆${scheduleTypeLabel(parsed.scheduleType)}。`,
+    ...sample,
+    "要保存嗎？"
+  ].join("\n");
+}
+
+function formatScheduleEntry(entry: AgentScheduleEntryRecord): string {
+  const notes = entry.notes ? `（${entry.notes}）` : "";
+  return `- ${formatMonthDay(entry.serviceDate)} ${entry.meetingName}：${entry.assignee}${notes}`;
+}
+
+function inferQueryDate(args: QueryScheduleMemoryArguments, now: Date): string | undefined {
+  if (args.dateIntent === "specific_date") {
+    return args.specificDate ?? args.date;
+  }
+  if (args.date) {
+    return args.date;
+  }
+  switch (args.dateIntent) {
+    case "today":
+      return addDaysToDateKey(toDateKey(now), 0);
+    case "tomorrow":
+      return addDaysToDateKey(toDateKey(now), 1);
+    default:
+      break;
+  }
+
+  const match = args.query.match(
+    /(?<month>\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／月]\s*(?<day>\d{1,2})/u
+  );
+  if (!match?.groups) {
+    return undefined;
+  }
+  const month = parseMonth(match.groups.month);
+  const day = Number(match.groups.day);
+  return month && day ? buildDateKey(now, month, day) : undefined;
+}
+
+function cleanScheduleMemoryQuery(query: string): string {
+  return query
+    .normalize("NFKC")
+    .replace(/小哈/g, " ")
+    .replace(/幫我|請|查|找|看|給我|一下|記住的|服事表|服事/g, " ")
+    .replace(/(?:\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／月]\s*\d{1,2}/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isConfirmText(value: string | undefined): boolean {
+  return /^(保存|確認|確定|好|可以|存)$/u.test(value?.trim() ?? "");
+}
+
+function isCancelText(value: string | undefined): boolean {
+  return /^(取消|不要|先不要|不用)$/u.test(value?.trim() ?? "");
+}
+
+function cleanupScheduleAssignee(value: string): string {
+  return value
+    .replace(/^[✅✔☑🔆👉\s]+/u, "")
+    .replace(/[。；;，,]+$/u, "")
+    .trim();
+}
+
+function splitNotes(value: string): { assignee: string; notes?: string } {
+  const notes = Array.from(value.matchAll(/[（(]([^()（）]+)[）)]/gu))
+    .map((match) => match[1]?.trim())
+    .filter(Boolean)
+    .join("、");
+  const assignee = value.replace(/[（(][^()（）]+[）)]/gu, "").trim();
+  return { assignee, notes: notes || undefined };
+}
+
+function inferCustomMeetingName(value: string): string {
+  return value.includes("：") ? value.split("：")[0]?.trim() || "服事" : "服事";
+}
+
+function parseMonth(value: string): number | undefined {
+  if (/^\d+$/.test(value)) {
+    const month = Number(value);
+    return month >= 1 && month <= 12 ? month : undefined;
+  }
+  const normalized = value.replace("兩", "二");
+  const map: Record<string, number> = {
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+    十一: 11,
+    十二: 12
+  };
+  return map[normalized];
+}
+
+function normalizeWeekday(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value === "天" ? "日" : value;
+}
+
+function buildDateKey(now: Date, month: number, day: number): string {
+  const currentYear = now.getUTCFullYear();
+  const currentMonth = now.getUTCMonth() + 1;
+  const year = month < currentMonth - 6 ? currentYear + 1 : currentYear;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function toDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function formatMonthDay(dateKey: string): string {
+  const match = dateKey.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return match ? `${Number(match[1])}月${Number(match[2])}日` : dateKey;
+}

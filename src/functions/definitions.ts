@@ -3,9 +3,11 @@ import type { z } from "zod";
 import {
   findPopSheetMusicArgumentsSchema,
   findPptSlidesArgumentsSchema,
+  queryScheduleMemoryArgumentsSchema,
   queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
-  saveMemoryArgumentsSchema
+  saveMemoryArgumentsSchema,
+  saveScheduleMemoryArgumentsSchema
 } from "../function-arguments.js";
 import type { AgentResourceType, FunctionName, JsonRecord } from "../types.js";
 
@@ -196,6 +198,72 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         "image"
       ],
       defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
+    }
+  },
+  {
+    name: "save_schedule_memory",
+    displayName: "記服事表",
+    shortDescription: "把文字版服事表整理成可查詢的短期記憶。",
+    examples: ["小哈幫我記住這份晨更服事表：七/10五黃弘家族2"],
+    requires: ["memory", "session"],
+    scope: "group_capable",
+    sideEffectLevel: "write",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "content",
+        argument: "content",
+        missingWhen: "blank",
+        prompt: "請貼上要記住的服事表文字內容。"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "explicit_text" },
+    clarificationPrompt: "請貼上要記住的服事表文字內容。",
+    description:
+      '- save_schedule_memory: save structured text-only service schedules such as 晨更家族服事表 or 為耶穌舉牌服事表. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "confirm": boolean optional}. Preview first unless confirm is true. Do not use for images.',
+    argumentSchema: saveScheduleMemoryArgumentsSchema,
+    quickReply: {
+      label: "記服事表",
+      command: "小哈 幫我記住服事表"
+    },
+    helpText: "貼上文字版服事表，先整理預覽，確認後保存 30 天。",
+    keywordFallback: {
+      keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
+      stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]
+    }
+  },
+  {
+    name: "query_schedule_memory",
+    displayName: "查記住的服事",
+    shortDescription: "查詢已記住的文字版服事表，不混用既有影視團隊服事表。",
+    examples: ["小哈查7/19舉牌", "小哈查7/17晨更家族服事"],
+    requires: ["memory"],
+    scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        prompt: "請告訴我要查哪個已記住的服事，例如 7/19 舉牌。"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "retrieve_text" },
+    clarificationPrompt: "請告訴我要查哪個已記住的服事，例如 7/19 舉牌。",
+    description:
+      '- query_schedule_memory: query structured saved schedule memories. Arguments: {"query":"date/type/topic", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "date":"YYYY-MM-DD optional", "meeting":"optional", "limit": number optional}. Use this for saved 晨更家族 or 舉牌 schedules, not the media team service schedule.',
+    argumentSchema: queryScheduleMemoryArgumentsSchema,
+    quickReply: {
+      label: "查記住的服事",
+      command: "小哈 查記住的服事"
+    },
+    helpText: "查已保存的文字版服事表，例如晨更家族或為耶穌舉牌。",
+    keywordFallback: {
+      keywords: ["查舉牌", "查晨更家族", "查記住的服事", "查保存的服事"],
+      stripWords: [...commonStripWords, "查", "找", "看", "記住的", "保存的", "服事表"]
     }
   },
   {

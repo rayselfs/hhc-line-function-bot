@@ -69,6 +69,15 @@ export function applyPendingSlotAnswer(
   args: JsonRecord,
   answer: string
 ): JsonRecord {
+  if (action === "save_schedule_memory") {
+    return {
+      ...args,
+      confirm: /^(保存|確認|確定|好|可以|存)$/u.test(answer.trim()),
+      cancel: /^(取消|不要|先不要|不用)$/u.test(answer.trim()),
+      query: answer
+    };
+  }
+
   const missingSlot = findMissingRequiredSlot(action, args);
   if (!missingSlot) {
     return {

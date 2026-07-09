@@ -3,7 +3,9 @@ export const FUNCTION_NAMES = [
   "query_service_schedule",
   "find_pop_sheet_music",
   "save_memory",
-  "retrieve_memory"
+  "retrieve_memory",
+  "save_schedule_memory",
+  "query_schedule_memory"
 ] as const;
 
 export type FunctionName = (typeof FUNCTION_NAMES)[number];
