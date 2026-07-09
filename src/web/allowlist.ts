@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { domainToASCII } from "node:url";
+import { getDomain } from "tldts";
 
 export interface WebAllowlistEntry {
   id: string;
@@ -202,7 +203,7 @@ export async function isUrlAllowedByWebAllowlist(
   const match = entries.find(
     (entry) =>
       entry.enabled &&
-      entry.domain === host &&
+      normalizeDomain(entry.domain) === host &&
       (!entry.pathPrefix || parsed.url.pathname.startsWith(entry.pathPrefix))
   );
   return match
@@ -211,13 +212,16 @@ export async function isUrlAllowedByWebAllowlist(
 }
 
 export function normalizeDomain(value: string): string {
-  const trimmed =
+  const host =
     value
       .trim()
       .toLowerCase()
       .replace(/^https?:\/\//u, "")
-      .split("/")[0] ?? "";
-  return domainToASCII(trimmed);
+      .split(/[/?#]/u)[0]
+      ?.replace(/^\[(.*)\]$/u, "$1")
+      .replace(/:\d+$/u, "") ?? "";
+  const asciiHost = domainToASCII(host);
+  return getDomain(asciiHost) ?? asciiHost;
 }
 
 function normalizePathPrefix(value: string | undefined): string | undefined {
@@ -270,7 +274,7 @@ function mapEntry(row: Record<string, unknown>): WebAllowlistEntry {
   return {
     id: String(row.id),
     profileName: String(row.profile_name),
-    domain: String(row.domain),
+    domain: normalizeDomain(String(row.domain)),
     pathPrefix: optionalString(row.path_prefix),
     label: optionalString(row.label),
     enabled: Boolean(row.enabled),
