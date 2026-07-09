@@ -222,6 +222,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const registrationInviteCodeStore =
     deps.registrationInviteCodeStore ?? new InMemoryRegistrationInviteCodeStore();
   const registrationInviteCodeTtlMinutes = config.access?.registrationInviteCodeTtlMinutes ?? 60;
+  const webAllowlistStore = deps.webAllowlistStore ?? new InMemoryWebAllowlistStore();
   const adminActionRegistry =
     deps.adminActionRegistry ??
     createAdminActionRegistry({
@@ -229,7 +230,8 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
       registrationInviteCodeStore,
       registrationInviteCodeTtlMinutes,
       confirmationStore: deps.confirmationStore,
-      confirmationTtlMinutes: config.access?.confirmationTtlMinutes
+      confirmationTtlMinutes: config.access?.confirmationTtlMinutes,
+      webAllowlistStore
     });
   const lastErrorStore =
     deps.lastErrorStore ?? new InMemoryLastErrorStore(config.lastErrors?.maxEntries ?? 20);
@@ -248,7 +250,6 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const agentJobStore = deps.agentJobStore ?? new InMemoryAgentJobStore();
   const conversationWindowStore =
     deps.conversationWindowStore ?? new InMemoryConversationWindowStore();
-  const webAllowlistStore = deps.webAllowlistStore ?? new InMemoryWebAllowlistStore();
   const contextManager = createContextManager({
     runtimeContextBudgetTokens: config.llm.runtimeContextBudgetTokens ?? 2000,
     compressionThresholdRatio: config.llm.contextCompressionThresholdRatio ?? 0.75

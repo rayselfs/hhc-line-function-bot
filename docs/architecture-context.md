@@ -197,7 +197,7 @@ To add or change an admin action:
 2. Keep execution in the admin action registry, not inline in `server.ts`.
 3. Define source policy, side-effect level, and confirmation requirements.
 4. Add slash command help only if a command is user-facing.
-5. Add natural-language admin routing only for direct-chat admin use.
+5. Add natural-language admin routing for direct-chat admin use by default. Allow group natural language only for explicitly group-scoped actions such as function scope grant/revoke/list.
 6. Audit the action and keep `/last-routes` sanitized.
 7. Add policy and observability tests.
 

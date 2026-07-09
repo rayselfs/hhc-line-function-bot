@@ -156,6 +156,11 @@ function buildAdminRouterPrompt(enabledActions: string[]): string {
     "Return exactly one JSON object and no markdown.",
     'If the admin request does not clearly match an enabled admin action, return {"action":"deny","reason":"not_matched"}.',
     "Never invent an action name.",
+    "When executing an action, include an arguments object with only fields explicitly present or safely inferred from the user text.",
+    "Known argument fields:",
+    "- web_allowlist_add: url or domain, optional pathPrefix, optional label.",
+    "- function_scope_grant/function_scope_revoke: functionName, optional groupId. If the source is a group and the user says this group/current group, omit groupId.",
+    "- function_scope_list: optional groupId. If the source is a group and the user asks about this group/current group, omit groupId.",
     "Available admin actions:",
     available || "(none)"
   ].join("\n");

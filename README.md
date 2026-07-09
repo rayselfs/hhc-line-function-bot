@@ -24,7 +24,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Per-profile access policy with PostgreSQL-backed user/group/admin registration.
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
 - Direct-chat admin commands for a single bootstrap `adminUserId` plus DB-managed admins.
-- Admin direct-chat natural language for selected management actions, currently invite-code creation.
+- Admin natural language for selected management actions: invite-code creation, web allowlist add/list, and group function scope management.
 - Minimal `/healthz`, data-layer `/readyz`, and admin-only `/diag` diagnostics.
 - Destructive admin-action confirmation infrastructure through `/confirm <code>`.
 - Function handlers:
@@ -270,13 +270,13 @@ Sheet music search uses a short-lived in-memory file index cache. Admins can cle
 
 Admin commands use slash syntax and are gated by each profile's bootstrap `adminUserId` or DB-managed admin principals. `/help` lists public commands and enabled functions. `/help admin` lists common admin commands by group, and `/help admin all` includes advanced and diagnostic commands.
 
-Admins can also use direct-chat natural language for selected admin actions. For example, an admin can ask the bot to create an invite code, and the bot will return a copyable `/registry <code>` line. Admin natural language is direct-chat only; group messages do not execute admin actions. `/registry <code>` remains a deterministic slash command and is not routed through the LLM.
+Admins can also use natural language for selected admin actions. For example, an admin can ask the bot to create an invite code, list web allowlist entries, add a website to the allowlist, or manage a group's function scope. Invite-code and web allowlist natural language are direct-chat only. Function scope grant/revoke/list is the only group natural-language exception, and only when an admin clearly asks to manage the current group.
 
-Admin natural-language requests pass through a conservative local hint check, the admin action router, the policy gate, and the admin action registry. `/last-routes` records sanitized admin route/action outcomes without raw message text or invite codes. Use `pnpm eval:admin` when changing admin intent hints or adding admin actions.
+`/registry <code>` remains a deterministic slash command and is not routed through the LLM. Admin natural-language requests pass through a conservative local hint check, the admin action router, the policy gate, and the admin action registry. `/last-routes` records sanitized admin route/action outcomes without raw message text or invite codes. Use `pnpm eval:admin` when changing admin intent hints or adding admin actions.
 
 Destructive admin actions must be confirmed with `/confirm <code>`. Invite-code creation is a `security_change` action and remains admin direct-chat only plus audited, but does not require confirmation.
 
-Controlled web allowlist commands are admin direct-chat commands. They prepare safe, profile-scoped web lookup by allowing only HTTPS domains and optional path prefixes. Private-network and localhost targets are still denied by code-level guardrails.
+Controlled web allowlist commands are admin direct-chat commands. Admins can also add/list web allowlist entries with direct-chat natural language. They prepare safe, profile-scoped web lookup by allowing only HTTPS domains and optional path prefixes. Private-network and localhost targets are still denied by code-level guardrails.
 
 ```text
 /web-allowlist

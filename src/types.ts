@@ -24,7 +24,14 @@ export const SMALL_TALK_CATEGORIES = [
 
 export type SmallTalkCategory = (typeof SMALL_TALK_CATEGORIES)[number];
 
-export const ADMIN_ACTION_NAMES = ["invite_code_create"] as const;
+export const ADMIN_ACTION_NAMES = [
+  "invite_code_create",
+  "web_allowlist_list",
+  "web_allowlist_add",
+  "function_scope_grant",
+  "function_scope_revoke",
+  "function_scope_list"
+] as const;
 
 export type AdminActionName = (typeof ADMIN_ACTION_NAMES)[number];
 
