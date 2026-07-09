@@ -41,6 +41,19 @@ const migrations = [
     disabled_by text,
     unique (profile_name, group_id, function_name)
   )
+  `,
+  `
+  create table if not exists access_user_function_grants (
+    id uuid primary key,
+    profile_name text not null,
+    user_id text not null,
+    function_name text not null,
+    created_at timestamptz not null default now(),
+    created_by text not null,
+    disabled_at timestamptz,
+    disabled_by text,
+    unique (profile_name, user_id, function_name)
+  )
   `
 ];
 

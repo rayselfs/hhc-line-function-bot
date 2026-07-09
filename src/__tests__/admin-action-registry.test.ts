@@ -264,6 +264,68 @@ describe("admin action registry", () => {
     );
   });
 
+  it("grants and revokes user function scopes from routed arguments", async () => {
+    const accessStore = new InMemoryAccessStore();
+    const registry = createAdminActionRegistry({
+      accessStore,
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60
+    });
+    const directEvent = {
+      type: "message" as const,
+      source: { type: "user" as const, userId: "Uroot" }
+    };
+
+    const grant = await registry.execute({
+      action: "function_scope_grant",
+      profile: profile(),
+      event: directEvent,
+      arguments: {
+        targetType: "user",
+        userId: "Uwriter",
+        functionName: "save_schedule_memory"
+      }
+    });
+    const list = await registry.execute({
+      action: "function_scope_list",
+      profile: profile(),
+      event: directEvent,
+      arguments: { targetType: "user", userId: "Uwriter" }
+    });
+    const revoke = await registry.execute({
+      action: "function_scope_revoke",
+      profile: profile(),
+      event: directEvent,
+      arguments: {
+        targetType: "user",
+        userId: "Uwriter",
+        functionName: "save_schedule_memory"
+      }
+    });
+
+    await expect(accessStore.listUserFunctionGrants("helper", "Uwriter")).resolves.toEqual([]);
+    expect(grant.replyText).toContain("save_schedule_memory");
+    expect(grant.replyText).toContain("user: Uwriter");
+    expect(list.replyText).toContain("user-grants: save_schedule_memory");
+    expect(revoke.replyText).toContain("save_schedule_memory");
+    expect(accessStore.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "access.function.user.grant",
+          targetType: "user",
+          targetId: "Uwriter",
+          metadata: { functionName: "save_schedule_memory" }
+        }),
+        expect.objectContaining({
+          action: "access.function.user.revoke",
+          targetType: "user",
+          targetId: "Uwriter",
+          metadata: { functionName: "save_schedule_memory" }
+        })
+      ])
+    );
+  });
+
   it("confirms a stored admin action only once", async () => {
     const accessStore = new InMemoryAccessStore();
     const registrationInviteCodeStore = new InMemoryRegistrationInviteCodeStore({

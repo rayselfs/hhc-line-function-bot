@@ -124,10 +124,12 @@ When adding or changing an admin action:
 ## Function Scoping
 
 - `profile.enabledFunctions` means profile-global functions for that profile only, not service-global functions.
-- Direct users only receive profile-global functions.
-- Groups receive profile-global functions plus DB-managed `profileName/groupId/functionName` grants.
-- Group grants are additive. To make a function group-only, remove it from `enabledFunctions` and grant it to selected groups with `/function-grant`.
+- Direct users receive profile-global read functions plus DB-managed `profileName/userId/functionName` grants.
+- Groups receive profile-global read functions plus DB-managed `profileName/groupId/functionName` grants and `profileName/userId/functionName` grants for the requester.
+- User and group grants are additive. To make a function group-only, remove it from `enabledFunctions` and grant it to selected groups with `/function-grant`.
+- Write functions such as explicit memory saves are admin-only by default even when present in `profile.enabledFunctions`; grant them to selected users with `/function-user-grant` or to selected groups with `/function-grant`.
 - Use `/function-grant <functionName> [groupId]`, `/function-revoke <functionName> [groupId]`, and `/function-scopes [groupId]` for group function scope management.
+- Use `/function-user-grant <functionName> <userId>`, `/function-user-revoke <functionName> <userId>`, and `/function-user-scopes <userId>` for user function scope management.
 - In a group, admins can omit `groupId` for those function-scope commands. In direct chat, admins must provide `groupId`.
 
 ## Function Module Contract
@@ -149,6 +151,7 @@ When adding or changing an admin action:
 - PostgreSQL must not store remote provider API keys, access tokens, or refresh tokens. Use it only for policy, registry, audit, allowlist, and memory metadata.
 - Remote provider API keys belong in ACA secrets or local `.env`, never in PostgreSQL or committed files.
 - Agent memory must not store temporary sharing links. Store Graph drive/item metadata and regenerate short-lived links on demand.
+- Successful PPT and sheet-music lookup metadata is a controlled `read`-function exception: it may store short-lived, scope-local resource metadata for recall, but it is not user-authored saved content and must not store raw files or generated sharing links.
 - External resource memories may store user-provided URLs, but only when the user explicitly asks the bot to remember/save/store that resource.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
 - Do not add automatic group-chat recording. Text memory must be explicit user intent.

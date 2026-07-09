@@ -36,6 +36,17 @@ export interface GroupFunctionGrant {
   disabledBy?: string;
 }
 
+export interface UserFunctionGrant {
+  id: string;
+  profileName: string;
+  userId: string;
+  functionName: FunctionName;
+  createdAt: string;
+  createdBy: string;
+  disabledAt?: string;
+  disabledBy?: string;
+}
+
 export interface AddPrincipalInput {
   profileName: string;
   type: AccessPrincipalType;
@@ -74,6 +85,20 @@ export interface DisableGroupFunctionGrantInput {
   disabledBy: string;
 }
 
+export interface AddUserFunctionGrantInput {
+  profileName: string;
+  userId: string;
+  functionName: FunctionName;
+  createdBy: string;
+}
+
+export interface DisableUserFunctionGrantInput {
+  profileName: string;
+  userId: string;
+  functionName: FunctionName;
+  disabledBy: string;
+}
+
 export interface AccessStore {
   hasActivePrincipal(
     profileName: string,
@@ -89,4 +114,8 @@ export interface AccessStore {
   listAllGroupFunctionGrants(profileName: string): Promise<GroupFunctionGrant[]>;
   addGroupFunctionGrant(input: AddGroupFunctionGrantInput): Promise<GroupFunctionGrant>;
   disableGroupFunctionGrant(input: DisableGroupFunctionGrantInput): Promise<boolean>;
+  listUserFunctionGrants(profileName: string, userId: string): Promise<FunctionName[]>;
+  listAllUserFunctionGrants(profileName: string): Promise<UserFunctionGrant[]>;
+  addUserFunctionGrant(input: AddUserFunctionGrantInput): Promise<UserFunctionGrant>;
+  disableUserFunctionGrant(input: DisableUserFunctionGrantInput): Promise<boolean>;
 }

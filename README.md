@@ -255,6 +255,7 @@ This keeps new functions on a consistent contract: define the capability, normal
 The memory layer adds controlled memory without making the bot an unrestricted chat recorder.
 
 - Recent PPT and sheet music results store only resource metadata: profile, LINE scope, requester, file title, Graph drive id, and item id.
+- This automatic resource metadata is a controlled read-function exception for recall and aliasing. It is not the same as a user explicitly asking the bot to remember or save content.
 - Users can explicitly ask the bot to remember an external PPT or sheet-music link. These are saved as scoped resource memories and can be found by the same PPT/sheet-music lookup functions.
 - Temporary sharing links are never stored. When a user asks for the previous one again, the bot creates a fresh 24 hour Graph link.
 - External links are stored as user-provided links. The bot does not verify whether those links remain accessible.
@@ -321,6 +322,9 @@ Common commands:
 /function-grant <functionName> [groupId]
 /function-revoke <functionName> [groupId]
 /function-scopes [groupId]
+/function-user-grant <functionName> <userId>
+/function-user-revoke <functionName> <userId>
+/function-user-scopes <userId>
 /audit-list [limit]
 /web-allowlist
 ```

@@ -2,6 +2,7 @@ import type { AccessStore } from "../access/types.js";
 import type { RegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
 import type { WebAllowlistEntry, WebAllowlistStore } from "../web/allowlist.js";
 import { InMemoryConfirmationStore, type ConfirmationStore } from "./confirmation-store.js";
+import { getFunctionDefinition } from "../functions/definitions.js";
 import {
   FUNCTION_NAMES,
   isFunctionName,
@@ -239,9 +240,34 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     if (!parsed.ok) {
       return { ok: true, replyText: parsed.replyText };
     }
+    if (parsed.target.type === "user") {
+      await this.options.accessStore.addUserFunctionGrant({
+        profileName: input.profile.name,
+        userId: parsed.target.userId,
+        functionName: parsed.functionName,
+        createdBy: parsed.actorUserId
+      });
+      await this.options.accessStore.recordAudit({
+        profileName: input.profile.name,
+        actorUserId: parsed.actorUserId,
+        action: "access.function.user.grant",
+        targetType: "user",
+        targetId: parsed.target.userId,
+        metadata: { functionName: parsed.functionName }
+      });
+      return {
+        ok: true,
+        replyText: [
+          "Function scope granted",
+          `profile: ${input.profile.name}`,
+          `user: ${parsed.target.userId}`,
+          `function: ${parsed.functionName}`
+        ].join("\n")
+      };
+    }
     await this.options.accessStore.addGroupFunctionGrant({
       profileName: input.profile.name,
-      groupId: parsed.groupId,
+      groupId: parsed.target.groupId,
       functionName: parsed.functionName,
       createdBy: parsed.actorUserId
     });
@@ -250,7 +276,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       actorUserId: parsed.actorUserId,
       action: "access.function.grant",
       targetType: "group",
-      targetId: parsed.groupId,
+      targetId: parsed.target.groupId,
       metadata: { functionName: parsed.functionName }
     });
     return {
@@ -258,7 +284,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       replyText: [
         "Function scope granted",
         `profile: ${input.profile.name}`,
-        `group: ${parsed.groupId}`,
+        `group: ${parsed.target.groupId}`,
         `function: ${parsed.functionName}`
       ].join("\n")
     };
@@ -271,9 +297,38 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     if (!parsed.ok) {
       return { ok: true, replyText: parsed.replyText };
     }
+    if (parsed.target.type === "user") {
+      const revoked = await this.options.accessStore.disableUserFunctionGrant({
+        profileName: input.profile.name,
+        userId: parsed.target.userId,
+        functionName: parsed.functionName,
+        disabledBy: parsed.actorUserId
+      });
+      if (revoked) {
+        await this.options.accessStore.recordAudit({
+          profileName: input.profile.name,
+          actorUserId: parsed.actorUserId,
+          action: "access.function.user.revoke",
+          targetType: "user",
+          targetId: parsed.target.userId,
+          metadata: { functionName: parsed.functionName }
+        });
+      }
+      return {
+        ok: true,
+        replyText: revoked
+          ? [
+              "Function scope revoked",
+              `profile: ${input.profile.name}`,
+              `user: ${parsed.target.userId}`,
+              `function: ${parsed.functionName}`
+            ].join("\n")
+          : "Function scope grant not found."
+      };
+    }
     const revoked = await this.options.accessStore.disableGroupFunctionGrant({
       profileName: input.profile.name,
-      groupId: parsed.groupId,
+      groupId: parsed.target.groupId,
       functionName: parsed.functionName,
       disabledBy: parsed.actorUserId
     });
@@ -283,7 +338,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         actorUserId: parsed.actorUserId,
         action: "access.function.revoke",
         targetType: "group",
-        targetId: parsed.groupId,
+        targetId: parsed.target.groupId,
         metadata: { functionName: parsed.functionName }
       });
     }
@@ -293,7 +348,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         ? [
             "Function scope revoked",
             `profile: ${input.profile.name}`,
-            `group: ${parsed.groupId}`,
+            `group: ${parsed.target.groupId}`,
             `function: ${parsed.functionName}`
           ].join("\n")
         : "Function scope grant not found."
@@ -307,22 +362,43 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     if (!actorUserId) {
       return { ok: true, replyText: "你沒有權限使用 admin 指令。" };
     }
-    const groupId = readTargetGroupId(input.arguments, input.event);
-    if (!groupId) {
-      return { ok: true, replyText: "請提供 groupId，或在要設定的群組裡使用。" };
+    const target = readFunctionScopeTarget(input.arguments, input.event);
+    if (!target) {
+      return { ok: true, replyText: "請提供 groupId 或 userId。" };
+    }
+    if (target.type === "user") {
+      const userGrants = await this.options.accessStore.listUserFunctionGrants(
+        input.profile.name,
+        target.userId
+      );
+      const profileDefaults = input.profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
+      const effectiveFunctions = mergeFunctionNames(profileDefaults, userGrants);
+      return {
+        ok: true,
+        replyText: [
+          "Function scopes",
+          `profile: ${input.profile.name}`,
+          `user: ${target.userId}`,
+          `profile-default: ${profileDefaults.join(", ") || "(none)"}`,
+          `user-grants: ${userGrants.join(", ") || "(none)"}`,
+          `effective: ${effectiveFunctions.join(", ") || "(none)"}`
+        ].join("\n")
+      };
     }
     const groupGrants = await this.options.accessStore.listGroupFunctionGrants(
       input.profile.name,
-      groupId
+      target.groupId
     );
-    const effectiveFunctions = mergeFunctionNames(input.profile.enabledFunctions, groupGrants);
+    const profileDefaults = input.profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
+    const effectiveFunctions = mergeFunctionNames(profileDefaults, groupGrants);
     return {
       ok: true,
       replyText: [
         "Function scopes",
         `profile: ${input.profile.name}`,
-        `group: ${groupId}`,
+        `group: ${target.groupId}`,
         `profile-global: ${input.profile.enabledFunctions.join(", ") || "(none)"}`,
+        `profile-default: ${profileDefaults.join(", ") || "(none)"}`,
         `group-grants: ${groupGrants.join(", ") || "(none)"}`,
         `effective: ${effectiveFunctions.join(", ") || "(none)"}`
       ].join("\n")
@@ -383,10 +459,13 @@ function parseWebAllowlistTarget(
   };
 }
 
-function parseFunctionScopeArgs(
-  input: AdminActionExecutionInput
-):
-  | { ok: true; actorUserId: string; groupId: string; functionName: FunctionName }
+function parseFunctionScopeArgs(input: AdminActionExecutionInput):
+  | {
+      ok: true;
+      actorUserId: string;
+      target: FunctionScopeTarget;
+      functionName: FunctionName;
+    }
   | { ok: false; replyText: string } {
   const actorUserId = input.event.source.userId;
   if (!actorUserId) {
@@ -399,12 +478,14 @@ function parseFunctionScopeArgs(
       replyText: `請提供 functionName，可用功能：${FUNCTION_NAMES.join(", ")}`
     };
   }
-  const groupId = readTargetGroupId(input.arguments, input.event);
-  if (!groupId) {
-    return { ok: false, replyText: "請提供 groupId，或在要設定的群組裡使用。" };
+  const target = readFunctionScopeTarget(input.arguments, input.event);
+  if (!target) {
+    return { ok: false, replyText: "請提供 groupId 或 userId。" };
   }
-  return { ok: true, actorUserId, groupId, functionName };
+  return { ok: true, actorUserId, target, functionName };
 }
+
+type FunctionScopeTarget = { type: "group"; groupId: string } | { type: "user"; userId: string };
 
 function readFunctionName(args: JsonRecord | undefined): FunctionName | undefined {
   const value = readStringArg(args, ["functionName", "function", "function_name", "name"]);
@@ -416,6 +497,23 @@ function readTargetGroupId(args: JsonRecord | undefined, event: LineEvent): stri
     readStringArg(args, ["groupId", "group", "targetGroupId", "target_group_id"]) ??
     (event.source.type === "group" ? event.source.groupId : undefined)
   );
+}
+
+function readTargetUserId(args: JsonRecord | undefined): string | undefined {
+  return readStringArg(args, ["userId", "user", "targetUserId", "target_user_id"]);
+}
+
+function readFunctionScopeTarget(
+  args: JsonRecord | undefined,
+  event: LineEvent
+): FunctionScopeTarget | undefined {
+  const targetType = readStringArg(args, ["targetType", "target_type", "type"])?.toLowerCase();
+  const userId = readTargetUserId(args);
+  if (targetType === "user" || userId) {
+    return userId ? { type: "user", userId } : undefined;
+  }
+  const groupId = readTargetGroupId(args, event);
+  return groupId ? { type: "group", groupId } : undefined;
 }
 
 function readStringArg(args: JsonRecord | undefined, keys: string[]): string | undefined {
@@ -433,4 +531,8 @@ function readStringArg(args: JsonRecord | undefined, keys: string[]): string | u
 
 function mergeFunctionNames(left: FunctionName[], right: FunctionName[]): FunctionName[] {
   return Array.from(new Set([...left, ...right]));
+}
+
+function isDefaultUserFunctionAvailable(functionName: FunctionName): boolean {
+  return getFunctionDefinition(functionName)?.sideEffectLevel === "read";
 }

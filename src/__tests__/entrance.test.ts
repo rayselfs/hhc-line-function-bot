@@ -1225,6 +1225,212 @@ describe("LINE entrance", () => {
     );
   });
 
+  it("hides profile-global write functions from non-admin users by default", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "save this schedule" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "main",
+        enabledFunctions: ["query_service_schedule"]
+      })
+    );
+  });
+
+  it("keeps profile-global write functions available to admins", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "save this schedule" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "main",
+        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+      })
+    );
+  });
+
+  it("lets a direct user use a write function through an explicit user grant", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = defaultAccessStore();
+    await accessStore.addUserFunctionGrant({
+      profileName: "main",
+      userId: "Uallowed",
+      functionName: "save_schedule_memory",
+      createdBy: "Uadmin"
+    });
+    const app = createTestApp(config, {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "save this schedule" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "main",
+        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+      })
+    );
+  });
+
+  it("lets an admin grant a function to a direct user for the current profile", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = defaultAccessStore();
+    const app = createTestApp(config, {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const grantBody = lineBody({
+      type: "message",
+      replyToken: "grant-reply",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/function-user-grant save_schedule_memory Uallowed" }
+    });
+    const routeBody = lineBody({
+      type: "message",
+      replyToken: "route-reply",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "save this schedule" }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(grantBody, "main-secret"),
+      payload: grantBody
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(routeBody, "main-secret"),
+      payload: routeBody
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("save_schedule_memory");
+    await expect(accessStore.listUserFunctionGrants("main", "Uallowed")).resolves.toEqual([
+      "save_schedule_memory"
+    ]);
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "main",
+        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+      })
+    );
+  });
+
+  it("shows write functions as profile-global but not default effective group scope", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
+      message: { type: "text", text: "/function-scopes" }
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    const reply = String(replyText.mock.calls[0]?.[1] ?? "");
+    expect(res.statusCode).toBe(200);
+    expect(reply).toContain("profile-global: query_service_schedule, save_schedule_memory");
+    expect(reply).toContain("profile-default: query_service_schedule");
+    expect(reply).toContain("effective: query_service_schedule");
+    expect(reply).not.toContain("effective: query_service_schedule, save_schedule_memory");
+  });
+
   it("keeps group function grants isolated by profile", async () => {
     const config = testConfig();
     config.profiles[0].enabledFunctions = [];

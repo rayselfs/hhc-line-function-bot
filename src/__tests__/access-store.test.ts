@@ -43,4 +43,34 @@ describe("access store", () => {
     ).resolves.toBe(true);
     await expect(store.listGroupFunctionGrants("helper", "C1")).resolves.toEqual([]);
   });
+
+  it("tracks profile-scoped user function grants", async () => {
+    const store = new InMemoryAccessStore();
+
+    await store.addUserFunctionGrant({
+      profileName: "helper",
+      userId: "U1",
+      functionName: "save_schedule_memory",
+      createdBy: "Uadmin"
+    });
+
+    await expect(store.listUserFunctionGrants("helper", "U1")).resolves.toEqual([
+      "save_schedule_memory"
+    ]);
+    await expect(store.listUserFunctionGrants("main", "U1")).resolves.toEqual([]);
+    await expect(store.listUserFunctionGrants("helper", "U2")).resolves.toEqual([]);
+    await expect(store.listAllUserFunctionGrants("helper")).resolves.toMatchObject([
+      { profileName: "helper", userId: "U1", functionName: "save_schedule_memory" }
+    ]);
+
+    await expect(
+      store.disableUserFunctionGrant({
+        profileName: "helper",
+        userId: "U1",
+        functionName: "save_schedule_memory",
+        disabledBy: "Uadmin"
+      })
+    ).resolves.toBe(true);
+    await expect(store.listUserFunctionGrants("helper", "U1")).resolves.toEqual([]);
+  });
 });

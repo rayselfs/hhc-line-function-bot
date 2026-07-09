@@ -32,7 +32,7 @@ import {
   groupEngagementIgnoredReason
 } from "./engagement.js";
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
-import { getFunctionDefinitions } from "./functions/definitions.js";
+import { getFunctionDefinition, getFunctionDefinitions } from "./functions/definitions.js";
 import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-store.js";
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
@@ -150,7 +150,10 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
     entries: [
       { usage: "/function-grant <functionName> [groupId]", description: "開放功能給群組" },
       { usage: "/function-revoke <functionName> [groupId]", description: "移除群組功能開放" },
-      { usage: "/function-scopes [groupId]", description: "查看群組可用功能" }
+      { usage: "/function-scopes [groupId]", description: "查看群組可用功能" },
+      { usage: "/function-user-grant <functionName> <userId>", description: "開放功能給使用者" },
+      { usage: "/function-user-revoke <functionName> <userId>", description: "移除使用者功能開放" },
+      { usage: "/function-user-scopes <userId>", description: "查看使用者可用功能" }
     ]
   },
   {
@@ -685,11 +688,22 @@ async function resolveEffectiveFunctions(
   event: LineEvent,
   accessStore: AccessStore
 ): Promise<FunctionName[]> {
+  const isAdmin = await isAdminUser(profile, event.source.userId, accessStore);
+  const profileFunctions = isAdmin
+    ? profile.enabledFunctions
+    : profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
+  const userGrants = event.source.userId
+    ? await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
+    : [];
   if (event.source.type !== "group" || !event.source.groupId) {
-    return profile.enabledFunctions;
+    return mergeFunctionNames(profileFunctions, userGrants);
   }
   const groupGrants = await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId);
-  return mergeFunctionNames(profile.enabledFunctions, groupGrants);
+  return mergeFunctionNames(mergeFunctionNames(profileFunctions, groupGrants), userGrants);
+}
+
+function isDefaultUserFunctionAvailable(functionName: FunctionName): boolean {
+  return getFunctionDefinition(functionName)?.sideEffectLevel === "read";
 }
 
 async function handlePostbackEvent(
@@ -1673,6 +1687,84 @@ async function handleAdminAccessCommand(
     };
   }
 
+  if (command === "function-user-grant" || command === "function-user-revoke") {
+    const functionName = parseFunctionName(args[0]);
+    const targetUserId = args[1];
+    if (!functionName || !targetUserId) {
+      return {
+        ok: true,
+        replyText: `Usage: /${command} <functionName> <userId>\n可用功能：${formatFunctionNames()}`
+      };
+    }
+    if (command === "function-user-grant") {
+      await accessStore.addUserFunctionGrant({
+        profileName: profile.name,
+        userId: targetUserId,
+        functionName,
+        createdBy: actorUserId
+      });
+      await accessStore.recordAudit({
+        profileName: profile.name,
+        actorUserId,
+        action: "access.function.user.grant",
+        targetType: "user",
+        targetId: targetUserId,
+        metadata: { functionName }
+      });
+      return {
+        ok: true,
+        replyText: `已開放 ${functionName} 給 user ${targetUserId}`
+      };
+    }
+
+    const revoked = await accessStore.disableUserFunctionGrant({
+      profileName: profile.name,
+      userId: targetUserId,
+      functionName,
+      disabledBy: actorUserId
+    });
+    if (revoked) {
+      await accessStore.recordAudit({
+        profileName: profile.name,
+        actorUserId,
+        action: "access.function.user.revoke",
+        targetType: "user",
+        targetId: targetUserId,
+        metadata: { functionName }
+      });
+    }
+    return {
+      ok: true,
+      replyText: revoked
+        ? `已移除 user ${targetUserId} 的 ${functionName}`
+        : "找不到使用者功能開放紀錄"
+    };
+  }
+
+  if (command === "function-user-scopes") {
+    const targetUserId = args[0];
+    if (!targetUserId) {
+      return { ok: true, replyText: "Usage: /function-user-scopes <userId>" };
+    }
+    const userGrants = await accessStore.listUserFunctionGrants(profile.name, targetUserId);
+    const isAdminTarget = await isAdminUser(profile, targetUserId, accessStore);
+    const profileDefaults = isAdminTarget
+      ? profile.enabledFunctions
+      : profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
+    const effectiveFunctions = mergeFunctionNames(profileDefaults, userGrants);
+    return {
+      ok: true,
+      replyText: [
+        "User function scopes",
+        `profile: ${profile.name}`,
+        `user: ${targetUserId}`,
+        `profile-default: ${profileDefaults.join(", ") || "(none)"}`,
+        `user-grants: ${userGrants.join(", ") || "(none)"}`,
+        `effective: ${effectiveFunctions.join(", ") || "(none)"}`
+      ].join("\n")
+    };
+  }
+
   if (command === "function-scopes") {
     const targetGroupId =
       args[0] ?? (event.source.type === "group" ? event.source.groupId : undefined);
@@ -1680,7 +1772,8 @@ async function handleAdminAccessCommand(
       return { ok: true, replyText: "Usage: /function-scopes <groupId>" };
     }
     const groupGrants = await accessStore.listGroupFunctionGrants(profile.name, targetGroupId);
-    const effectiveFunctions = mergeFunctionNames(profile.enabledFunctions, groupGrants);
+    const profileDefaults = profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
+    const effectiveFunctions = mergeFunctionNames(profileDefaults, groupGrants);
     return {
       ok: true,
       replyText: [
@@ -1688,6 +1781,7 @@ async function handleAdminAccessCommand(
         `profile: ${profile.name}`,
         `group: ${targetGroupId}`,
         `profile-global: ${profile.enabledFunctions.join(", ") || "(none)"}`,
+        `profile-default: ${profileDefaults.join(", ") || "(none)"}`,
         `group-grants: ${groupGrants.join(", ") || "(none)"}`,
         `effective: ${effectiveFunctions.join(", ") || "(none)"}`
       ].join("\n")

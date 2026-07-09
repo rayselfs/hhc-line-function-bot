@@ -33,10 +33,23 @@ const userFunctionActions: ActionDefinition<FunctionName>[] = getFunctionDefinit
   kind: "user_function",
   auth: "registered",
   sourcePolicy: "direct_or_group",
-  sideEffect: "read_only",
+  sideEffect: actionSideEffectForFunction(definition.sideEffectLevel),
   naturalLanguage: true,
   description: definition.description
 }));
+
+function actionSideEffectForFunction(sideEffectLevel: string): ActionSideEffect {
+  switch (sideEffectLevel) {
+    case "read":
+      return "read_only";
+    case "destructive":
+      return "destructive";
+    case "write":
+    case "admin":
+    default:
+      return "state_change";
+  }
+}
 
 const systemActions: ActionDefinition<SystemActionName>[] = [...SYSTEM_ACTION_NAMES].map(
   (name) => ({
@@ -121,7 +134,7 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
     groupNaturalLanguage: true,
     auditAction: "access.function.grant",
     description:
-      "Grant a function to a group. Arguments: functionName; optional groupId. In a group, missing groupId means the current group.",
+      "Grant a function to a group or user. Arguments: functionName; optional targetType ('group' or 'user'), groupId, userId. In a group, missing groupId means the current group.",
     naturalLanguageHints: [
       "enable function",
       "grant function",
@@ -143,7 +156,7 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
     groupNaturalLanguage: true,
     auditAction: "access.function.revoke",
     description:
-      "Revoke a group-specific function grant. Arguments: functionName; optional groupId. In a group, missing groupId means the current group.",
+      "Revoke a group- or user-specific function grant. Arguments: functionName; optional targetType ('group' or 'user'), groupId, userId. In a group, missing groupId means the current group.",
     naturalLanguageHints: [
       "disable function",
       "revoke function",
@@ -164,7 +177,7 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
     naturalLanguage: true,
     groupNaturalLanguage: true,
     description:
-      "Show profile-global, group-granted, and effective functions for a group. Arguments: optional groupId. In a group, missing groupId means the current group.",
+      "Show profile-global, group-granted/user-granted, and effective functions for a group or user. Arguments: optional targetType ('group' or 'user'), groupId, userId. In a group, missing groupId means the current group.",
     naturalLanguageHints: [
       "function scopes",
       "enabled functions",

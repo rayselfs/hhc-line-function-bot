@@ -4,8 +4,11 @@ import type {
   AccessAuditInput,
   AccessAuditEvent,
   AddGroupFunctionGrantInput,
+  AddUserFunctionGrantInput,
   DisableGroupFunctionGrantInput,
+  DisableUserFunctionGrantInput,
   GroupFunctionGrant,
+  UserFunctionGrant,
   AccessPrincipal,
   AccessPrincipalType,
   AccessStore,
@@ -194,6 +197,68 @@ export class PostgresAccessStore implements AccessStore {
     );
     return result.rows.length > 0;
   }
+
+  async listUserFunctionGrants(profileName: string, userId: string): Promise<FunctionName[]> {
+    const result = await this.db.query(
+      `
+      select function_name
+      from access_user_function_grants
+      where profile_name = $1
+        and user_id = $2
+        and disabled_at is null
+      order by function_name
+      `,
+      [profileName, userId]
+    );
+    return result.rows.map((row) => row.function_name as FunctionName);
+  }
+
+  async listAllUserFunctionGrants(profileName: string): Promise<UserFunctionGrant[]> {
+    const result = await this.db.query(
+      `
+      select *
+      from access_user_function_grants
+      where profile_name = $1
+        and disabled_at is null
+      order by user_id, function_name
+      `,
+      [profileName]
+    );
+    return result.rows.map(mapUserFunctionGrant);
+  }
+
+  async addUserFunctionGrant(input: AddUserFunctionGrantInput): Promise<UserFunctionGrant> {
+    const result = await this.db.query(
+      `
+      insert into access_user_function_grants
+        (id, profile_name, user_id, function_name, created_by)
+      values ($1, $2, $3, $4, $5)
+      on conflict (profile_name, user_id, function_name)
+      do update set
+        disabled_at = null,
+        disabled_by = null
+      returning *
+      `,
+      [randomUUID(), input.profileName, input.userId, input.functionName, input.createdBy]
+    );
+    return mapUserFunctionGrant(result.rows[0]);
+  }
+
+  async disableUserFunctionGrant(input: DisableUserFunctionGrantInput): Promise<boolean> {
+    const result = await this.db.query(
+      `
+      update access_user_function_grants
+      set disabled_at = now(), disabled_by = $4
+      where profile_name = $1
+        and user_id = $2
+        and function_name = $3
+        and disabled_at is null
+      returning id
+      `,
+      [input.profileName, input.userId, input.functionName, input.disabledBy]
+    );
+    return result.rows.length > 0;
+  }
 }
 
 function mapPrincipal(row: Record<string, unknown>): AccessPrincipal {
@@ -228,6 +293,19 @@ function mapGroupFunctionGrant(row: Record<string, unknown>): GroupFunctionGrant
     id: String(row.id),
     profileName: String(row.profile_name),
     groupId: String(row.group_id),
+    functionName: row.function_name as FunctionName,
+    createdAt: toIso(row.created_at),
+    createdBy: String(row.created_by),
+    disabledAt: optionalIso(row.disabled_at),
+    disabledBy: optionalString(row.disabled_by)
+  };
+}
+
+function mapUserFunctionGrant(row: Record<string, unknown>): UserFunctionGrant {
+  return {
+    id: String(row.id),
+    profileName: String(row.profile_name),
+    userId: String(row.user_id),
     functionName: row.function_name as FunctionName,
     createdAt: toIso(row.created_at),
     createdBy: String(row.created_by),

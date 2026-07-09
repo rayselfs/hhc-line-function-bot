@@ -96,7 +96,11 @@ Profiles are independent bot configurations served by one process. In practice:
 - `helper` is invite-based for direct users and groups.
 - future `main` is expected to allow public direct chat but block groups.
 - `enabledFunctions` is profile-global for that profile only.
+- profile-global write functions are admin-only by default; non-admin users need
+  an explicit user or group function grant.
 - group-specific function grants are additive and stored by profile/group.
+- user-specific function grants are additive and stored by profile/user. They
+  apply to direct chat and to that requester inside a registered group.
 - `adminUserId` is the single bootstrap superadmin.
 
 When debugging "why did the bot ignore this?", check:
@@ -189,6 +193,13 @@ saved. Temporary Graph sharing links must not be saved; store drive/item ids and
 regenerate links on demand. External resource memories store user-provided URLs
 and do not verify continued access. LINE attachment download/storage is out of
 scope unless a future plan explicitly adds it.
+
+Successful PPT and sheet-music lookups are the one controlled read-function
+metadata exception: they may store short-lived, scope-local resource metadata for
+recall and aliasing. This does not authorize user-authored saved content. Any
+explicit "remember/save/store" behavior, including external links, text memory,
+or structured schedule memory, remains a write action and must pass the normal
+function permission rules.
 
 When adding resource memory for a function:
 

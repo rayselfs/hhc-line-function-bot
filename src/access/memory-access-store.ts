@@ -4,8 +4,11 @@ import type {
   AccessAuditInput,
   AccessAuditEvent,
   AddGroupFunctionGrantInput,
+  AddUserFunctionGrantInput,
   DisableGroupFunctionGrantInput,
+  DisableUserFunctionGrantInput,
   GroupFunctionGrant,
+  UserFunctionGrant,
   AccessPrincipal,
   AccessPrincipalType,
   AccessStore,
@@ -16,11 +19,13 @@ import type {
 export interface InMemoryAccessStoreOptions {
   principals?: AccessPrincipal[];
   groupFunctionGrants?: GroupFunctionGrant[];
+  userFunctionGrants?: UserFunctionGrant[];
 }
 
 export class InMemoryAccessStore implements AccessStore {
   private readonly principals = new Map<string, AccessPrincipal>();
   private readonly groupFunctionGrants = new Map<string, GroupFunctionGrant>();
+  private readonly userFunctionGrants = new Map<string, UserFunctionGrant>();
   readonly audit: AccessAuditEvent[] = [];
 
   constructor(options: InMemoryAccessStoreOptions = {}) {
@@ -29,6 +34,9 @@ export class InMemoryAccessStore implements AccessStore {
     }
     for (const grant of options.groupFunctionGrants ?? []) {
       this.groupFunctionGrants.set(grant.id, { ...grant });
+    }
+    for (const grant of options.userFunctionGrants ?? []) {
+      this.userFunctionGrants.set(grant.id, { ...grant });
     }
   }
 
@@ -183,6 +191,72 @@ export class InMemoryAccessStore implements AccessStore {
       return false;
     }
     this.groupFunctionGrants.set(existing.id, {
+      ...existing,
+      disabledAt: new Date().toISOString(),
+      disabledBy: input.disabledBy
+    });
+    return true;
+  }
+
+  async listUserFunctionGrants(profileName: string, userId: string) {
+    return Array.from(this.userFunctionGrants.values())
+      .filter(
+        (grant) => grant.profileName === profileName && grant.userId === userId && !grant.disabledAt
+      )
+      .map((grant) => grant.functionName)
+      .sort();
+  }
+
+  async listAllUserFunctionGrants(profileName: string): Promise<UserFunctionGrant[]> {
+    return Array.from(this.userFunctionGrants.values())
+      .filter((grant) => grant.profileName === profileName && !grant.disabledAt)
+      .sort(
+        (a, b) => a.userId.localeCompare(b.userId) || a.functionName.localeCompare(b.functionName)
+      )
+      .map((grant) => ({ ...grant }));
+  }
+
+  async addUserFunctionGrant(input: AddUserFunctionGrantInput): Promise<UserFunctionGrant> {
+    const existing = Array.from(this.userFunctionGrants.values()).find(
+      (grant) =>
+        grant.profileName === input.profileName &&
+        grant.userId === input.userId &&
+        grant.functionName === input.functionName
+    );
+    if (existing) {
+      const enabled: UserFunctionGrant = {
+        ...existing,
+        disabledAt: undefined,
+        disabledBy: undefined
+      };
+      this.userFunctionGrants.set(existing.id, enabled);
+      return { ...enabled };
+    }
+
+    const grant: UserFunctionGrant = {
+      id: randomUUID(),
+      profileName: input.profileName,
+      userId: input.userId,
+      functionName: input.functionName,
+      createdAt: new Date().toISOString(),
+      createdBy: input.createdBy
+    };
+    this.userFunctionGrants.set(grant.id, grant);
+    return { ...grant };
+  }
+
+  async disableUserFunctionGrant(input: DisableUserFunctionGrantInput): Promise<boolean> {
+    const existing = Array.from(this.userFunctionGrants.values()).find(
+      (grant) =>
+        grant.profileName === input.profileName &&
+        grant.userId === input.userId &&
+        grant.functionName === input.functionName &&
+        !grant.disabledAt
+    );
+    if (!existing) {
+      return false;
+    }
+    this.userFunctionGrants.set(existing.id, {
       ...existing,
       disabledAt: new Date().toISOString(),
       disabledBy: input.disabledBy
