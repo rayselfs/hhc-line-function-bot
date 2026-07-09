@@ -4,8 +4,9 @@ import { z } from "zod";
 
 import { assertCanonicalWebhookPath } from "./profile-path.js";
 import { readTimeZone } from "./time-zone.js";
-import { FUNCTION_NAMES } from "./types.js";
-import type { AppConfig, FunctionName } from "./types.js";
+import { providerCapabilities } from "./llm/provider-metadata.js";
+import { FUNCTION_NAMES, MODEL_PROVIDER_NAMES } from "./types.js";
+import type { AppConfig, FunctionName, ModelProviderName } from "./types.js";
 
 const profileSchema = z.object({
   name: z
@@ -39,7 +40,9 @@ const profileSchema = z.object({
       maxChars: z.number().int().min(20).max(120).default(80)
     })
     .default({ mode: "template", maxChars: 80 }),
-  llmProvider: z.enum(["ollama", "codex_app_server"]).optional(),
+  llmProvider: z.enum(MODEL_PROVIDER_NAMES).optional(),
+  allowedProviders: z.array(z.enum(MODEL_PROVIDER_NAMES)).optional(),
+  allowSubscriptionProviders: z.boolean().default(false),
   generalAgent: z
     .object({
       enabled: z.boolean().default(false),
@@ -72,7 +75,10 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   );
   assertCompleteGroup(env, graphRequiredKeys, "Incomplete Graph configuration");
   assertCompleteGroup(env, notionRequiredKeys, "Incomplete Notion configuration");
+  const llmProvider = readModelProvider(env.LLM_PROVIDER, "ollama");
+  const llmFallbackProvider = readModelProvider(env.LLM_FALLBACK_PROVIDER, "ollama");
   const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile));
+  validateProviderPolicy(normalizedProfiles, llmProvider, llmFallbackProvider);
   validateAccessConfig(normalizedProfiles, env);
 
   return {
@@ -88,14 +94,15 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       enabledFunctions: profile.enabledFunctions as FunctionName[]
     })),
     llm: {
-      provider: readModelProvider(env.LLM_PROVIDER, "ollama"),
-      fallbackProvider: readModelProvider(env.LLM_FALLBACK_PROVIDER, "ollama"),
+      provider: llmProvider,
+      fallbackProvider: llmFallbackProvider,
       ollamaBaseUrl: env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
       ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
       ollamaKeepAlive: readOllamaKeepAlive(env.OLLAMA_KEEP_ALIVE),
       codexAppServerCommand: env.CODEX_APP_SERVER_COMMAND || "codex",
       codexAppServerArgs: readList(env.CODEX_APP_SERVER_ARGS || "app-server,--listen,stdio://"),
       codexHome: env.CODEX_HOME || undefined,
+      providerAuthHome: env.PROVIDER_AUTH_HOME || undefined,
       codexModel: env.CODEX_MODEL || "gpt-5.1-codex",
       codexModelProvider: env.CODEX_MODEL_PROVIDER || "openai",
       contextWindowTokens: readInt(env.LLM_CONTEXT_WINDOW_TOKENS, 128_000),
@@ -181,14 +188,61 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
 }
 
 type ParsedProfile = z.infer<typeof profileSchema>;
+type NormalizedProfile = ParsedProfile & {
+  allowedProviders: ModelProviderName[];
+  allowSubscriptionProviders: boolean;
+};
 
-function normalizeProfile(profile: ParsedProfile): ParsedProfile {
+function normalizeProfile(profile: ParsedProfile): NormalizedProfile {
+  const allowedProviders = uniqueProviders(profile.allowedProviders ?? ["ollama"]);
   return {
     ...profile,
+    allowedProviders,
     directAccessPolicy:
       profile.directAccessPolicy ?? (profile.allowDirectUser ? "managed" : "blocked"),
     groupAccessPolicy: profile.groupAccessPolicy ?? "blocked"
   };
+}
+
+function uniqueProviders(providers: ModelProviderName[]): ModelProviderName[] {
+  const seen = new Set<string>();
+  return providers.filter((provider) => {
+    if (seen.has(provider)) {
+      return false;
+    }
+    seen.add(provider);
+    return true;
+  });
+}
+
+function validateProviderPolicy(
+  profiles: NormalizedProfile[],
+  defaultProvider: ModelProviderName,
+  fallbackProvider: ModelProviderName
+): void {
+  for (const profile of profiles) {
+    for (const provider of profile.allowedProviders) {
+      if (providerCapabilities[provider].subscriptionBased && !profile.allowSubscriptionProviders) {
+        throw new Error(`Profile ${profile.name} cannot allow subscription provider ${provider}`);
+      }
+    }
+    if (profile.llmProvider && !profile.allowedProviders.includes(profile.llmProvider)) {
+      throw new Error(
+        `Profile ${profile.name} llmProvider ${profile.llmProvider} must be listed in allowedProviders`
+      );
+    }
+    const effectiveProvider = profile.llmProvider ?? defaultProvider;
+    if (!profile.allowedProviders.includes(effectiveProvider)) {
+      throw new Error(
+        `Profile ${profile.name} effective provider ${effectiveProvider} must be listed in allowedProviders`
+      );
+    }
+    if (!profile.allowedProviders.includes(fallbackProvider)) {
+      throw new Error(
+        `Profile ${profile.name} fallback provider ${fallbackProvider} must be listed in allowedProviders`
+      );
+    }
+  }
 }
 
 function assertNoLegacyProfileFields(parsedProfiles: unknown): void {

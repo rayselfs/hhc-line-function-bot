@@ -42,6 +42,10 @@ properties:
             value: /healthz
           - name: READY_PATH
             value: /readyz
+          - name: CODEX_HOME
+            value: /mnt/codex-home
+          - name: PROVIDER_AUTH_HOME
+            value: /mnt/provider-auth
           - name: BOT_PROFILES_BASE64_JSON
             secretRef: bot-profiles-base64-json
           - name: OLLAMA_BASE_URL
@@ -98,6 +102,11 @@ properties:
             value: Role
           - name: NOTION_PERSON_PROPERTY
             value: Person
+        volumeMounts:
+          - volumeName: codex-home
+            mountPath: /mnt/codex-home
+          - volumeName: provider-auth
+            mountPath: /mnt/provider-auth
         probes:
           - type: Liveness
             httpGet:
@@ -111,3 +120,10 @@ properties:
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
+    volumes:
+      - name: codex-home
+        storageType: AzureFile
+        storageName: codex-home
+      - name: provider-auth
+        storageType: AzureFile
+        storageName: provider-auth

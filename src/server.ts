@@ -37,6 +37,7 @@ import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-s
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
+import { allowedProvidersForProfile, providerIsAllowedForProfile } from "./llm/provider-runtime.js";
 import { messages } from "./messages.js";
 import { sanitizeActionTelemetryEvent } from "./observability/action-telemetry.js";
 import { resolveRequesterDisplayName } from "./requester-personalization.js";
@@ -66,6 +67,7 @@ import type {
   AdminActionRouterPort,
   LineIdentityClient,
   LineEvent,
+  ModelProviderName,
   LineReplyClient,
   LineWebhookPayload,
   FunctionName,
@@ -1433,6 +1435,12 @@ async function handleLlmLoginCommand(
     return { ok: true, replyText: "請在 1 對 1 對話中使用 LLM 登入指令。" };
   }
   const provider = resolveProviderArg(providerArg, profile, config);
+  if (!provider) {
+    return { ok: true, replyText: `不支援的 LLM provider：${providerArg ?? "(empty)"}` };
+  }
+  if (!providerIsAllowedForProfile(profile, provider)) {
+    return { ok: true, replyText: `provider is not allowed for this profile: ${provider}` };
+  }
   if (provider === "ollama") {
     return { ok: true, replyText: "Ollama 不需要登入。" };
   }
@@ -1465,6 +1473,12 @@ async function handleLlmLogoutCommand(
     return { ok: true, replyText: "請在 1 對 1 對話中使用 LLM 登出指令。" };
   }
   const provider = resolveProviderArg(providerArg, profile, config);
+  if (!provider) {
+    return { ok: true, replyText: `不支援的 LLM provider：${providerArg ?? "(empty)"}` };
+  }
+  if (!providerIsAllowedForProfile(profile, provider)) {
+    return { ok: true, replyText: `provider is not allowed for this profile: ${provider}` };
+  }
   return {
     ok: true,
     replyText:
@@ -1488,18 +1502,26 @@ async function handleLlmUseCommand(
     return { ok: true, replyText: "請在 1 對 1 對話中使用 LLM provider 指令。" };
   }
   if (!providerArg) {
+    const active = resolveProviderArg(undefined, profile, config);
+    const available = allowedProvidersForProfile(profile).join(", ") || "(none)";
     return {
       ok: true,
       replyText: [
         "LLM provider",
         `profile: ${profile.name}`,
-        `active: ${resolveProviderArg(undefined, profile, config)}`,
-        "available: codex_app_server, ollama",
+        `active: ${active ?? "(none)"}`,
+        `available: ${available}`,
         "目前 provider 由 profile/env 設定；LINE 指令先提供查詢與驗證，不做持久化切換。"
       ].join("\n")
     };
   }
   const provider = resolveProviderArg(providerArg, profile, config);
+  if (!provider) {
+    return { ok: true, replyText: `不支援的 LLM provider：${providerArg}` };
+  }
+  if (!providerIsAllowedForProfile(profile, provider)) {
+    return { ok: true, replyText: `provider is not allowed for this profile: ${provider}` };
+  }
   return {
     ok: true,
     replyText: `Provider ${provider} 可用；請透過 profile/env 設定切換後重新部署。`
@@ -1510,12 +1532,15 @@ function resolveProviderArg(
   value: string | undefined,
   profile: BotProfileConfig,
   config: AppConfig
-) {
+): ModelProviderName | undefined {
   if (value === "codex" || value === "codex_app_server") {
     return "codex_app_server";
   }
   if (value === "ollama") {
     return "ollama";
+  }
+  if (value) {
+    return undefined;
   }
   return profile.llmProvider ?? config.llm.provider ?? "ollama";
 }

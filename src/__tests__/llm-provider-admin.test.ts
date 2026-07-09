@@ -31,7 +31,9 @@ function config(): AppConfig {
         adminDirectOnly: true,
         directAccessPolicy: "managed",
         groupAccessPolicy: "managed",
-        llmProvider: "codex_app_server"
+        llmProvider: "codex_app_server",
+        allowedProviders: ["ollama", "codex_app_server"],
+        allowSubscriptionProviders: true
       }
     ],
     llm: {
@@ -45,6 +47,23 @@ function config(): AppConfig {
       timeoutMs: 8000,
       keywordFallbackEnabled: true
     }
+  };
+}
+
+function mainConfig(): AppConfig {
+  const value = config();
+  return {
+    ...value,
+    profiles: [
+      {
+        ...value.profiles[0],
+        name: "main",
+        webhookPath: "/api/line/webhook/main",
+        llmProvider: "ollama",
+        allowedProviders: ["ollama"],
+        allowSubscriptionProviders: false
+      }
+    ]
   };
 }
 
@@ -135,6 +154,74 @@ describe("LLM provider admin commands", () => {
 
     expect(res.statusCode).toBe(200);
     expect(replyText.mock.calls[0]?.[1]).toContain("active: codex_app_server");
-    expect(replyText.mock.calls[0]?.[1]).toContain("available: codex_app_server, ollama");
+    expect(replyText.mock.calls[0]?.[1]).toContain("available: ollama, codex_app_server");
+  });
+
+  it("lists only providers allowed by the current profile", async () => {
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(mainConfig(), {
+      router: { route: vi.fn() },
+      accessStore: new InMemoryAccessStore(),
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = JSON.stringify({
+      destination: "bot",
+      events: [
+        {
+          type: "message",
+          replyToken: "reply-token",
+          source: { type: "user", userId: "Uroot" },
+          message: { type: "text", text: "/llm-use" }
+        }
+      ]
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: {
+        "content-type": "application/json",
+        "x-line-signature": signLineBody(Buffer.from(body), "helper-secret")
+      },
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("available: ollama");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("codex_app_server");
+  });
+
+  it("blocks subscription provider login when the current profile disallows it", async () => {
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(mainConfig(), {
+      router: { route: vi.fn() },
+      accessStore: new InMemoryAccessStore(),
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = JSON.stringify({
+      destination: "bot",
+      events: [
+        {
+          type: "message",
+          replyToken: "reply-token",
+          source: { type: "user", userId: "Uroot" },
+          message: { type: "text", text: "/llm-login codex" }
+        }
+      ]
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: {
+        "content-type": "application/json",
+        "x-line-signature": signLineBody(Buffer.from(body), "helper-secret")
+      },
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(replyText.mock.calls[0]?.[1]).toContain("provider is not allowed for this profile");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("CODEX_HOME");
   });
 });

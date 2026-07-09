@@ -4,6 +4,7 @@ import {
   isTerminalTurnNotification,
   type RpcNotification
 } from "./client.js";
+import { providerCapabilities } from "../llm/provider-metadata.js";
 import { ProviderResponseError } from "../router.js";
 import type { ChatProvider, LlmConfig, TextGenerationProvider } from "../types.js";
 
@@ -22,6 +23,7 @@ export function createCodexAppServerProvider(
 
 class CodexAppServerProvider implements ChatProvider, TextGenerationProvider {
   readonly providerName = "codex_app_server" as const;
+  readonly capabilities = providerCapabilities.codex_app_server;
 
   constructor(private readonly options: CodexAppServerProviderOptions) {}
 

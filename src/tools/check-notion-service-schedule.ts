@@ -193,7 +193,9 @@ function handlerContext(): FunctionHandlerContext {
     groupRequireWakeWord: false,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["query_service_schedule"]
+    enabledFunctions: ["query_service_schedule"],
+    allowedProviders: ["ollama"],
+    allowSubscriptionProviders: false
   };
 
   return {

@@ -16,6 +16,9 @@ The service is local-first for routing:
 - Ollama is the default natural-language router.
 - `codex_app_server` is an optional smarter provider that runs the Codex
   app-server over stdio using account state from `CODEX_HOME`.
+- Provider runtimes may reason and generate text, but this bot owns authority:
+  profile policy, function toggles, tool execution, memory writes, and deny or
+  clarify flows remain server-side.
 - The line bot does not own browser OAuth callbacks or stored LLM tokens.
   Provider login must be completed outside the webhook flow in the deployment
   environment or a mounted account volume.
@@ -67,6 +70,8 @@ For Codex app-server operations, the bootstrap superadmin sends `/llm-login
 codex`, `/llm-logout codex`, `/llm-use`, or `/llm-status` in direct chat.
 These commands report provider state and deployment guidance only; they never
 return browser OAuth URLs or handle callback codes through LINE.
+Profile provider policy decides which providers may be used. Subscription
+providers are intended for the internal `helper` profile only.
 
 ## Action Types
 

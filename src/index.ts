@@ -17,6 +17,7 @@ import { createPostgresRuntime } from "./db/postgres.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createInFlightStore } from "./in-flight/create-in-flight-store.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
+import { createProfileAwareProvider } from "./llm/provider-runtime.js";
 import { createLastErrorStore } from "./observability/create-last-error-store.js";
 import { createConsoleRouteObserver } from "./observability/route-observer.js";
 import { createRateLimiter } from "./rate-limit.js";
@@ -25,7 +26,6 @@ import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
 import { createSessionStore } from "./state/create-session-store.js";
 import { PostgresWebAllowlistStore, runWebAllowlistMigrations } from "./web/allowlist.js";
-import type { ChatProvider, TextGenerationProvider } from "./types.js";
 
 const config = loadConfigFromEnv(process.env);
 
@@ -38,16 +38,21 @@ const ollama = createOllamaProvider({
   timeoutMs: config.llm.timeoutMs,
   keepAlive: config.llm.ollamaKeepAlive
 });
-const primary = await createPrimaryProvider();
+const providers = {
+  ollama,
+  codex_app_server: createCodexAppServerProvider({ config: config.llm })
+};
+const primary = createProfileAwareProvider({ config, providers, role: "primary" });
+const modelFallback = createProfileAwareProvider({ config, providers, role: "fallback" });
 const router = createFunctionRouter({
   primary,
-  modelFallback: primary.providerName === "codex_app_server" ? ollama : undefined,
+  modelFallback,
   keywordFallback: createKeywordFallbackRouter(),
   keywordFallbackEnabled: config.llm.keywordFallbackEnabled
 });
 const adminActionRouter = createAdminActionRouter({
   primary,
-  modelFallback: primary.providerName === "codex_app_server" ? ollama : undefined
+  modelFallback
 });
 const accessStore = await createAccessStore({ db: postgres?.pool });
 const memoryStore = await createAgentMemoryStore({ db: postgres?.pool });
@@ -112,13 +117,6 @@ const app = createApp(config, {
 });
 
 await app.listen({ host: config.host, port: config.port });
-
-async function createPrimaryProvider(): Promise<ChatProvider & TextGenerationProvider> {
-  if (config.llm.provider === "codex_app_server") {
-    return createCodexAppServerProvider({ config: config.llm });
-  }
-  return ollama;
-}
 
 async function createPostgresWebAllowlistStore(): Promise<PostgresWebAllowlistStore> {
   if (!postgres?.pool) {

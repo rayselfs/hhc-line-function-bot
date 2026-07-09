@@ -41,10 +41,10 @@ export async function createControlledSmallTalkReply(
   }
 
   try {
+    const providerName =
+      input.generator.providerNameForProfile?.(input.profile.name) ?? input.generator.providerName;
     const maxChars =
-      input.generator.providerName === "codex_app_server"
-        ? Math.max(config.maxChars, 320)
-        : config.maxChars;
+      providerName === "codex_app_server" ? Math.max(config.maxChars, 320) : config.maxChars;
     const reply = sanitizeGeneratedReply(
       await input.generator.completeText({
         prompt: buildSmallTalkPrompt(input.category, maxChars),

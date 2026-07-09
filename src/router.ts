@@ -46,18 +46,18 @@ class FunctionRouter implements FunctionRouterPort {
   async route(input: RouteInput): Promise<RouteResult> {
     const prompt = buildRouterPrompt(input.enabledFunctions, input.runtimeContext);
     let fallbackReason: string | undefined;
-    let keywordFallbackProvider = this.primaryProviderName();
+    let keywordFallbackProvider = this.primaryProviderName(input.profileName);
 
     try {
       return parseProviderDecision(
-        this.primaryProviderName(),
+        this.primaryProviderName(input.profileName),
         await this.options.primary.completeJson({ ...input, prompt }),
         input
       );
     } catch (error) {
       fallbackReason = providerErrorReason(error);
       if (this.shouldFallback(error) && this.options.modelFallback) {
-        const modelFallbackProvider = this.modelFallbackProviderName();
+        const modelFallbackProvider = this.modelFallbackProviderName(input.profileName);
         try {
           return withFallbackDiagnostics(
             parseProviderDecision(
@@ -65,7 +65,7 @@ class FunctionRouter implements FunctionRouterPort {
               await this.options.modelFallback.completeJson({ ...input, prompt }),
               input
             ),
-            this.primaryProviderName(),
+            this.primaryProviderName(input.profileName),
             fallbackReason
           );
         } catch (fallbackError) {
@@ -78,7 +78,7 @@ class FunctionRouter implements FunctionRouterPort {
           type: "deny",
           reason: "router_failed",
           provider: "router",
-          fallbackProvider: this.primaryProviderName(),
+          fallbackProvider: this.primaryProviderName(input.profileName),
           fallbackReason
         };
       }
@@ -89,7 +89,7 @@ class FunctionRouter implements FunctionRouterPort {
         type: "deny",
         reason: "keyword_fallback_not_configured",
         provider: "router",
-        fallbackProvider: this.primaryProviderName(),
+        fallbackProvider: this.primaryProviderName(input.profileName),
         fallbackReason
       };
     }
@@ -108,11 +108,17 @@ class FunctionRouter implements FunctionRouterPort {
     return error instanceof ProviderResponseError;
   }
 
-  private primaryProviderName(): ModelProviderName {
+  private primaryProviderName(profileName?: string): ModelProviderName {
+    if (profileName && this.options.primary.providerNameForProfile) {
+      return this.options.primary.providerNameForProfile(profileName);
+    }
     return this.options.primary.providerName ?? "ollama";
   }
 
-  private modelFallbackProviderName(): ModelProviderName {
+  private modelFallbackProviderName(profileName?: string): ModelProviderName {
+    if (profileName && this.options.modelFallback?.providerNameForProfile) {
+      return this.options.modelFallback.providerNameForProfile(profileName);
+    }
     return this.options.modelFallback?.providerName ?? "ollama";
   }
 }

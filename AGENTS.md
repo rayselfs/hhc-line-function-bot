@@ -6,7 +6,7 @@
 - The bot is a restricted church helper, not an open-ended chat bot.
 - It should feel smart inside explicitly enabled functions, but deny or clarify requests outside those functions.
 - Runtime behavior is controlled by bot profiles, function toggles, access control, and state stores.
-- LLM routing defaults to Ollama, with optional `openai_codex_oauth` provider support through encrypted PostgreSQL auth profiles.
+- LLM routing defaults to Ollama, with optional `codex_app_server` support through mounted `CODEX_HOME` account state.
 - Group follow-up context is requester-scoped and short-lived; never feed raw whole-group chat into the model.
 - Slow tasks may be stored as long-running jobs and returned through a LINE postback button; do not use LINE push quota for those results.
 - Public `/healthz` is minimal liveness. Public `/readyz` checks only Postgres and Redis.
@@ -34,7 +34,8 @@ Read these first when starting work:
   - future `main`: public direct users, groups blocked, registration disabled.
 - Access registration is profile-scoped. Do not make user/group registration global unless the user explicitly asks.
 - `adminUserId` is the single bootstrap superadmin. Legacy `adminUserIds`, `allowedUserIds`, and `allowedGroupIds` should not be reintroduced.
-- OAuth browser login endpoints are service-level paths, not profile webhook paths: `/api/line/llm-auth/openai-codex/start` and `/api/line/llm-auth/openai-codex/callback`.
+- The LINE bot must not expose provider OAuth callback routes. Do not add `/api/line/llm-auth/*`.
+- Subscription providers such as `codex_app_server` are internal-helper only; future `main` official profiles must not enable them.
 
 ## Function Surface
 
@@ -139,11 +140,13 @@ When adding or changing an admin action:
 - `REDIS_URL` moves sessions, cache, recent errors, rate-limit state, and registration invite codes to Redis.
 - `REDIS_URL` also moves destructive-action confirmation codes to Redis.
 - `REDIS_URL` also moves requester-scoped conversation windows and long-running job results to Redis.
-- `REDIS_URL` also stores one-time LLM OAuth login states created by `/llm-login`.
+- `/llm-login` must not create one-time provider OAuth states; provider account state belongs in mounted provider auth storage.
 - Redis rate limiting must use atomic counters, not read-modify-write JSON buckets.
 - PostgreSQL backs managed access principals and audit events when registration is enabled.
 - PostgreSQL backs agent memory when configured. The app creates access and agent memory tables on startup.
-- PostgreSQL backs encrypted `llm_auth_profiles` for `openai_codex_oauth`; `/llm-login` should require Redis, Postgres, and `LLM_AUTH_ENCRYPTION_KEY`.
+- PostgreSQL must not store subscription access tokens or refresh tokens. Use it only for policy, registry, audit, allowlist, and memory metadata.
+- Codex account state belongs under `CODEX_HOME`, normally mounted at `/mnt/codex-home`.
+- Future subscription provider account state belongs under `PROVIDER_AUTH_HOME`, normally mounted at `/mnt/provider-auth`.
 - Agent memory must not store temporary sharing links. Store Graph drive/item metadata and regenerate short-lived links on demand.
 - External resource memories may store user-provided URLs, but only when the user explicitly asks the bot to remember/save/store that resource.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.

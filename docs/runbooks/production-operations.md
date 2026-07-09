@@ -30,6 +30,16 @@ Direct-message admin commands:
 
 If upgrading from the removed direct OAuth provider, review `docs/sql/drop-legacy-llm-auth.sql` before manually dropping the old `llm_auth_profiles` table.
 
+Subscription providers are helper-only. Configure the internal `helper` profile with `allowSubscriptionProviders=true` and explicit `allowedProviders`. Future official `main` profiles should keep `allowSubscriptionProviders=false` and use only non-subscription providers.
+
+## Provider Auth Storage
+
+- Codex app-server account state must live under `CODEX_HOME`, normally `/mnt/codex-home`.
+- Future subscription provider state should live under `PROVIDER_AUTH_HOME`, normally `/mnt/provider-auth`.
+- Store provider tokens in mounted auth storage, not PostgreSQL.
+- On Azure Container Apps, mount dedicated Azure Files shares named `codex-home` and `provider-auth` as ReadWrite volumes.
+- The public API gateway should expose only `/api/line/webhook/{profileName}` for this service; do not expose `/api/line/llm-auth/*`.
+
 ## Registration And Admin Safety
 
 - The bootstrap `adminUserId` is the single superadmin for each profile.

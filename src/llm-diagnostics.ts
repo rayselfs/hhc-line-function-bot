@@ -29,6 +29,7 @@ export function createLlmStatusAdminHandler(
           `command: ${config.codexAppServerCommand ?? "codex"}`,
           `args: ${(config.codexAppServerArgs ?? ["app-server", "--listen", "stdio://"]).join(" ")}`,
           `CODEX_HOME: ${config.codexHome ?? "(container default)"}`,
+          `PROVIDER_AUTH_HOME: ${config.providerAuthHome ?? "(not configured)"}`,
           `model: ${config.codexModel ?? "gpt-5.1-codex"}`,
           `modelProvider: ${config.codexModelProvider ?? "openai"}`,
           `fallback: ${config.fallbackProvider ?? "ollama"}`

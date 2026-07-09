@@ -168,7 +168,9 @@ Function toggles are profile-scoped:
 
 ## Routing
 
-Primary routing uses Ollama unless `LLM_PROVIDER=codex_app_server` is configured. The Codex provider starts the Codex app-server over stdio inside the container and uses the account state available in `CODEX_HOME`. The bot no longer owns browser OAuth callbacks, refresh tokens, or token storage.
+Primary routing uses Ollama unless a profile or environment selects `codex_app_server`. The Codex provider starts the Codex app-server over stdio inside the container and uses the account state available in `CODEX_HOME`. The bot no longer owns browser OAuth callbacks, refresh tokens, or token storage.
+
+Provider access is profile-scoped. Internal helper profiles may set `allowSubscriptionProviders=true` and explicitly list `codex_app_server` in `allowedProviders`. Future official `main` profiles should keep subscription providers disabled.
 
 If the primary provider returns invalid JSON, times out, or is unavailable, routing can fall back to Ollama through `LLM_FALLBACK_PROVIDER=ollama`. Explicit model deny decisions do not fall back.
 
@@ -180,6 +182,7 @@ LLM_FALLBACK_PROVIDER=ollama
 CODEX_APP_SERVER_COMMAND=codex
 CODEX_APP_SERVER_ARGS=app-server,--listen,stdio://
 CODEX_HOME=/mnt/codex-home
+PROVIDER_AUTH_HOME=/mnt/provider-auth
 CODEX_MODEL=gpt-5.1-codex
 CODEX_MODEL_PROVIDER=openai
 LLM_RUNTIME_CONTEXT_BUDGET_TOKENS=2000

@@ -1,4 +1,5 @@
 import { ProviderResponseError } from "../router.js";
+import { providerCapabilities } from "../llm/provider-metadata.js";
 import type {
   ChatProvider,
   ChatProviderRequest,
@@ -20,6 +21,7 @@ export function createOllamaProvider(
 
   return {
     providerName: "ollama",
+    capabilities: providerCapabilities.ollama,
 
     async completeJson(request: ChatProviderRequest): Promise<string> {
       const controller = new AbortController();
