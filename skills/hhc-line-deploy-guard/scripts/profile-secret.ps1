@@ -76,7 +76,7 @@ function Get-ProfilesArray {
 function Show-ProfileSummary {
   param([Parameter(Mandatory = $true)] $Secret)
 
-  $profiles = Get-ProfilesArray $Secret
+  $profiles = @(Get-ProfilesArray $Secret)
   $profiles | ForEach-Object {
     [pscustomobject]@{
       name = $_.name
@@ -276,7 +276,7 @@ function Convert-InlineCredentialsToEnvRefs {
   }
 
   Set-ContainerEnvRefs -EnvRefs ([string[]] $envRefs.ToArray())
-  $json = ConvertTo-Json -InputObject $profiles -Depth 100 -Compress
+  $json = ConvertTo-Json -InputObject (, $profiles) -Depth 100 -Compress
   $check = $json.TrimStart()
   if (-not $check.StartsWith("[")) {
     throw "Internal error: migrated JSON is not an array."
@@ -387,7 +387,7 @@ switch ($Action) {
     }
 
     $profiles = @($secret.Parsed)
-    $json = ConvertTo-Json -InputObject $profiles -Depth 100 -Compress
+    $json = ConvertTo-Json -InputObject (, $profiles) -Depth 100 -Compress
     $check = $json.TrimStart()
     if (-not $check.StartsWith("[")) {
       throw "Internal error: repair JSON is not an array."
