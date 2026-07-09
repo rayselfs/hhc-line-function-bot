@@ -514,12 +514,7 @@ function weekdayFromDateKey(dateKey: string): number {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-function zonedDateTimeToUtc(
-  dateKey: string,
-  hour: number,
-  minute: number,
-  timeZone: string
-): Date {
+function zonedDateTimeToUtc(dateKey: string, hour: number, minute: number, timeZone: string): Date {
   const [year, month, day] = dateKey.split("-").map(Number);
   const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute));
   return new Date(utcGuess.getTime() - timeZoneOffsetMs(utcGuess, timeZone));
