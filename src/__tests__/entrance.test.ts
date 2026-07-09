@@ -2292,6 +2292,93 @@ describe("LINE entrance", () => {
     );
   });
 
+  it("passes natural-language admin route arguments to the registry", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const adminRoute = vi.fn().mockResolvedValue({
+      type: "execute",
+      action: "web_allowlist_add",
+      arguments: { url: "https://example.org/news", label: "Example" },
+      provider: "ollama"
+    });
+    const adminActionRegistry = {
+      execute: vi.fn().mockResolvedValue({ ok: true, replyText: "added" }),
+      confirm: vi.fn()
+    };
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(accessConfig(), {
+      router: { route },
+      adminActionRouter: { route: adminRoute },
+      adminActionRegistry,
+      accessStore: new InMemoryAccessStore(),
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uroot" },
+      message: { type: "text", text: "allow website https://example.org/news" }
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/helper",
+      headers: signedHeaders(body, "helper-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(adminActionRegistry.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "web_allowlist_add",
+        arguments: { url: "https://example.org/news", label: "Example" }
+      })
+    );
+    expect(replyText).toHaveBeenCalledWith("reply-token", "added", undefined);
+  });
+
+  it("lets admins manage current-group function scope through natural language", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].groupRequireWakeWord = false;
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const adminRoute = vi.fn().mockResolvedValue({
+      type: "execute",
+      action: "function_scope_grant",
+      arguments: { functionName: "find_ppt_slides" },
+      provider: "ollama"
+    });
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const accessStore = defaultAccessStore();
+    const app = createTestApp(config, {
+      router: { route },
+      adminActionRouter: { route: adminRoute },
+      accessStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
+      message: { type: "text", text: "撠? enable function find_ppt_slides for this group" }
+    });
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(route).not.toHaveBeenCalled();
+    expect(adminRoute).toHaveBeenCalledOnce();
+    await expect(accessStore.listGroupFunctionGrants("main", "Cmain")).resolves.toEqual([
+      "find_ppt_slides"
+    ]);
+    expect(replyText.mock.calls[0]?.[1]).toContain("find_ppt_slides");
+  });
+
   it("records admin natural-language routes and action results without raw text or invite codes", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const adminRoute = vi.fn().mockResolvedValue({

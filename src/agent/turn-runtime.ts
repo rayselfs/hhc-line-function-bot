@@ -2,6 +2,7 @@ import type { AccessStore } from "../access/types.js";
 import type { AdminActionRegistry } from "../actions/admin-registry.js";
 import {
   enabledNaturalLanguageAdminActionNames,
+  matchesGroupScopedNaturalLanguageAdminActionHint,
   matchesNaturalLanguageAdminActionHint
 } from "../actions/catalog.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
@@ -495,7 +496,10 @@ async function handleNaturalLanguageAdminAction(input: {
   if (!(await isAdminUser(input.profile, input.event.source.userId, input.accessStore))) {
     return undefined;
   }
-  if (input.event.source.type !== "user") {
+  if (
+    input.event.source.type !== "user" &&
+    !matchesGroupScopedNaturalLanguageAdminActionHint(input.text)
+  ) {
     return { ok: true, replyText: "管理操作請到個人對話使用。" };
   }
   if (!input.adminActionRouter || !input.adminActionRegistry) {
@@ -555,7 +559,8 @@ async function handleNaturalLanguageAdminAction(input: {
   const result = await input.adminActionRegistry.execute({
     action: route.action,
     profile: input.profile,
-    event: input.event
+    event: input.event,
+    arguments: route.arguments
   });
   const durationMs = elapsedMs(actionStartedAt);
   input.steps.push({

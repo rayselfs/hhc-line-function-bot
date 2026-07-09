@@ -24,7 +24,14 @@ export const SMALL_TALK_CATEGORIES = [
 
 export type SmallTalkCategory = (typeof SMALL_TALK_CATEGORIES)[number];
 
-export const ADMIN_ACTION_NAMES = ["invite_code_create"] as const;
+export const ADMIN_ACTION_NAMES = [
+  "invite_code_create",
+  "web_allowlist_list",
+  "web_allowlist_add",
+  "function_scope_grant",
+  "function_scope_revoke",
+  "function_scope_list"
+] as const;
 
 export type AdminActionName = (typeof ADMIN_ACTION_NAMES)[number];
 
@@ -32,8 +39,18 @@ export type ActionName = FunctionName | SystemActionName | AdminActionName;
 
 export type JsonRecord = Record<string, unknown>;
 
-export type ModelProviderName = "ollama" | "openai_codex_oauth";
+export const MODEL_PROVIDER_NAMES = ["ollama", "codex_app_server"] as const;
+
+export type ModelProviderName = (typeof MODEL_PROVIDER_NAMES)[number];
 export type RouteProviderName = ModelProviderName | "keyword" | "router";
+
+export interface ProviderCapabilities {
+  structuredOutput: boolean;
+  smartTalk: boolean;
+  largeContext: boolean;
+  requiresExternalAuth: boolean;
+  subscriptionBased: boolean;
+}
 
 export type DirectAccessPolicy = "managed" | "public" | "blocked";
 
@@ -78,6 +95,8 @@ export interface BotProfileConfig {
   registration?: RegistrationConfig;
   smallTalk?: SmallTalkConfig;
   llmProvider?: ModelProviderName;
+  allowedProviders: ModelProviderName[];
+  allowSubscriptionProviders: boolean;
   generalAgent?: GeneralAgentConfig;
   longRunningJobs?: LongRunningJobsConfig;
 }
@@ -88,15 +107,12 @@ export interface LlmConfig {
   ollamaBaseUrl: string;
   ollamaModel: string;
   ollamaKeepAlive?: string | number;
-  openaiCodexBaseUrl?: string;
-  openaiCodexModel?: string;
-  openaiCodexAuthProfile?: string;
-  openaiCodexOAuthAuthorizeUrl?: string;
-  openaiCodexOAuthTokenUrl?: string;
-  openaiCodexOAuthClientId?: string;
-  publicBaseUrl?: string;
-  authLoginStateTtlMinutes?: number;
-  authEncryptionKey?: string;
+  codexAppServerCommand?: string;
+  codexAppServerArgs?: string[];
+  codexHome?: string;
+  providerAuthHome?: string;
+  codexModel?: string;
+  codexModelProvider?: string;
   contextWindowTokens?: number;
   runtimeContextBudgetTokens?: number;
   contextCompressionThresholdRatio?: number;
@@ -356,6 +372,8 @@ export interface ChatProviderRequest {
 
 export interface ChatProvider {
   providerName?: ModelProviderName;
+  capabilities?: ProviderCapabilities;
+  providerNameForProfile?(profileName: string): ModelProviderName;
   completeJson(request: ChatProviderRequest): Promise<string>;
 }
 
@@ -369,6 +387,8 @@ export interface TextGenerationRequest {
 
 export interface TextGenerationProvider {
   providerName?: ModelProviderName;
+  capabilities?: ProviderCapabilities;
+  providerNameForProfile?(profileName: string): ModelProviderName;
   completeText(request: TextGenerationRequest): Promise<string>;
 }
 

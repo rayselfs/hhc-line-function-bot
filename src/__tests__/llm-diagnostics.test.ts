@@ -23,6 +23,48 @@ function llmConfigWithoutKeepAlive(): LlmConfig {
 }
 
 describe("LLM diagnostics admin handler", () => {
+  it("reports Codex app-server auth mount paths", async () => {
+    const handler = createLlmStatusAdminHandler({
+      provider: "codex_app_server",
+      fallbackProvider: "ollama",
+      ollamaBaseUrl: "http://127.0.0.1:11434",
+      ollamaModel: "qwen3:4b-instruct",
+      timeoutMs: 8000,
+      keywordFallbackEnabled: true,
+      codexAppServerCommand: "codex",
+      codexAppServerArgs: ["app-server", "--listen", "stdio://"],
+      codexHome: "/mnt/codex-home",
+      providerAuthHome: "/mnt/provider-auth"
+    });
+
+    const result = await handler({
+      profile: {
+        name: "helper",
+        webhookPath: "/api/line/webhook/helper",
+        channelSecret: "secret",
+        channelAccessToken: "token",
+        allowDirectUser: true,
+        allowRooms: false,
+        allowedMessageTypes: ["text"],
+        groupRequireWakeWord: true,
+        wakeKeywords: ["小哈"],
+        acceptMention: true,
+        enabledFunctions: ["query_service_schedule"],
+        allowedProviders: ["ollama", "codex_app_server"],
+        allowSubscriptionProviders: true,
+        adminUserId: "Uadmin",
+        adminDirectOnly: true
+      },
+      event: { type: "message", source: { type: "user", userId: "Uadmin" } },
+      command: "llm-status",
+      args: []
+    });
+
+    expect(result.replyText).toContain("provider: codex_app_server");
+    expect(result.replyText).toContain("CODEX_HOME: /mnt/codex-home");
+    expect(result.replyText).toContain("PROVIDER_AUTH_HOME: /mnt/provider-auth");
+  });
+
   it("checks Ollama tags and chat without exposing the full base URL", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

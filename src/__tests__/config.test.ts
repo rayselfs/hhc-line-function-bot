@@ -286,6 +286,114 @@ describe("config", () => {
     expect(config.llm.ollamaKeepAlive).toBeUndefined();
   });
 
+  it("loads Codex app-server as a pluggable LLM provider", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      BOT_PROFILES_JSON: JSON.stringify([
+        {
+          name: "helper",
+          webhookPath: "/api/line/webhook/helper",
+          channelSecret: "secret",
+          channelAccessToken: "token",
+          allowedProviders: ["ollama", "codex_app_server"],
+          allowSubscriptionProviders: true
+        }
+      ]),
+      LLM_PROVIDER: "codex_app_server",
+      LLM_FALLBACK_PROVIDER: "ollama",
+      CODEX_APP_SERVER_COMMAND: "codex",
+      CODEX_APP_SERVER_ARGS: "app-server,--listen,stdio://",
+      CODEX_HOME: "/mnt/codex-home",
+      PROVIDER_AUTH_HOME: "/mnt/provider-auth"
+    });
+
+    expect(config.llm).toMatchObject({
+      provider: "codex_app_server",
+      fallbackProvider: "ollama",
+      codexAppServerCommand: "codex",
+      codexAppServerArgs: ["app-server", "--listen", "stdio://"],
+      codexHome: "/mnt/codex-home",
+      providerAuthHome: "/mnt/provider-auth"
+    });
+  });
+
+  it("rejects the removed direct Codex OAuth provider", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        ...baseEnv(),
+        LLM_PROVIDER: "openai_codex_oauth"
+      })
+    ).toThrow("openai_codex_oauth is no longer supported");
+  });
+
+  it("defaults profile provider policy to non-subscription providers only", () => {
+    const config = loadConfigFromEnv(baseEnv());
+
+    expect(config.profiles[0]).toMatchObject({
+      allowedProviders: ["ollama"],
+      allowSubscriptionProviders: false
+    });
+  });
+
+  it("loads helper provider policy for internal subscription providers", () => {
+    const config = loadConfigFromEnv({
+      BOT_PROFILES_JSON: JSON.stringify([
+        {
+          name: "helper",
+          webhookPath: "/api/line/webhook/helper",
+          channelSecret: "secret",
+          channelAccessToken: "token",
+          llmProvider: "codex_app_server",
+          allowedProviders: ["ollama", "codex_app_server"],
+          allowSubscriptionProviders: true
+        }
+      ])
+    });
+
+    expect(config.profiles[0]).toMatchObject({
+      llmProvider: "codex_app_server",
+      allowedProviders: ["ollama", "codex_app_server"],
+      allowSubscriptionProviders: true
+    });
+  });
+
+  it("rejects subscription providers when the profile policy does not allow them", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "main",
+            webhookPath: "/api/line/webhook/main",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            llmProvider: "codex_app_server",
+            allowedProviders: ["ollama", "codex_app_server"],
+            allowSubscriptionProviders: false
+          }
+        ])
+      })
+    ).toThrow("Profile main cannot allow subscription provider codex_app_server");
+  });
+
+  it("rejects fallback providers outside the profile provider policy", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        BOT_PROFILES_JSON: JSON.stringify([
+          {
+            name: "helper",
+            webhookPath: "/api/line/webhook/helper",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            allowedProviders: ["codex_app_server"],
+            allowSubscriptionProviders: true,
+            llmProvider: "codex_app_server"
+          }
+        ]),
+        LLM_FALLBACK_PROVIDER: "ollama"
+      })
+    ).toThrow("Profile helper fallback provider ollama must be listed in allowedProviders");
+  });
+
   it("defaults profile small talk to template mode with an 80 character limit", () => {
     const config = loadConfigFromEnv(baseEnv());
 

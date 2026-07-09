@@ -1,4 +1,4 @@
-import { matchesNaturalLanguageAdminActionHint } from "./catalog.js";
+import { matchNaturalLanguageAdminActionHint } from "./catalog.js";
 import type { AdminActionName } from "../types.js";
 
 export type AdminActionEvalExpected = AdminActionName | "deny";
@@ -10,10 +10,16 @@ export interface AdminActionEvalCase {
 
 const ADMIN_ACTION_EVAL_CASES: AdminActionEvalCase[] = [
   { text: "幫我產生邀請碼", action: "invite_code_create" },
-  { text: "開一組註冊碼", action: "invite_code_create" },
+  { text: "建立一組註冊碼", action: "invite_code_create" },
   { text: "create an invite code", action: "invite_code_create" },
-  { text: "幫我讓新人可以進來", action: "deny" },
-  { text: "刪除這個群組", action: "deny" }
+  { text: "allow website https://example.org/news", action: "web_allowlist_add" },
+  { text: "把維基百科加入網站白名單", action: "web_allowlist_add" },
+  { text: "目前有哪些白名單網站", action: "web_allowlist_list" },
+  { text: "enable function find_ppt_slides for this group", action: "function_scope_grant" },
+  { text: "disable function find_ppt_slides for this group", action: "function_scope_revoke" },
+  { text: "這個群組能用哪些功能", action: "function_scope_list" },
+  { text: "請刪掉所有使用者", action: "deny" },
+  { text: "把系統全部重設", action: "deny" }
 ];
 
 export function getAdminActionEvalCases(): AdminActionEvalCase[] {
@@ -21,5 +27,5 @@ export function getAdminActionEvalCases(): AdminActionEvalCase[] {
 }
 
 export function evaluateAdminActionTextForEval(text: string): AdminActionEvalExpected {
-  return matchesNaturalLanguageAdminActionHint(text) ? "invite_code_create" : "deny";
+  return matchNaturalLanguageAdminActionHint(text) ?? "deny";
 }

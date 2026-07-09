@@ -4,8 +4,9 @@ import { z } from "zod";
 
 import { assertCanonicalWebhookPath } from "./profile-path.js";
 import { readTimeZone } from "./time-zone.js";
-import { FUNCTION_NAMES } from "./types.js";
-import type { AppConfig, FunctionName } from "./types.js";
+import { providerCapabilities } from "./llm/provider-metadata.js";
+import { FUNCTION_NAMES, MODEL_PROVIDER_NAMES } from "./types.js";
+import type { AppConfig, FunctionName, ModelProviderName } from "./types.js";
 
 const profileSchema = z.object({
   name: z
@@ -39,7 +40,9 @@ const profileSchema = z.object({
       maxChars: z.number().int().min(20).max(120).default(80)
     })
     .default({ mode: "template", maxChars: 80 }),
-  llmProvider: z.enum(["ollama", "openai_codex_oauth"]).optional(),
+  llmProvider: z.enum(MODEL_PROVIDER_NAMES).optional(),
+  allowedProviders: z.array(z.enum(MODEL_PROVIDER_NAMES)).optional(),
+  allowSubscriptionProviders: z.boolean().default(false),
   generalAgent: z
     .object({
       enabled: z.boolean().default(false),
@@ -72,7 +75,10 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   );
   assertCompleteGroup(env, graphRequiredKeys, "Incomplete Graph configuration");
   assertCompleteGroup(env, notionRequiredKeys, "Incomplete Notion configuration");
+  const llmProvider = readModelProvider(env.LLM_PROVIDER, "ollama");
+  const llmFallbackProvider = readModelProvider(env.LLM_FALLBACK_PROVIDER, "ollama");
   const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile));
+  validateProviderPolicy(normalizedProfiles, llmProvider, llmFallbackProvider);
   validateAccessConfig(normalizedProfiles, env);
 
   return {
@@ -88,22 +94,17 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       enabledFunctions: profile.enabledFunctions as FunctionName[]
     })),
     llm: {
-      provider: readModelProvider(env.LLM_PROVIDER, "ollama"),
-      fallbackProvider: readModelProvider(env.LLM_FALLBACK_PROVIDER, "ollama"),
+      provider: llmProvider,
+      fallbackProvider: llmFallbackProvider,
       ollamaBaseUrl: env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
       ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
       ollamaKeepAlive: readOllamaKeepAlive(env.OLLAMA_KEEP_ALIVE),
-      openaiCodexBaseUrl: env.OPENAI_CODEX_BASE_URL || "https://chatgpt.com/backend-api/codex",
-      openaiCodexModel: env.OPENAI_CODEX_MODEL || "gpt-5.1-codex",
-      openaiCodexAuthProfile: env.OPENAI_CODEX_AUTH_PROFILE || "helper",
-      openaiCodexOAuthAuthorizeUrl:
-        env.OPENAI_CODEX_OAUTH_AUTHORIZE_URL || "https://auth.openai.com/oauth/authorize",
-      openaiCodexOAuthTokenUrl:
-        env.OPENAI_CODEX_OAUTH_TOKEN_URL || "https://auth.openai.com/oauth/token",
-      openaiCodexOAuthClientId: env.OPENAI_CODEX_OAUTH_CLIENT_ID || "app_EMoamEEZ73f0CkXaXp7hrann",
-      publicBaseUrl: env.PUBLIC_BASE_URL || undefined,
-      authLoginStateTtlMinutes: readInt(env.LLM_AUTH_LOGIN_STATE_TTL_MINUTES, 10),
-      authEncryptionKey: env.LLM_AUTH_ENCRYPTION_KEY || undefined,
+      codexAppServerCommand: env.CODEX_APP_SERVER_COMMAND || "codex",
+      codexAppServerArgs: readList(env.CODEX_APP_SERVER_ARGS || "app-server,--listen,stdio://"),
+      codexHome: env.CODEX_HOME || undefined,
+      providerAuthHome: env.PROVIDER_AUTH_HOME || undefined,
+      codexModel: env.CODEX_MODEL || "gpt-5.1-codex",
+      codexModelProvider: env.CODEX_MODEL_PROVIDER || "openai",
       contextWindowTokens: readInt(env.LLM_CONTEXT_WINDOW_TOKENS, 128_000),
       runtimeContextBudgetTokens: readInt(env.LLM_RUNTIME_CONTEXT_BUDGET_TOKENS, 24_000),
       contextCompressionThresholdRatio: readFloat(
@@ -187,14 +188,61 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
 }
 
 type ParsedProfile = z.infer<typeof profileSchema>;
+type NormalizedProfile = ParsedProfile & {
+  allowedProviders: ModelProviderName[];
+  allowSubscriptionProviders: boolean;
+};
 
-function normalizeProfile(profile: ParsedProfile): ParsedProfile {
+function normalizeProfile(profile: ParsedProfile): NormalizedProfile {
+  const allowedProviders = uniqueProviders(profile.allowedProviders ?? ["ollama"]);
   return {
     ...profile,
+    allowedProviders,
     directAccessPolicy:
       profile.directAccessPolicy ?? (profile.allowDirectUser ? "managed" : "blocked"),
     groupAccessPolicy: profile.groupAccessPolicy ?? "blocked"
   };
+}
+
+function uniqueProviders(providers: ModelProviderName[]): ModelProviderName[] {
+  const seen = new Set<string>();
+  return providers.filter((provider) => {
+    if (seen.has(provider)) {
+      return false;
+    }
+    seen.add(provider);
+    return true;
+  });
+}
+
+function validateProviderPolicy(
+  profiles: NormalizedProfile[],
+  defaultProvider: ModelProviderName,
+  fallbackProvider: ModelProviderName
+): void {
+  for (const profile of profiles) {
+    for (const provider of profile.allowedProviders) {
+      if (providerCapabilities[provider].subscriptionBased && !profile.allowSubscriptionProviders) {
+        throw new Error(`Profile ${profile.name} cannot allow subscription provider ${provider}`);
+      }
+    }
+    if (profile.llmProvider && !profile.allowedProviders.includes(profile.llmProvider)) {
+      throw new Error(
+        `Profile ${profile.name} llmProvider ${profile.llmProvider} must be listed in allowedProviders`
+      );
+    }
+    const effectiveProvider = profile.llmProvider ?? defaultProvider;
+    if (!profile.allowedProviders.includes(effectiveProvider)) {
+      throw new Error(
+        `Profile ${profile.name} effective provider ${effectiveProvider} must be listed in allowedProviders`
+      );
+    }
+    if (!profile.allowedProviders.includes(fallbackProvider)) {
+      throw new Error(
+        `Profile ${profile.name} fallback provider ${fallbackProvider} must be listed in allowedProviders`
+      );
+    }
+  }
 }
 
 function assertNoLegacyProfileFields(parsedProfiles: unknown): void {
@@ -325,9 +373,15 @@ function readFloat(value: string | undefined, fallback: number): number {
 
 function readModelProvider(
   value: string | undefined,
-  fallback: "ollama" | "openai_codex_oauth"
-): "ollama" | "openai_codex_oauth" {
-  return value === "openai_codex_oauth" ? "openai_codex_oauth" : fallback;
+  fallback: "ollama" | "codex_app_server"
+): "ollama" | "codex_app_server" {
+  if (value === "openai_codex_oauth") {
+    throw new Error("openai_codex_oauth is no longer supported");
+  }
+  if (value === "codex_app_server") {
+    return "codex_app_server";
+  }
+  return fallback;
 }
 
 function readOllamaKeepAlive(value: string | undefined): string | number | undefined {

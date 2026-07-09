@@ -34,7 +34,7 @@ class AdminActionRouter implements AdminActionRouterPort {
     const prompt = buildAdminRouterPrompt(input.enabledActions);
     try {
       return parseProviderDecision(
-        this.primaryProviderName(),
+        this.primaryProviderName(input.profileName),
         await this.options.primary.completeJson({ ...input, enabledFunctions: [], prompt }),
         input
       );
@@ -42,7 +42,7 @@ class AdminActionRouter implements AdminActionRouterPort {
       if (error instanceof ProviderResponseError && this.options.modelFallback) {
         try {
           const result = parseProviderDecision(
-            this.modelFallbackProviderName(),
+            this.modelFallbackProviderName(input.profileName),
             await this.options.modelFallback.completeJson({
               ...input,
               enabledFunctions: [],
@@ -52,7 +52,7 @@ class AdminActionRouter implements AdminActionRouterPort {
           );
           return {
             ...result,
-            fallbackProvider: this.primaryProviderName(),
+            fallbackProvider: this.primaryProviderName(input.profileName),
             fallbackReason: providerErrorReason(error)
           };
         } catch (fallbackError) {
@@ -60,7 +60,7 @@ class AdminActionRouter implements AdminActionRouterPort {
             type: "deny",
             reason: providerErrorReason(fallbackError),
             provider: "router",
-            fallbackProvider: this.modelFallbackProviderName()
+            fallbackProvider: this.modelFallbackProviderName(input.profileName)
           };
         }
       }
@@ -68,16 +68,22 @@ class AdminActionRouter implements AdminActionRouterPort {
         type: "deny",
         reason: providerErrorReason(error),
         provider: "router",
-        fallbackProvider: this.primaryProviderName()
+        fallbackProvider: this.primaryProviderName(input.profileName)
       };
     }
   }
 
-  private primaryProviderName(): ModelProviderName {
+  private primaryProviderName(profileName?: string): ModelProviderName {
+    if (profileName && this.options.primary.providerNameForProfile) {
+      return this.options.primary.providerNameForProfile(profileName);
+    }
     return this.options.primary.providerName ?? "ollama";
   }
 
-  private modelFallbackProviderName(): ModelProviderName {
+  private modelFallbackProviderName(profileName?: string): ModelProviderName {
+    if (profileName && this.options.modelFallback?.providerNameForProfile) {
+      return this.options.modelFallback.providerNameForProfile(profileName);
+    }
     return this.options.modelFallback?.providerName ?? "ollama";
   }
 }
@@ -156,6 +162,11 @@ function buildAdminRouterPrompt(enabledActions: string[]): string {
     "Return exactly one JSON object and no markdown.",
     'If the admin request does not clearly match an enabled admin action, return {"action":"deny","reason":"not_matched"}.',
     "Never invent an action name.",
+    "When executing an action, include an arguments object with only fields explicitly present or safely inferred from the user text.",
+    "Known argument fields:",
+    "- web_allowlist_add: url or domain, optional pathPrefix, optional label.",
+    "- function_scope_grant/function_scope_revoke: functionName, optional groupId. If the source is a group and the user says this group/current group, omit groupId.",
+    "- function_scope_list: optional groupId. If the source is a group and the user asks about this group/current group, omit groupId.",
     "Available admin actions:",
     available || "(none)"
   ].join("\n");
