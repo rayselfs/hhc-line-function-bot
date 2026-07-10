@@ -435,7 +435,9 @@ function assertProductionSafeProfiles(profiles: ParsedProfile[]): void {
         "formatRulesPrompt"
       ] as const) {
         if (!prompting?.[key]?.trim()) {
-          throw new Error(`Production LLM smallTalk prompting for ${profile.name} must include ${key}`);
+          throw new Error(
+            `Production LLM smallTalk prompting for ${profile.name} must include ${key}`
+          );
         }
       }
     }

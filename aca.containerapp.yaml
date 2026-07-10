@@ -15,7 +15,11 @@ properties:
       targetPort: 3000
       transport: auto
     secrets:
-      - name: bot-profiles-base64-json
+      - name: line-helper-channel-secret
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: line-helper-channel-access-token
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: line-helper-admin-user-id
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: ollama-base-url
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
@@ -36,6 +40,8 @@ properties:
         env:
           - name: SERVICE_NAME
             value: hhc-line-function-bot
+          - name: HOST
+            value: 0.0.0.0
           - name: PORT
             value: "3000"
           - name: TIME_ZONE
@@ -44,12 +50,26 @@ properties:
             value: /healthz
           - name: READY_PATH
             value: /readyz
-          - name: BOT_PROFILES_BASE64_JSON
-            secretRef: bot-profiles-base64-json
+          - name: MAX_BODY_BYTES
+            value: "262144"
+          - name: PROFILE_CONFIG_PATH
+            value: /app/config/profiles.json
+          - name: LINE_HELPER_CHANNEL_SECRET
+            secretRef: line-helper-channel-secret
+          - name: LINE_HELPER_CHANNEL_ACCESS_TOKEN
+            secretRef: line-helper-channel-access-token
+          - name: LINE_HELPER_ADMIN_USER_ID
+            secretRef: line-helper-admin-user-id
+          - name: LLM_PROVIDER
+            value: ollama
+          - name: LLM_FALLBACK_PROVIDER
+            value: ollama
           - name: OLLAMA_BASE_URL
             secretRef: ollama-base-url
           - name: OLLAMA_MODEL
             value: qwen3:4b-instruct
+          - name: OLLAMA_TIMEOUT_MS
+            value: "8000"
           - name: KEYWORD_FALLBACK_ENABLED
             value: "true"
           - name: DEEPSEEK_API_KEY
@@ -60,6 +80,16 @@ properties:
             value: deepseek-v4-flash
           - name: DEEPSEEK_TIMEOUT_MS
             value: "8000"
+          - name: LLM_CONTEXT_WINDOW_TOKENS
+            value: "272000"
+          - name: LLM_RUNTIME_CONTEXT_BUDGET_TOKENS
+            value: "2000"
+          - name: LLM_CONTEXT_COMPRESSION_THRESHOLD_RATIO
+            value: "0.75"
+          - name: LLM_GENERAL_MAX_OUTPUT_TOKENS
+            value: "160"
+          - name: LLM_ROUTE_MAX_OUTPUT_TOKENS
+            value: "256"
           - name: DATABASE_URL
             secretRef: database-url
           - name: DATABASE_SSL
@@ -72,6 +102,14 @@ properties:
             value: "60"
           - name: CONFIRMATION_TTL_MINUTES
             value: "5"
+          - name: RATE_LIMIT_ENABLED
+            value: "true"
+          - name: RATE_LIMIT_WINDOW_MS
+            value: "60000"
+          - name: RATE_LIMIT_MAX_REQUESTS
+            value: "20"
+          - name: LAST_ERRORS_MAX_ENTRIES
+            value: "20"
           - name: GRAPH_TENANT_ID
             value: PLACEHOLDER_GRAPH_TENANT_ID
           - name: GRAPH_CLIENT_ID
@@ -82,16 +120,16 @@ properties:
             value: PLACEHOLDER_GRAPH_DRIVE_ID
           - name: GRAPH_PPT_FOLDER_ITEM_ID
             value: PLACEHOLDER_GRAPH_PPT_FOLDER_ITEM_ID
-          - name: GRAPH_SHEET_MUSIC_FOLDER_ITEM_ID
-            value: PLACEHOLDER_GRAPH_SHEET_MUSIC_FOLDER_ITEM_ID
           - name: GRAPH_SHEET_MUSIC_FOLDER_PATH
-            value: 文件/流行歌譜 (捷徑)
+            value: "文件/流行歌譜 (捷徑)"
           - name: GRAPH_LINK_SCOPE
             value: anonymous
           - name: GRAPH_LINK_TYPE
             value: view
           - name: PPT_ALLOWED_EXTENSIONS
             value: ppt,pptx,pdf
+          - name: PPT_DEFAULT_INCLUDE_PDF
+            value: "false"
           - name: SHEET_MUSIC_ALLOWED_EXTENSIONS
             value: pdf,jpg,jpeg
           - name: SHEET_MUSIC_DEFAULT_RECURSIVE
@@ -101,13 +139,13 @@ properties:
           - name: NOTION_SERVICE_DATABASE_ID
             value: PLACEHOLDER_NOTION_DATABASE_ID
           - name: NOTION_DATE_PROPERTY
-            value: Date
+            value: PLACEHOLDER_NOTION_DATE_PROPERTY
           - name: NOTION_MEETING_PROPERTY
-            value: Meeting
+            value: PLACEHOLDER_NOTION_MEETING_PROPERTY
           - name: NOTION_ROLE_PROPERTY
-            value: Role
+            value: PLACEHOLDER_NOTION_ROLE_PROPERTY
           - name: NOTION_PERSON_PROPERTY
-            value: Person
+            value: PLACEHOLDER_NOTION_PERSON_PROPERTY
         probes:
           - type: Liveness
             httpGet:

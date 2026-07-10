@@ -106,7 +106,9 @@ function buildSmallTalkPrompt(
   const prompting = profile.smallTalk?.prompting;
   return [
     prompting?.personaPrompt?.trim(),
-    maxChars === undefined ? undefined : `請根據使用者訊息回覆一句繁體中文，最多 ${maxChars} 個字。`,
+    maxChars === undefined
+      ? undefined
+      : `請根據使用者訊息回覆一句繁體中文，最多 ${maxChars} 個字。`,
     `small_talk 類別是 ${category}。`,
     prompting?.conversationRulesPrompt?.trim(),
     prompting?.safetyRulesPrompt?.trim(),

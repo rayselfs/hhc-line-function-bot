@@ -39,10 +39,10 @@ Remote API providers are profile-scoped. Configure the internal `helper` profile
 
 ## Profile Config Safety
 
-- Production profile JSON should be safe to paste for review. Use `channelSecretEnv`, `channelAccessTokenEnv`, and `adminUserIdEnv` in `BOT_PROFILES_BASE64_JSON`.
-- Store the referenced LINE values as separate ACA secrets/env vars, for example `LINE_HELPER_CHANNEL_SECRET`, `LINE_HELPER_CHANNEL_ACCESS_TOKEN`, and `LINE_HELPER_ADMIN_USER_ID`.
-- Keep small-talk persona and rules in `smallTalk.prompting`. Do not hard-code bot personality in code, and do not put house-church quote behavior into small talk.
-- Before and after profile changes, run `skills\hhc-line-deploy-guard\scripts\profile-secret.ps1 -Action check-production-safe`.
+- Production profiles live in `config/profiles.json` and are loaded through `PROFILE_CONFIG_PATH=/app/config/profiles.json`. Do not use `BOT_PROFILES_JSON`, `BOT_PROFILES_BASE64_JSON`, or `bot-profiles-base64-json` in ACA.
+- Store only referenced LINE values as separate ACA secrets/env vars: `LINE_HELPER_CHANNEL_SECRET`, `LINE_HELPER_CHANNEL_ACCESS_TOKEN`, and `LINE_HELPER_ADMIN_USER_ID`.
+- Keep persona, conversation, safety, and format rules in `smallTalk.prompting`. Production LLM profiles require all four layers; do not hard-code helper personality or safety fallback text.
+- Before deployment, run `corepack pnpm config:validate`. After deployment, run `skills\hhc-line-deploy-guard\scripts\profile-config.ps1 -Action check`.
 
 ## Registration And Admin Safety
 

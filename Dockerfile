@@ -25,5 +25,6 @@ LABEL org.opencontainers.image.description="LINE function bot with local-first L
 COPY --from=prod-deps /app/package.json ./package.json
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY config ./config
 EXPOSE 3000
 CMD ["dist/index.js"]

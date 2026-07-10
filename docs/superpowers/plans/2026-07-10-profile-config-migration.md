@@ -22,6 +22,7 @@
 ### Task 1: Add the checked-in helper profile config and validate it
 
 **Files:**
+
 - Create: `config/profiles.json`
 - Create: `src/tools/check-profile-config.ts`
 - Modify: `src/config.ts`
@@ -29,27 +30,29 @@
 - Modify: `package.json`
 
 **Interfaces:**
+
 - Produces `PROFILE_CONFIG_PATH` file loading for `loadConfigFromEnv(env)`.
 - Produces `pnpm config:validate`, which exits zero only when the checked-in profile file passes the production-safe structural rules.
 
 - [ ] **Step 1: Write failing configuration tests**
 
 ```ts
-it('loads the checked-in profile file when PROFILE_CONFIG_PATH is set', () => {
+it("loads the checked-in profile file when PROFILE_CONFIG_PATH is set", () => {
   const config = loadConfigFromEnv({
     PROFILE_CONFIG_PATH: fixturePath,
-    LINE_HELPER_CHANNEL_SECRET: 'secret',
-    LINE_HELPER_CHANNEL_ACCESS_TOKEN: 'token',
-    LINE_HELPER_ADMIN_USER_ID: 'admin',
-    DATABASE_URL: 'postgres://test',
-    REDIS_URL: 'redis://test'
+    LINE_HELPER_CHANNEL_SECRET: "secret",
+    LINE_HELPER_CHANNEL_ACCESS_TOKEN: "token",
+    LINE_HELPER_ADMIN_USER_ID: "admin",
+    DATABASE_URL: "postgres://test",
+    REDIS_URL: "redis://test"
   });
-  expect(config.profiles.map((profile) => profile.name)).toEqual(['helper']);
+  expect(config.profiles.map((profile) => profile.name)).toEqual(["helper"]);
 });
 
-it('rejects legacy profile environment variables in production', () => {
-  expect(() => loadConfigFromEnv({ NODE_ENV: 'production', BOT_PROFILES_JSON: '[]' }))
-    .toThrow('Production profile config must use PROFILE_CONFIG_PATH');
+it("rejects legacy profile environment variables in production", () => {
+  expect(() => loadConfigFromEnv({ NODE_ENV: "production", BOT_PROFILES_JSON: "[]" })).toThrow(
+    "Production profile config must use PROFILE_CONFIG_PATH"
+  );
 });
 ```
 
@@ -63,11 +66,14 @@ Expected: the new tests fail because file loading and production rejection do no
 
 ```ts
 function readProfilesJson(env: NodeJS.ProcessEnv): string {
-  if (env.NODE_ENV === 'production' && (env.BOT_PROFILES_JSON?.trim() || env.BOT_PROFILES_BASE64_JSON?.trim())) {
-    throw new Error('Production profile config must use PROFILE_CONFIG_PATH');
+  if (
+    env.NODE_ENV === "production" &&
+    (env.BOT_PROFILES_JSON?.trim() || env.BOT_PROFILES_BASE64_JSON?.trim())
+  ) {
+    throw new Error("Production profile config must use PROFILE_CONFIG_PATH");
   }
   if (env.PROFILE_CONFIG_PATH?.trim()) {
-    return readFileSync(env.PROFILE_CONFIG_PATH, 'utf8');
+    return readFileSync(env.PROFILE_CONFIG_PATH, "utf8");
   }
   // Preserve JSON env input only for tests and local development.
 }
@@ -100,25 +106,35 @@ git commit -m "feat: load production profiles from config file"
 ### Task 2: Make profile prompting config-owned
 
 **Files:**
+
 - Modify: `src/config.ts`
 - Modify: `src/small-talk.ts`
 - Modify: `src/__tests__/config.test.ts`
 - Modify: `src/__tests__/small-talk.test.ts`
 
 **Interfaces:**
+
 - Consumes the complete `smallTalk.prompting` object from Task 1.
 - Produces an LLM small-talk prompt that contains no helper persona/safety fallback from code.
 
 - [ ] **Step 1: Write failing tests**
 
 ```ts
-it('rejects an LLM small-talk profile missing safetyRulesPrompt', () => {
-  expect(() => loadConfigFromEnv(withProfile({
-    smallTalk: { mode: 'llm', maxChars: 80, prompting: { personaPrompt: 'p', conversationRulesPrompt: 'c', formatRulesPrompt: 'f' } }
-  }))).toThrow('LLM smallTalk prompting must include safetyRulesPrompt');
+it("rejects an LLM small-talk profile missing safetyRulesPrompt", () => {
+  expect(() =>
+    loadConfigFromEnv(
+      withProfile({
+        smallTalk: {
+          mode: "llm",
+          maxChars: 80,
+          prompting: { personaPrompt: "p", conversationRulesPrompt: "c", formatRulesPrompt: "f" }
+        }
+      })
+    )
+  ).toThrow("LLM smallTalk prompting must include safetyRulesPrompt");
 });
 
-it('does not add a code-owned persona fallback when profile prompting is complete', async () => {
+it("does not add a code-owned persona fallback when profile prompting is complete", async () => {
   // Assert the provider receives only configured persona/rules/safety/format text.
 });
 ```
@@ -158,6 +174,7 @@ git commit -m "refactor: make small talk prompts config owned"
 ### Task 3: Align container packaging, manifest, and CI deployment
 
 **Files:**
+
 - Modify: `Dockerfile`
 - Modify: `aca.containerapp.yaml`
 - Modify: `azure-pipelines.yml`
@@ -166,6 +183,7 @@ git commit -m "refactor: make small talk prompts config owned"
 - Modify: `skills/hhc-line-deploy-guard/scripts/profile-secret.ps1`
 
 **Interfaces:**
+
 - Docker runtime exposes `/app/config/profiles.json`.
 - ACA receives `PROFILE_CONFIG_PATH=/app/config/profiles.json` and no legacy profile JSON env.
 - CI runs `pnpm config:validate` and clears obsolete profile config after the revision is healthy.
@@ -220,12 +238,14 @@ git commit -m "chore: migrate production profile config out of ACA secrets"
 ### Task 4: Deploy and prove the ACA end state
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `docs/architecture-context.md`
 - Modify: `docs/runbooks/production-operations.md`
 
 **Interfaces:**
+
 - Documents one production source of truth: `config/profiles.json` plus ACA credential secrets.
 
 - [ ] **Step 1: Update documentation**

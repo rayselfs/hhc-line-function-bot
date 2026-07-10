@@ -27,7 +27,10 @@ const layeredPrompting = {
   formatRulesPrompt: "FORMAT_RULES"
 };
 
-async function withProfileFile<T>(profiles: unknown, callback: (path: string) => Promise<T>): Promise<T> {
+async function withProfileFile<T>(
+  profiles: unknown,
+  callback: (path: string) => Promise<T>
+): Promise<T> {
   const directory = await mkdtemp(join(tmpdir(), "hhc-line-function-bot-profile-"));
   const path = join(directory, "profiles.json");
   await writeFile(path, JSON.stringify(profiles), "utf8");

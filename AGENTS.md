@@ -24,7 +24,7 @@ Read these first when starting work:
 7. `src/state/*`, `src/cache/*`, and `src/redis.ts` for session/cache persistence.
 8. `src/__tests__/*` before changing behavior; tests are the best executable map of expected bot behavior.
 
-Use `skills/hhc-line-deploy-guard/SKILL.md` before updating ACA profile secrets, diagnosing Azure DevOps deploys, or repairing `bot-profiles-base64-json`.
+Use `skills/hhc-line-deploy-guard/SKILL.md` before diagnosing Azure DevOps deploys or validating ACA profile-config inventory. Production profiles are file-backed; do not recreate or update `bot-profiles-base64-json`.
 
 ## Current Product Shape
 
@@ -36,10 +36,10 @@ Use `skills/hhc-line-deploy-guard/SKILL.md` before updating ACA profile secrets,
   - future `main`: public direct users, groups blocked, registration disabled.
 - Access registration is profile-scoped. Do not make user/group registration global unless the user explicitly asks.
 - `adminUserId` is the single bootstrap superadmin. Legacy `adminUserIds`, `allowedUserIds`, and `allowedGroupIds` should not be reintroduced.
-- Production profile JSON should use `channelSecretEnv`, `channelAccessTokenEnv`, and `adminUserIdEnv`; do not put real LINE credentials or bootstrap user IDs inline in `BOT_PROFILES_BASE64_JSON`.
+- Production profile source is `config/profiles.json`, loaded from `PROFILE_CONFIG_PATH=/app/config/profiles.json`. It must use `channelSecretEnv`, `channelAccessTokenEnv`, and `adminUserIdEnv`; do not put real LINE credentials or bootstrap user IDs in the file.
 - The LINE bot must not expose provider OAuth callback routes. Do not add `/api/line/llm-auth/*`; use API keys from ACA/local secrets for remote providers.
 - Remote API providers such as `deepseek` are profile-scoped; future `main` official profiles should define their own provider allowlist.
-- Small-talk prompt behavior is profile config, not code personality. Use `smallTalk.prompting.personaPrompt`, `conversationRulesPrompt`, `safetyRulesPrompt`, and `formatRulesPrompt`. Keep house-church quote/golden-sentence behavior out of small talk; it should become a separate function if needed.
+- Small-talk prompt behavior is profile config, not code personality. Production LLM profiles require `smallTalk.prompting.personaPrompt`, `conversationRulesPrompt`, `safetyRulesPrompt`, and `formatRulesPrompt`; do not add helper persona/safety fallback prompts in code. Keep house-church quote/golden-sentence behavior out of small talk; it should become a separate function if needed.
 
 ## Function Surface
 

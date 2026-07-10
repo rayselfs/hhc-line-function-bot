@@ -206,7 +206,9 @@ describe("small talk replies", () => {
       outcome: "fallback",
       reason: "primary_failed"
     });
-    expect(primaryCompleteText).toHaveBeenCalledWith(expect.objectContaining({ maxChars: undefined }));
+    expect(primaryCompleteText).toHaveBeenCalledWith(
+      expect.objectContaining({ maxChars: undefined })
+    );
     expect(fallbackCompleteText).toHaveBeenCalledWith(expect.objectContaining({ maxChars: 80 }));
   });
 
