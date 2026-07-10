@@ -30,7 +30,14 @@ export function findMissingRequiredSlot(
   if (!definition) {
     return undefined;
   }
-  return definition.requiredSlots.find((slot) => slotMissing(slot, args));
+  return definition.requiredSlots.find(
+    (slot) => slotAppliesToOperation(slot.argument, args) && slotMissing(slot, args)
+  );
+}
+
+function slotAppliesToOperation(argument: string, args: JsonRecord): boolean {
+  const operation = typeof args.operation === "string" ? args.operation : "replace";
+  return argument !== "content" || operation === "replace";
 }
 
 export async function createSlotClarificationResult(

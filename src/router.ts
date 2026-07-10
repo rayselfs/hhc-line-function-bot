@@ -187,7 +187,10 @@ function recoverControlledRoute(
   }
   return {
     ...recovered,
-    fallbackProvider: rejected.provider === "keyword" ? undefined : rejected.provider,
+    fallbackProvider:
+      rejected.provider === "ollama" || rejected.provider === "deepseek"
+        ? rejected.provider
+        : undefined,
     fallbackReason: rejected.type === "deny" ? rejected.reason : "route_policy_rejected"
   };
 }
@@ -197,14 +200,45 @@ function hasWriteEvidence(text: string, args: JsonRecord): boolean {
   if (!/(?:記住|保存|儲存|新增|修改|改|刪除|移除)/u.test(normalized)) {
     return false;
   }
-  return ["url", "title", "content"].every((key) => {
-    const value = args[key];
-    return (
-      typeof value !== "string" ||
-      !value.trim() ||
-      normalized.includes(value.normalize("NFKC").trim())
-    );
-  });
+  return writeEvidenceStrings(args).every((value) => stringHasEvidence(normalized, value));
+}
+
+const nonEvidenceArgumentKeys = new Set([
+  "operation",
+  "scheduleType",
+  "resourceType",
+  "visibility",
+  "matchMode",
+  "fileType",
+  "entryId",
+  "memoryId",
+  "confirm",
+  "cancel",
+  "query"
+]);
+
+function writeEvidenceStrings(value: unknown, key?: string): string[] {
+  if (key && nonEvidenceArgumentKeys.has(key)) {
+    return [];
+  }
+  if (typeof value === "string") {
+    return value.trim() ? [value.trim()] : [];
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  return Object.entries(value).flatMap(([childKey, child]) =>
+    writeEvidenceStrings(child, childKey)
+  );
+}
+
+function stringHasEvidence(text: string, value: string): boolean {
+  const normalizedValue = value.normalize("NFKC");
+  if (text.includes(normalizedValue)) {
+    return true;
+  }
+  const date = normalizedValue.match(/^\d{4}-(\d{2})-(\d{2})$/u);
+  return date ? text.includes(`${Number(date[1])}/${Number(date[2])}`) : false;
 }
 
 function isIntroRequest(text: string): boolean {

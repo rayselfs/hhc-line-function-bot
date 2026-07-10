@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentResourceReference, AgentResourceType, LineSource } from "../types.js";
 
-export type AgentMemoryScopeType = "user" | "group" | "room";
-export type AgentMemoryVisibility = "private" | "group";
+export type AgentMemoryScopeType = "user" | "group" | "room" | "profile";
+export type AgentMemoryVisibility = "private" | "group" | "profile";
 export type AgentScheduleType =
   "morning_prayer_family" | "street_sign_service" | "custom_service_schedule";
 
@@ -67,6 +67,7 @@ export interface AgentScheduleMemoryRecord {
   scope: AgentMemoryScope;
   visibility: AgentMemoryVisibility;
   scheduleType: AgentScheduleType;
+  periodKey: string;
   title: string;
   originalText: string;
   entries: AgentScheduleEntryRecord[];
@@ -128,10 +129,28 @@ export interface SaveAgentScheduleMemoryInput {
   createdBy?: string;
   visibility?: AgentMemoryVisibility;
   scheduleType: AgentScheduleType;
+  periodKey?: string;
   title: string;
   originalText: string;
   entries: AgentScheduleEntryInput[];
   expiresAt?: string;
+}
+
+export interface AddAgentScheduleEntryInput {
+  profileName: string;
+  scheduleType: AgentScheduleType;
+  entry: AgentScheduleEntryInput;
+}
+
+export interface UpdateAgentScheduleEntryInput {
+  profileName: string;
+  entryId: string;
+  changes: Partial<AgentScheduleEntryInput>;
+}
+
+export interface DeleteAgentScheduleEntryInput {
+  profileName: string;
+  entryId: string;
 }
 
 export interface SearchAgentScheduleEntriesInput {
@@ -142,6 +161,11 @@ export interface SearchAgentScheduleEntriesInput {
   date?: string;
   meetingName?: string;
   query?: string;
+  limit?: number;
+}
+
+export interface ListAgentScheduleMemoriesInput {
+  profileName: string;
   limit?: number;
 }
 
@@ -198,9 +222,17 @@ export interface AgentMemoryStore {
   searchTextMemories(input: SearchAgentTextMemoriesInput): Promise<AgentTextMemoryRecord[]>;
   listTextMemories(input: SearchAgentTextMemoriesInput): Promise<AgentTextMemoryRecord[]>;
   saveScheduleMemory(input: SaveAgentScheduleMemoryInput): Promise<AgentScheduleMemoryRecord>;
+  listScheduleMemories(input: ListAgentScheduleMemoriesInput): Promise<AgentScheduleMemoryRecord[]>;
   searchScheduleEntries(
     input: SearchAgentScheduleEntriesInput
   ): Promise<AgentScheduleEntryRecord[]>;
+  addScheduleEntry(
+    input: AddAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined>;
+  updateScheduleEntry(
+    input: UpdateAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined>;
+  deleteScheduleEntry(input: DeleteAgentScheduleEntryInput): Promise<boolean>;
   forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean>;
   forgetResource(input: ForgetAgentMemoryInput): Promise<boolean>;
   forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean>;
@@ -373,18 +405,34 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   async saveScheduleMemory(
     input: SaveAgentScheduleMemoryInput
   ): Promise<AgentScheduleMemoryRecord> {
-    const scope = scopeFromSource(input.source);
+    const scope = profileScope(input.profileName);
     const createdAt = this.now().toISOString();
     const expiresAt = input.expiresAt ?? this.defaultExpiresAt();
     const memoryId = randomUUID();
+    const periodKey = input.periodKey ?? input.entries[0]?.serviceDate.slice(0, 7) ?? "unknown";
+    for (const existing of this.scheduleMemories.values()) {
+      if (
+        existing.profileName === input.profileName &&
+        existing.scheduleType === input.scheduleType &&
+        existing.periodKey === periodKey &&
+        this.active(existing)
+      ) {
+        const deletedAt = this.now().toISOString();
+        this.scheduleMemories.set(existing.id, { ...existing, deletedAt });
+        for (const entry of existing.entries) {
+          this.scheduleEntries.set(entry.id, { ...entry, deletedAt });
+        }
+      }
+    }
     const entries = input.entries.map((entry) => ({
       id: randomUUID(),
       memoryId,
       profileName: input.profileName,
       scope,
-      visibility: input.visibility ?? defaultVisibility(scope),
+      visibility: "profile" as const,
       createdBy: input.createdBy,
       scheduleType: input.scheduleType,
+      periodKey,
       scheduleTitle: input.title,
       serviceDate: entry.serviceDate,
       weekday: entry.weekday,
@@ -400,8 +448,9 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       id: memoryId,
       profileName: input.profileName,
       scope,
-      visibility: input.visibility ?? defaultVisibility(scope),
+      visibility: "profile",
       scheduleType: input.scheduleType,
+      periodKey,
       title: input.title,
       originalText: input.originalText,
       entries,
@@ -416,19 +465,26 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     return record;
   }
 
+  async listScheduleMemories(
+    input: ListAgentScheduleMemoriesInput
+  ): Promise<AgentScheduleMemoryRecord[]> {
+    return Array.from(this.scheduleMemories.values())
+      .filter((record) => record.profileName === input.profileName && this.active(record))
+      .sort(descendingCreatedAt)
+      .slice(0, input.limit ?? 10);
+  }
+
   async searchScheduleEntries(
     input: SearchAgentScheduleEntriesInput
   ): Promise<AgentScheduleEntryRecord[]> {
-    const scope = scopeFromSource(input.source);
     const query = normalizeLookupText(input.query ?? "");
     const meetingName = normalizeLookupText(input.meetingName ?? "");
     return Array.from(this.scheduleEntries.values())
       .filter(
         (record) =>
           record.profileName === input.profileName &&
-          sameScope(record.scope, scope) &&
+          record.scope.type === "profile" &&
           this.active(record) &&
-          this.isVisible(record, input.requesterUserId ?? input.source.userId, scope) &&
           (!input.scheduleType || record.scheduleType === input.scheduleType) &&
           (!input.date || record.serviceDate === input.date) &&
           (!meetingName || normalizeLookupText(record.meetingName).includes(meetingName))
@@ -438,6 +494,67 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       )
       .sort(ascendingScheduleDateThenCreatedAt)
       .slice(0, input.limit ?? 10);
+  }
+
+  async addScheduleEntry(
+    input: AddAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined> {
+    const periodKey = input.entry.serviceDate.slice(0, 7);
+    const memory = Array.from(this.scheduleMemories.values()).find(
+      (record) =>
+        record.profileName === input.profileName &&
+        record.scheduleType === input.scheduleType &&
+        record.periodKey === periodKey &&
+        this.active(record)
+    );
+    if (!memory) {
+      return undefined;
+    }
+    const entry: AgentScheduleEntryRecord = {
+      ...input.entry,
+      id: randomUUID(),
+      memoryId: memory.id,
+      profileName: memory.profileName,
+      scope: memory.scope,
+      visibility: "profile",
+      createdBy: memory.createdBy,
+      scheduleType: memory.scheduleType,
+      scheduleTitle: memory.title,
+      createdAt: this.now().toISOString(),
+      expiresAt: memory.expiresAt
+    };
+    this.scheduleEntries.set(entry.id, entry);
+    this.scheduleMemories.set(memory.id, { ...memory, entries: [...memory.entries, entry] });
+    return entry;
+  }
+
+  async updateScheduleEntry(
+    input: UpdateAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined> {
+    const current = this.scheduleEntries.get(input.entryId);
+    if (!current || current.profileName !== input.profileName || !this.active(current)) {
+      return undefined;
+    }
+    const updated = { ...current, ...input.changes };
+    this.scheduleEntries.set(current.id, updated);
+    const memory = this.scheduleMemories.get(current.memoryId);
+    if (memory) {
+      this.scheduleMemories.set(memory.id, {
+        ...memory,
+        entries: memory.entries.map((entry) => (entry.id === current.id ? updated : entry))
+      });
+    }
+    return updated;
+  }
+
+  async deleteScheduleEntry(input: DeleteAgentScheduleEntryInput): Promise<boolean> {
+    const current = this.scheduleEntries.get(input.entryId);
+    if (!current || current.profileName !== input.profileName || !this.active(current)) {
+      return false;
+    }
+    const deletedAt = this.now().toISOString();
+    this.scheduleEntries.set(current.id, { ...current, deletedAt });
+    return true;
   }
 
   async forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
@@ -477,14 +594,8 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   }
 
   async forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
-    const scope = scopeFromSource(input.source);
     const record = this.scheduleMemories.get(input.id);
-    if (
-      !record ||
-      record.profileName !== input.profileName ||
-      !sameScope(record.scope, scope) ||
-      !canDelete(record, input)
-    ) {
+    if (!record || record.profileName !== input.profileName || !canDelete(record, input)) {
       return false;
     }
     const deletedAt = this.now().toISOString();
@@ -593,6 +704,10 @@ export function scopeFromSource(source: LineSource): AgentMemoryScope {
     return { type: "room", id: source.roomId };
   }
   return { type: "user", id: source.userId ?? "unknown" };
+}
+
+export function profileScope(profileName: string): AgentMemoryScope {
+  return { type: "profile", id: profileName };
 }
 
 export function normalizeLookupText(value: string): string {

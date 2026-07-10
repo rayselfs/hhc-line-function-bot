@@ -881,18 +881,9 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[0]?.[1]).toContain("/registry <code>");
     expect(replyText.mock.calls[0]?.[1]).toContain("/whoami");
     expect(replyText.mock.calls[0]?.[1]).toContain("/help admin");
-    expect(replyText.mock.calls[0]?.[1]).toContain("查投影片");
-    expect(replyText.mock.calls[0]?.[1]).toContain("查服事表");
-    expect(replyText).toHaveBeenCalledWith(
-      "reply-token",
-      expect.any(String),
-      expect.objectContaining({
-        quickReplies: expect.arrayContaining([
-          expect.objectContaining({ label: "查投影片" }),
-          expect.objectContaining({ label: "查服事表" })
-        ])
-      })
-    );
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("查投影片");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("查服事表");
+    expect(replyText).toHaveBeenCalledWith("reply-token", expect.any(String), undefined);
   });
 
   it("lists common grouped admin commands through help admin", async () => {
@@ -1547,24 +1538,14 @@ describe("LINE entrance", () => {
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("我是小哈");
-    expect(replyText.mock.calls[0]?.[1]).toContain("家教會小幫手");
-    expect(replyText.mock.calls[0]?.[1]).toContain("我可以：查投影片、查服事表。");
-    expect(replyText.mock.calls[0]?.[1]).toContain("小哈 查投影片 奇異恩典");
+    expect(replyText.mock.calls[0]?.[1]).toContain("家教會的小幫手");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("我可以：查投影片、查服事表");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("OneDrive");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("Notion");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("下載連結");
-    expect(replyText.mock.calls[0]?.[1]).toContain("查投影片");
-    expect(replyText.mock.calls[0]?.[1]).toContain("查服事表");
-    expect(replyText).toHaveBeenCalledWith(
-      "reply-token",
-      expect.any(String),
-      expect.objectContaining({
-        quickReplies: expect.arrayContaining([
-          expect.objectContaining({ label: "查投影片" }),
-          expect.objectContaining({ label: "查服事表" })
-        ])
-      })
-    );
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("查投影片");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("查服事表");
+    expect(replyText).toHaveBeenCalledWith("reply-token", expect.any(String), undefined);
   });
 
   it("introduces available functions in direct chat when the user asks for help", async () => {
@@ -1590,7 +1571,7 @@ describe("LINE entrance", () => {
 
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
-    expect(replyText.mock.calls[0]?.[1]).toContain("我能：查投影片、查服事表。");
+    expect(replyText.mock.calls[0]?.[1]).toContain("我可以幫你查資料");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("我是小哈");
   });
 
@@ -1713,7 +1694,7 @@ describe("LINE entrance", () => {
 
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
-    expect(replyText.mock.calls[0]?.[1]).toContain("我能：查投影片、查服事表。");
+    expect(replyText.mock.calls[0]?.[1]).toContain("我可以幫你查資料");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("我是小哈");
     expect(replyText.mock.calls[0]?.[1]).toContain("你可以試試：");
   });
@@ -1742,7 +1723,7 @@ describe("LINE entrance", () => {
     });
 
     const reply = String(replyText.mock.calls[0]?.[1]);
-    expect(reply).toContain("查服事表");
+    expect(reply).toContain("我可以幫你查資料");
     expect(reply).not.toContain("記服事表");
     expect(reply).not.toContain("保存連結資源");
   });
@@ -1776,7 +1757,7 @@ describe("LINE entrance", () => {
 
     expect(res.statusCode).toBe(200);
     expect(route).not.toHaveBeenCalled();
-    expect(replyText.mock.calls[0]?.[1]).toContain("查流行歌譜");
+    expect(replyText.mock.calls[0]?.[1]).toContain("家教會的小幫手");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("OneDrive");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("下載連結");
   });

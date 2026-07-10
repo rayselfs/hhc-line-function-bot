@@ -202,7 +202,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     memoryPolicy: { kind: "explicit_text" },
     clarificationPrompt: "請貼上要記住的服事表文字內容。",
     description:
-      '- save_schedule: save one canonical structured text-only service schedule. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "visibility":"private|group optional", "confirm":boolean optional}. Preview first unless confirm is true. Do not use for images.',
+      '- save_schedule: manage the profile-shared canonical service schedule. Use operation "replace" with content for a full pasted schedule; "add_entry" with scheduleType and entry; "update_entry" with targetQuery and changes; "delete_entry" with targetQuery; or "delete_schedule" with targetQuery. Every write previews first unless confirm is true. Never invent content, targets, titles, or changes.',
     argumentSchema: saveScheduleArgumentsSchema,
     quickReply: {
       label: "記服事表",

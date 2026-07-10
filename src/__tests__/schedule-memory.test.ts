@@ -179,4 +179,141 @@ describe("schedule memory", () => {
     expect(morningPrayer.replyText).toContain("世緯家園");
     expect(morningPrayer.replyText).not.toContain("黃弘家族");
   });
+
+  it("keeps saved schedules for one year", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({
+      memoryStore: store,
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+
+    await save(
+      { content: "7/17五世緯家園", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+
+    const schedules = await store.listScheduleMemories({ profileName: "helper", limit: 10 });
+    expect(schedules[0]?.expiresAt).toBe("2027-07-10T00:00:00.000Z");
+    expect(schedules[0]?.visibility).toBe("profile");
+  });
+
+  it("replaces the active schedule for the same type and month", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+
+    await save(
+      { content: "7/17五世緯家園", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+    await save(
+      { content: "7/18六新婦家族", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+
+    await expect(store.listScheduleMemories({ profileName: "helper" })).resolves.toHaveLength(1);
+    await expect(
+      store.searchScheduleEntries({ profileName: "helper", source: context().event.source })
+    ).resolves.toEqual([
+      expect.objectContaining({ serviceDate: "2026-07-18", assignee: "新婦家族" })
+    ]);
+  });
+
+  it("previews and confirms a single schedule entry update", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+    await save(
+      { content: "7/17五世緯家園", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+
+    const preview = await save(
+      {
+        operation: "update_entry",
+        targetQuery: "世緯家園",
+        changes: { serviceDate: "2026-07-18" }
+      },
+      context("小哈把世緯家園改到7/18")
+    );
+    expect(preview.replyText).toContain("7月17日");
+    expect(preview.replyText).toContain("7月18日");
+    expect(preview.replyText).toContain("要套用嗎");
+
+    await save(
+      {
+        operation: "update_entry",
+        targetQuery: "世緯家園",
+        changes: { serviceDate: "2026-07-18" },
+        confirm: true
+      },
+      context("確認")
+    );
+
+    await expect(
+      store.searchScheduleEntries({ profileName: "helper", source: context().event.source })
+    ).resolves.toEqual([
+      expect.objectContaining({ serviceDate: "2026-07-18", assignee: "世緯家園" })
+    ]);
+  });
+
+  it("previews and confirms adding and deleting schedule entries", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+    await save(
+      { content: "7/17五世緯家園", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+
+    const addPreview = await save(
+      {
+        operation: "add_entry",
+        scheduleType: "morning_prayer_family",
+        entry: {
+          serviceDate: "2026-07-24",
+          meetingName: "晨更",
+          assignee: "新婦家族",
+          familyName: "新婦家族"
+        }
+      },
+      context("小哈新增7/24晨更新婦家族")
+    );
+    expect(addPreview.replyText).toContain("要新增嗎");
+    await save(
+      {
+        operation: "add_entry",
+        scheduleType: "morning_prayer_family",
+        entry: {
+          serviceDate: "2026-07-24",
+          meetingName: "晨更",
+          assignee: "新婦家族",
+          familyName: "新婦家族"
+        },
+        confirm: true
+      },
+      context("確認")
+    );
+
+    const deletePreview = await save(
+      { operation: "delete_entry", targetQuery: "世緯家園" },
+      context("小哈刪除世緯家園7/17晨更")
+    );
+    expect(deletePreview.replyText).toContain("要刪除嗎");
+    await save(
+      { operation: "delete_entry", targetQuery: "世緯家園", confirm: true },
+      context("確認")
+    );
+
+    await expect(
+      store.searchScheduleEntries({ profileName: "helper", source: context().event.source })
+    ).resolves.toEqual([
+      expect.objectContaining({ serviceDate: "2026-07-24", assignee: "新婦家族" })
+    ]);
+  });
 });

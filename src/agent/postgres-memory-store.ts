@@ -3,12 +3,15 @@ import { randomUUID } from "node:crypto";
 import type { AgentResourceType } from "../types.js";
 import {
   normalizeLookupText,
+  profileScope,
   scopeFromSource,
   type AgentMemoryScope,
   type AgentMemoryVisibility,
   type AgentMemoryPurgeResult,
   type AgentMemoryStore,
   type AgentMemorySummary,
+  type AddAgentScheduleEntryInput,
+  type DeleteAgentScheduleEntryInput,
   type AgentResourceRecord,
   type AgentScheduleEntryRecord,
   type AgentScheduleMemoryRecord,
@@ -21,8 +24,10 @@ import {
   type SaveAgentScheduleMemoryInput,
   type SaveAgentTextMemoryInput,
   type SearchAgentScheduleEntriesInput,
+  type ListAgentScheduleMemoriesInput,
   type SearchAgentResourcesInput,
-  type SearchAgentTextMemoriesInput
+  type SearchAgentTextMemoriesInput,
+  type UpdateAgentScheduleEntryInput
 } from "./memory-store.js";
 
 export interface PgQueryable {
@@ -299,14 +304,21 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
   async saveScheduleMemory(
     input: SaveAgentScheduleMemoryInput
   ): Promise<AgentScheduleMemoryRecord> {
-    const scope = scopeFromSource(input.source);
+    const scope = profileScope(input.profileName);
     const memoryId = randomUUID();
     const expiresAt = input.expiresAt ?? this.defaultExpiresAt();
+    const periodKey = input.periodKey ?? input.entries[0]?.serviceDate.slice(0, 7) ?? "unknown";
+    await this.db.query(
+      `update agent_schedule_memories
+       set deleted_at = now()
+       where profile_name = $1 and schedule_type = $2 and period_key = $3 and deleted_at is null`,
+      [input.profileName, input.scheduleType, periodKey]
+    );
     const memoryResult = await this.db.query(
       `
       insert into agent_schedule_memories
-        (id, profile_name, scope_type, scope_id, schedule_type, title, original_text, created_by, visibility, expires_at)
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        (id, profile_name, scope_type, scope_id, schedule_type, period_key, title, original_text, created_by, visibility, expires_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       returning *
       `,
       [
@@ -315,10 +327,11 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         scope.type,
         scope.id,
         input.scheduleType,
+        periodKey,
         input.title,
         input.originalText,
         input.createdBy ?? null,
-        input.visibility ?? "private",
+        "profile",
         expiresAt
       ]
     );
@@ -350,11 +363,30 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     return mapScheduleMemory(memoryResult.rows[0], entries);
   }
 
+  async listScheduleMemories(
+    input: ListAgentScheduleMemoriesInput
+  ): Promise<AgentScheduleMemoryRecord[]> {
+    const result = await this.db.query(
+      `
+      select *
+      from agent_schedule_memories
+      where profile_name = $1
+        and scope_type = 'profile'
+        and scope_id = $1
+        and deleted_at is null
+        and expires_at > now()
+      order by created_at desc
+      limit $2
+      `,
+      [input.profileName, input.limit ?? 10]
+    );
+    return result.rows.map((row) => mapScheduleMemory(row, []));
+  }
+
   async searchScheduleEntries(
     input: SearchAgentScheduleEntriesInput
   ): Promise<AgentScheduleEntryRecord[]> {
-    const scope = scopeFromSource(input.source);
-    const values: unknown[] = [input.profileName, scope.type, scope.id];
+    const values: unknown[] = [input.profileName, "profile", input.profileName];
     const filters: string[] = [];
     if (input.scheduleType) {
       values.push(input.scheduleType);
@@ -364,14 +396,6 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       values.push(input.date);
       filters.push(`and e.service_date = $${values.length}::date`);
     }
-    filters.push(
-      visibilitySqlFilter(
-        "m.visibility",
-        scope,
-        input.requesterUserId ?? input.source.userId,
-        values
-      )
-    );
     const limitParam = values.length + 1;
     values.push(Math.max(input.limit ?? 10, 50));
     const result = await this.db.query(
@@ -395,6 +419,7 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and m.scope_type = $2
         and m.scope_id = $3
         and m.deleted_at is null
+        and e.deleted_at is null
         and m.expires_at > now()
         ${filters.join("\n        ")}
       order by e.service_date asc, m.created_at desc, e.meeting_name asc
@@ -412,6 +437,105 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
           (!query || normalizeLookupText(scheduleEntrySearchText(entry)).includes(query))
       )
       .slice(0, input.limit ?? 10);
+  }
+
+  async addScheduleEntry(
+    input: AddAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined> {
+    const result = await this.db.query(
+      `
+      insert into agent_schedule_entries
+        (id, schedule_memory_id, service_date, weekday, meeting_name, role, assignee, family_name, notes)
+      select $1, m.id, $4::date, $5, $6, $7, $8, $9, $10
+      from agent_schedule_memories m
+      where m.profile_name = $2
+        and m.schedule_type = $3
+        and m.period_key = left($4, 7)
+        and m.deleted_at is null
+        and m.expires_at > now()
+      returning id
+      `,
+      [
+        randomUUID(),
+        input.profileName,
+        input.scheduleType,
+        input.entry.serviceDate,
+        input.entry.weekday ?? null,
+        input.entry.meetingName,
+        input.entry.role ?? null,
+        input.entry.assignee,
+        input.entry.familyName ?? null,
+        input.entry.notes ?? null
+      ]
+    );
+    const id = result.rows[0]?.id;
+    if (!id) {
+      return undefined;
+    }
+    const entries = await this.searchScheduleEntries({
+      profileName: input.profileName,
+      source: { type: "user", userId: "profile" },
+      date: input.entry.serviceDate,
+      query: input.entry.assignee,
+      limit: 10
+    });
+    return entries.find((entry) => entry.id === String(id));
+  }
+
+  async updateScheduleEntry(
+    input: UpdateAgentScheduleEntryInput
+  ): Promise<AgentScheduleEntryRecord | undefined> {
+    const current = await this.db.query(
+      `
+      select e.*, m.id as memory_id, m.profile_name, m.scope_type, m.scope_id,
+             m.schedule_type, m.title as schedule_title, m.visibility, m.created_by,
+             m.created_at as memory_created_at, m.expires_at, m.deleted_at
+      from agent_schedule_entries e
+      join agent_schedule_memories m on m.id = e.schedule_memory_id
+      where e.id = $1 and m.profile_name = $2 and e.deleted_at is null and m.deleted_at is null
+      `,
+      [input.entryId, input.profileName]
+    );
+    if (!current.rows[0]) {
+      return undefined;
+    }
+    const existing = mapScheduleEntry(current.rows[0]);
+    const next = { ...existing, ...input.changes };
+    await this.db.query(
+      `
+      update agent_schedule_entries
+      set service_date = $3::date, weekday = $4, meeting_name = $5, role = $6,
+          assignee = $7, family_name = $8, notes = $9, updated_at = now()
+      where id = $1 and schedule_memory_id = $2 and deleted_at is null
+      `,
+      [
+        existing.id,
+        existing.memoryId,
+        next.serviceDate,
+        next.weekday ?? null,
+        next.meetingName,
+        next.role ?? null,
+        next.assignee,
+        next.familyName ?? null,
+        next.notes ?? null
+      ]
+    );
+    return next;
+  }
+
+  async deleteScheduleEntry(input: DeleteAgentScheduleEntryInput): Promise<boolean> {
+    const result = await this.db.query(
+      `
+      update agent_schedule_entries e
+      set deleted_at = now(), updated_at = now()
+      from agent_schedule_memories m
+      where e.id = $1 and e.schedule_memory_id = m.id and m.profile_name = $2
+        and e.deleted_at is null and m.deleted_at is null
+      returning e.id
+      `,
+      [input.entryId, input.profileName]
+    );
+    return result.rows.length > 0;
   }
 
   async forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
@@ -467,7 +591,6 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
   }
 
   async forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
-    const scope = scopeFromSource(input.source);
     const result = await this.db.query(
       `
       update agent_schedule_memories
@@ -482,8 +605,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       `,
       [
         input.profileName,
-        scope.type,
-        scope.id,
+        "profile",
+        input.profileName,
         input.id,
         input.isAdmin ?? false,
         input.deletedBy ?? null
@@ -608,6 +731,7 @@ function mapScheduleMemory(
     scope: mapScope(row),
     visibility: memoryVisibility(row.visibility),
     scheduleType: row.schedule_type as AgentScheduleMemoryRecord["scheduleType"],
+    periodKey: String(row.period_key ?? "unknown"),
     title: String(row.title),
     originalText: String(row.original_text),
     entries,
@@ -649,7 +773,7 @@ function mapScope(row: Record<string, unknown>): AgentMemoryScope {
 }
 
 function memoryVisibility(value: unknown): AgentMemoryVisibility {
-  return value === "group" ? "group" : "private";
+  return value === "profile" ? "profile" : value === "group" ? "group" : "private";
 }
 
 function visibilitySqlFilter(

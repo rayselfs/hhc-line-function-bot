@@ -3,9 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { createQueryScheduleHandler } from "../functions/query-schedule.js";
 import { createSaveScheduleHandler } from "../functions/schedule-memory.js";
-import type { BotProfileConfig, FunctionHandlerContext, NotionDatabaseClient } from "../types.js";
+import type {
+  BotProfileConfig,
+  FunctionHandlerContext,
+  LineSource,
+  NotionDatabaseClient
+} from "../types.js";
 
-function context(text = "小哈查服事表"): FunctionHandlerContext {
+function context(
+  text = "小哈查服事表",
+  source: LineSource = { type: "group", groupId: "C1", userId: "U1" }
+): FunctionHandlerContext {
   return {
     requestId: "req-1",
     profile: {
@@ -23,7 +31,7 @@ function context(text = "小哈查服事表"): FunctionHandlerContext {
     } satisfies BotProfileConfig,
     event: {
       type: "message",
-      source: { type: "group", groupId: "C1", userId: "U1" },
+      source,
       message: { type: "text", text }
     }
   };
@@ -81,5 +89,93 @@ describe("query_schedule", () => {
     expect(result.replyText).toContain("主日");
     expect(result.replyText).toContain("投影：知樂");
     expect(result.replyText).not.toMatch(/Notion|Postgres/u);
+  });
+
+  it("shares saved schedules across direct and group conversations in the helper profile", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleHandler({ memoryStore: store });
+    const query = createQueryScheduleHandler({
+      memoryStore: store,
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    await save(
+      {
+        content: "7/17五世緯家園",
+        scheduleType: "morning_prayer_family",
+        confirm: true
+      },
+      context("小哈記住晨更服事表", { type: "user", userId: "Uadmin" })
+    );
+
+    const result = await query(
+      { query: "下次世緯家園服事是什麼時候", dateIntent: "next_meeting" },
+      context("下次世緯家園服事是什麼時候", {
+        type: "group",
+        groupId: "C2",
+        userId: "U2"
+      })
+    );
+
+    expect(result.replyText).toContain("7月17日");
+    expect(result.replyText).toContain("世緯家園");
+  });
+
+  it("filters the next street-sign service by family", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleHandler({ memoryStore: store });
+    const query = createQueryScheduleHandler({
+      memoryStore: store,
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    await save(
+      {
+        content: "7/12共生家園\n7/19中平家族\n7/26新婦家族",
+        scheduleType: "street_sign_service",
+        confirm: true
+      },
+      context()
+    );
+
+    const result = await query(
+      {
+        query: "下一次中平家族什麼時候舉牌",
+        dateIntent: "next_meeting",
+        scheduleType: "street_sign_service"
+      },
+      context("下一次中平家族什麼時候舉牌")
+    );
+
+    expect(result.replyText).toContain("7月19日");
+    expect(result.replyText).toContain("中平家族");
+    expect(result.replyText).not.toContain("共生家園");
+  });
+
+  it("lists saved schedule titles without expanding their contents", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleHandler({ memoryStore: store });
+    const query = createQueryScheduleHandler({ memoryStore: store });
+    await save(
+      {
+        title: "七月份家族晨更安排",
+        content: "7/17五世緯家園",
+        scheduleType: "morning_prayer_family",
+        confirm: true
+      },
+      context()
+    );
+
+    const result = await query(
+      { query: "現在有存的服事表有哪些" },
+      context("現在有存的服事表有哪些")
+    );
+
+    expect(result.replyText).toContain("七月份家族晨更安排");
+    expect(result.replyText).not.toContain("世緯家園");
   });
 });

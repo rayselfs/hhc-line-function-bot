@@ -193,6 +193,10 @@ function cleanupResourceTitle(value: string): string {
 function extractScheduleMemoryIntent(
   value: string
 ): { action: FunctionName; arguments: JsonRecord } | undefined {
+  const mutation = extractScheduleMutationIntent(value);
+  if (mutation) {
+    return { action: "save_schedule", arguments: mutation };
+  }
   const content = extractScheduleMemoryContent(value);
   if (content !== undefined) {
     return {
@@ -216,6 +220,25 @@ function extractScheduleMemoryIntent(
     };
   }
 
+  return undefined;
+}
+
+function extractScheduleMutationIntent(value: string): JsonRecord | undefined {
+  if (/^(?:請|麻煩|幫我)?(?:刪除|移除)/u.test(value)) {
+    const targetQuery = value
+      .replace(/^(?:請|麻煩|幫我)?(?:刪除|移除)/u, "")
+      .replace(/(?:\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／月]\s*\d{1,2}/gu, " ")
+      .replace(/晨更|仙履奇緣|為耶穌|舉牌|服事表|服事/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return { operation: "delete_entry", targetQuery };
+  }
+  if (/^(?:請|麻煩|幫我)?(?:新增|增加)/u.test(value)) {
+    return { operation: "add_entry", query: value };
+  }
+  if (/(?:修改|改成|改到)/u.test(value)) {
+    return { operation: "update_entry", query: value };
+  }
   return undefined;
 }
 

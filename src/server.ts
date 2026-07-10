@@ -34,13 +34,12 @@ import {
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
 import {
   getFunctionDefinition,
-  getFunctionDefinitions,
   isGrantableFunctionName,
   userFacingFunctionNames
 } from "./functions/definitions.js";
 import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-store.js";
 import { createIntroReply } from "./intro.js";
-import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
+import { buildPostbackQuickReply } from "./line-reply.js";
 import { verifyLineSignature } from "./line-signature.js";
 import { allowedProvidersForProfile, providerIsAllowedForProfile } from "./llm/provider-runtime.js";
 import { messages } from "./messages.js";
@@ -1043,16 +1042,11 @@ async function handlePublicAccessCommand(
 }
 
 function formatPublicHelp(profile: BotProfileConfig): FunctionExecutionResult {
-  const definitions = getFunctionDefinitions(profile.enabledFunctions);
-  const functionLines =
-    definitions.length > 0
-      ? definitions.map((definition) => `- ${definition.quickReply.label}`)
-      : ["- 目前沒有開放可查詢的功能"];
   return {
     ok: true,
     replyText: [
-      "小哈可以協助你查詢：",
-      ...functionLines,
+      "小哈可以協助你用自然語言查資料，也能依權限記住或更新教會資訊。",
+      "直接告訴我名稱、日期、主題或要處理的內容就好。",
       "",
       "可用指令：",
       "/help - 查看小哈可以協助什麼",
@@ -1061,8 +1055,7 @@ function formatPublicHelp(profile: BotProfileConfig): FunctionExecutionResult {
       "/memories - 列出目前記住的資訊",
       "/forget-memory <id> - 移除一段記憶",
       "/help admin - 管理員指令說明"
-    ].join("\n"),
-    quickReplies: buildFunctionQuickReplies(profile)
+    ].join("\n")
   };
 }
 

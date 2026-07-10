@@ -156,6 +156,68 @@ describe("function router", () => {
     expect(result).toMatchObject({ type: "deny", reason: "write_evidence_missing" });
   });
 
+  it("accepts a structured schedule update grounded in the user text", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "save_schedule",
+        arguments: {
+          operation: "update_entry",
+          targetQuery: "世緯家園",
+          changes: { serviceDate: "2026-07-18" }
+        }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "小哈把世緯家園改到7/18",
+      enabledFunctions: ["save_schedule"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "save_schedule",
+      arguments: {
+        operation: "update_entry",
+        targetQuery: "世緯家園",
+        changes: { serviceDate: "2026-07-18" }
+      }
+    });
+  });
+
+  it("rejects a schedule mutation whose nested target and changes were invented", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "save_schedule",
+        arguments: {
+          operation: "update_entry",
+          targetQuery: "Updated Slide",
+          changes: { assignee: "Fake User" }
+        }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "幫我改服事表",
+      enabledFunctions: ["save_schedule"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({ type: "deny", reason: "write_evidence_missing" });
+  });
+
   it("passes structured service schedule metadata from Qwen", async () => {
     const qwen = provider(
       JSON.stringify({
@@ -625,6 +687,31 @@ describe("function router", () => {
       action: "find_ppt_slides",
       provider: "keyword",
       arguments: { query: "奇異恩典" }
+    });
+  });
+
+  it("falls back to a controlled schedule mutation when the model is unavailable", async () => {
+    const router = createFunctionRouter({
+      primary: provider("not-json"),
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "小哈刪除世緯家園7/17晨更",
+      enabledFunctions: ["save_schedule"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "save_schedule",
+      provider: "keyword",
+      arguments: {
+        operation: "delete_entry",
+        targetQuery: "世緯家園"
+      }
     });
   });
 

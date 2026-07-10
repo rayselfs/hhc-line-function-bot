@@ -12,11 +12,17 @@ import type {
   AgentScheduleEntryRecord,
   AgentScheduleType
 } from "../agent/memory-store.js";
-import type { FunctionHandler, FunctionName } from "../types.js";
+import { normalizeLookupText } from "../agent/memory-store.js";
+import type {
+  FunctionExecutionResult,
+  FunctionHandler,
+  FunctionHandlerContext,
+  FunctionName
+} from "../types.js";
 import type { SessionStore } from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 
-const SCHEDULE_MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SCHEDULE_MEMORY_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 export interface ParsedScheduleMemory {
   scheduleType: AgentScheduleType;
@@ -65,6 +71,17 @@ export function createSaveScheduleMemoryHandler(
 
     if (args.cancel || isCancelText(args.query)) {
       return { ok: true, replyText: "好，我先不保存。" };
+    }
+
+    if (args.operation && args.operation !== "replace") {
+      return handleScheduleMutation({
+        args,
+        context,
+        options,
+        now: now(),
+        action,
+        requestIdFactory
+      });
     }
 
     if (!content) {
@@ -117,8 +134,9 @@ export function createSaveScheduleMemoryHandler(
       profileName: context.profile.name,
       source: context.event.source,
       createdBy: context.event.source.userId,
-      visibility: args.visibility ?? "private",
+      visibility: "profile",
       scheduleType: parsed.scheduleType,
+      periodKey: parsed.entries[0]?.serviceDate.slice(0, 7),
       title: parsed.title,
       originalText: content,
       entries: parsed.entries,
@@ -130,6 +148,176 @@ export function createSaveScheduleMemoryHandler(
       replyText: `已保存 ${parsed.entries.length} 筆${scheduleTypeLabel(parsed.scheduleType)}，之後可以請我查。`
     };
   };
+}
+
+async function handleScheduleMutation(input: {
+  args: SaveScheduleMemoryArguments;
+  context: FunctionHandlerContext;
+  options: ScheduleMemoryFunctionOptions;
+  now: Date;
+  action: FunctionName;
+  requestIdFactory: () => string;
+}): Promise<FunctionExecutionResult> {
+  const { args, context, options } = input;
+  if (args.operation === "add_entry") {
+    if (!args.entry || !args.scheduleType) {
+      return { ok: true, replyText: "請告訴我要新增的日期、服事項目和家族或同工。" };
+    }
+    if (!args.confirm) {
+      await storeMutationConfirmation(input);
+      return mutationPreview(
+        ["請確認這筆新服事：", formatEntryInput(args.entry), "要新增嗎？"],
+        "保存"
+      );
+    }
+    const added = await options.memoryStore.addScheduleEntry({
+      profileName: context.profile.name,
+      scheduleType: args.scheduleType,
+      entry: args.entry
+    });
+    return {
+      ok: true,
+      replyText: added ? "已新增這筆服事。" : "找不到同月份的服事表，請先保存完整服事表。"
+    };
+  }
+
+  if (args.operation === "delete_schedule") {
+    const schedules = await options.memoryStore.listScheduleMemories({
+      profileName: context.profile.name,
+      limit: 20
+    });
+    const target = schedules.filter((schedule) =>
+      normalizeLookupText(schedule.title).includes(normalizeLookupText(args.targetQuery ?? ""))
+    );
+    if (target.length !== 1) {
+      return {
+        ok: true,
+        replyText:
+          target.length === 0
+            ? "找不到要刪除的服事表。"
+            : ["找到多份服事表，請說明完整名稱：", ...target.map((item) => `- ${item.title}`)].join(
+                "\n"
+              )
+      };
+    }
+    if (!args.confirm) {
+      await storeMutationConfirmation(input);
+      return mutationPreview([`要刪除整份「${target[0].title}」嗎？`], "刪除");
+    }
+    const removed = await options.memoryStore.forgetScheduleMemory({
+      profileName: context.profile.name,
+      source: context.event.source,
+      id: target[0].id,
+      deletedBy: context.event.source.userId,
+      isAdmin: true
+    });
+    return { ok: true, replyText: removed ? "已刪除這份服事表。" : "服事表已變更，請重新查詢。" };
+  }
+
+  const targetQuery = args.targetQuery?.trim();
+  if (!targetQuery) {
+    return { ok: true, replyText: "請告訴我要修改或刪除哪一筆服事。" };
+  }
+  const matches = await options.memoryStore.searchScheduleEntries({
+    profileName: context.profile.name,
+    source: context.event.source,
+    query: targetQuery,
+    limit: 5
+  });
+  if (matches.length !== 1) {
+    return {
+      ok: true,
+      replyText:
+        matches.length === 0
+          ? "找不到符合的服事項目，請補上日期、聚會或家族。"
+          : [
+              "找到多筆符合的服事，請補上日期：",
+              ...matches.map((entry) => `- ${formatEntryInput(entry)}`)
+            ].join("\n")
+    };
+  }
+  const current = matches[0];
+
+  if (args.operation === "update_entry") {
+    if (!args.changes || Object.keys(args.changes).length === 0) {
+      return { ok: true, replyText: "請告訴我要把這筆服事改成什麼。" };
+    }
+    const updated = { ...current, ...args.changes };
+    if (!args.confirm) {
+      await storeMutationConfirmation(input);
+      return mutationPreview(
+        [
+          "請確認這項修改：",
+          `修改前：${formatEntryInput(current)}`,
+          `修改後：${formatEntryInput(updated)}`,
+          "要套用嗎？"
+        ],
+        "保存"
+      );
+    }
+    const result = await options.memoryStore.updateScheduleEntry({
+      profileName: context.profile.name,
+      entryId: current.id,
+      changes: args.changes
+    });
+    return { ok: true, replyText: result ? "已更新這筆服事。" : "服事項目已變更，請重新查詢。" };
+  }
+
+  if (args.operation === "delete_entry") {
+    if (!args.confirm) {
+      await storeMutationConfirmation(input);
+      return mutationPreview(
+        ["請確認要刪除這筆服事：", formatEntryInput(current), "要刪除嗎？"],
+        "刪除"
+      );
+    }
+    const removed = await options.memoryStore.deleteScheduleEntry({
+      profileName: context.profile.name,
+      entryId: current.id
+    });
+    return { ok: true, replyText: removed ? "已刪除這筆服事。" : "服事項目已變更，請重新查詢。" };
+  }
+
+  return { ok: true, replyText: "目前不支援這項服事表操作。" };
+}
+
+async function storeMutationConfirmation(input: {
+  args: SaveScheduleMemoryArguments;
+  context: FunctionHandlerContext;
+  options: ScheduleMemoryFunctionOptions;
+  now: Date;
+  action: FunctionName;
+  requestIdFactory: () => string;
+}): Promise<void> {
+  if (!input.options.sessionStore) {
+    return;
+  }
+  await storePendingFunctionQuery({
+    sessionStore: input.options.sessionStore,
+    requestId: input.requestIdFactory(),
+    action: input.action,
+    arguments: { ...input.args, confirm: true },
+    context: input.context,
+    now: input.now
+  });
+}
+
+function mutationPreview(lines: string[], confirmLabel: string): FunctionExecutionResult {
+  return {
+    ok: true,
+    replyText: lines.join("\n"),
+    quickReplies: [
+      {
+        label: confirmLabel,
+        action: { type: "message", label: confirmLabel, text: confirmLabel }
+      },
+      { label: "取消", action: { type: "message", label: "取消", text: "取消" } }
+    ]
+  };
+}
+
+function formatEntryInput(entry: AgentScheduleEntryInput): string {
+  return `${formatMonthDay(entry.serviceDate)} ${entry.meetingName}：${entry.assignee}${entry.notes ? `（${entry.notes}）` : ""}`;
 }
 
 export function createSaveScheduleHandler(options: ScheduleMemoryFunctionOptions): FunctionHandler {
@@ -146,7 +334,7 @@ export function createQueryScheduleMemoryHandler(
     const inferredType = args.scheduleType ?? inferScheduleTypeFromQuery(query);
     const date = inferQueryDate(args, now());
     const cleanedQuery = cleanScheduleMemoryQuery(query);
-    const entries = await options.memoryStore.searchScheduleEntries({
+    let entries = await options.memoryStore.searchScheduleEntries({
       profileName: context.profile.name,
       source: context.event.source,
       requesterUserId: context.event.source.userId,
@@ -154,8 +342,10 @@ export function createQueryScheduleMemoryHandler(
       date,
       meetingName: args.meeting,
       query: cleanedQuery,
-      limit: args.limit ?? 10
+      limit: 50
     });
+
+    entries = applyScheduleDateIntent(entries, args, now()).slice(0, args.limit ?? 10);
 
     if (entries.length === 0) {
       return { ok: true, replyText: "我找不到符合的服事記憶。" };
@@ -241,7 +431,7 @@ function inferScheduleTypeFromQuery(query: string): AgentScheduleType | undefine
   if (/舉牌|為耶穌/u.test(query)) {
     return "street_sign_service";
   }
-  if (/晨更家族|家族晨更|仙履奇緣/u.test(query)) {
+  if (/晨更|仙履奇緣/u.test(query)) {
     return "morning_prayer_family";
   }
   return undefined;
@@ -322,10 +512,37 @@ function cleanScheduleMemoryQuery(query: string): string {
   return query
     .normalize("NFKC")
     .replace(/小哈/g, " ")
-    .replace(/幫我|請|查|找|看|給我|一下|記住的|服事表|服事/g, " ")
+    .replace(
+      /幫我|請|查|找|看|給我|一下|記住的|服事表|服事|下一次|下次|下一場|下場|最近一場|什麼時候|哪時候|何時|晨更|仙履奇緣|為耶穌|舉牌|是/g,
+      " "
+    )
     .replace(/(?:\d{1,2}|[一二三四五六七八九十兩]{1,3})\s*[/／月]\s*\d{1,2}/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function applyScheduleDateIntent(
+  entries: AgentScheduleEntryRecord[],
+  args: QueryScheduleMemoryArguments,
+  now: Date
+): AgentScheduleEntryRecord[] {
+  const today = toDateKey(now);
+  switch (args.dateIntent) {
+    case "next_meeting":
+      return entries.filter((entry) => entry.serviceDate >= today).slice(0, 1);
+    case "upcoming":
+      return entries.filter((entry) => entry.serviceDate >= today);
+    case "this_week": {
+      const end = addDaysToDateKey(today, 7);
+      return entries.filter((entry) => entry.serviceDate >= today && entry.serviceDate < end);
+    }
+    case "day_after_tomorrow": {
+      const target = addDaysToDateKey(today, 2);
+      return entries.filter((entry) => entry.serviceDate === target);
+    }
+    default:
+      return entries;
+  }
 }
 
 function isConfirmText(value: string | undefined): boolean {

@@ -343,6 +343,37 @@ describe("AgentTurnRuntime", () => {
     );
   });
 
+  it("executes a schedule mutation without asking for full schedule content", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "save_schedule",
+      arguments: {
+        operation: "delete_entry",
+        targetQuery: "世緯家園",
+        content: ""
+      },
+      provider: "keyword"
+    });
+    const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "請確認要刪除這筆服事"
+    });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: { save_schedule: handler },
+      sessionStore: new InMemorySessionStore()
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["save_schedule"]),
+      event: textEvent("小哈刪除世緯家園7/17晨更"),
+      requestId: "req-delete-schedule-entry"
+    });
+
+    expect(result?.replyText).toContain("確認要刪除");
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it("overrides an intro route when the user clearly asks for this week's service schedule", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "respond",

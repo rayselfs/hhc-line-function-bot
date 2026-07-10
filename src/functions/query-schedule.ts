@@ -41,6 +41,21 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
 
   return async (rawArgs, context) => {
     const args = queryScheduleArgumentsSchema.parse(rawArgs);
+    if (isScheduleListRequest(args.query)) {
+      const schedules = await options.memoryStore.listScheduleMemories({
+        profileName: context.profile.name,
+        limit: args.limit ?? 10
+      });
+      return {
+        ok: true,
+        replyText:
+          schedules.length === 0
+            ? "目前沒有保存的服事表。"
+            : ["目前保存的服事表：", ...schedules.map((schedule) => `- ${schedule.title}`)].join(
+                "\n"
+              )
+      };
+    }
     const memorySpecific = Boolean(args.scheduleType) || isMemorySpecificRequest(args.query);
     const results = [];
 
@@ -72,6 +87,10 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
       replyText: ["我找到這些服事安排：", ...found.map((result) => result.replyText)].join("\n\n")
     };
   };
+}
+
+function isScheduleListRequest(query: string): boolean {
+  return /(?:有|已)?(?:存|保存|記住).*(?:哪些|什麼|清單|列表)|有哪些.*服事表/u.test(query);
 }
 
 function isMemorySpecificRequest(query: string): boolean {

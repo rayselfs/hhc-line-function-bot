@@ -135,10 +135,36 @@ export const queryWikipediaArgumentsSchema = z
 
 export const saveScheduleMemoryArgumentsSchema = z
   .object({
+    operation: z
+      .enum(["replace", "add_entry", "update_entry", "delete_entry", "delete_schedule"])
+      .optional(),
     scheduleType: scheduleTypeSchema.optional(),
     title: z.string().optional(),
     content: z.string().optional().default(""),
     query: z.string().optional(),
+    targetQuery: z.string().optional(),
+    entry: z
+      .object({
+        serviceDate: dateKeySchema,
+        weekday: z.string().optional(),
+        meetingName: z.string(),
+        role: z.string().optional(),
+        assignee: z.string(),
+        familyName: z.string().optional(),
+        notes: z.string().optional()
+      })
+      .optional(),
+    changes: z
+      .object({
+        serviceDate: dateKeySchema.optional(),
+        weekday: z.string().optional(),
+        meetingName: z.string().optional(),
+        role: z.string().optional(),
+        assignee: z.string().optional(),
+        familyName: z.string().optional(),
+        notes: z.string().optional()
+      })
+      .optional(),
     visibility: z.enum(["private", "group"]).optional(),
     confirm: z.boolean().optional(),
     cancel: z.boolean().optional()
@@ -152,7 +178,17 @@ export const queryScheduleMemoryArgumentsSchema = z
     scheduleType: scheduleTypeSchema.optional(),
     query: z.string().optional().default(""),
     date: dateKeySchema.optional(),
-    dateIntent: z.enum(["today", "tomorrow", "this_week", "specific_date", "upcoming"]).optional(),
+    dateIntent: z
+      .enum([
+        "today",
+        "tomorrow",
+        "day_after_tomorrow",
+        "this_week",
+        "next_meeting",
+        "specific_date",
+        "upcoming"
+      ])
+      .optional(),
     specificDate: dateKeySchema.optional(),
     meeting: z.string().optional(),
     limit: numericLimitSchema.optional()

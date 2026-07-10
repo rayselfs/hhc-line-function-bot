@@ -32,10 +32,11 @@ describe("generic query clarification", () => {
       ok: true,
       replyText: expect.stringContaining("想查什麼")
     });
-    expect(result?.replyText).toContain("查投影片");
-    expect(result?.replyText).toContain("查服事表");
+    expect(result?.replyText).toContain("名稱、日期或主題");
+    expect(result?.replyText).not.toContain("查投影片");
+    expect(result?.replyText).not.toContain("查服事表");
     expect(result?.replyText).not.toContain("儲存服事表");
-    expect(result?.quickReplies?.map((item) => item.label)).toEqual(["查投影片", "查服事表"]);
+    expect(result?.quickReplies).toBeUndefined();
   });
 
   it("does not intercept a request that already has a query target", () => {

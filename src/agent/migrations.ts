@@ -174,6 +174,38 @@ const migrations = [
   `
   alter table agent_schedule_memories
     add constraint agent_schedule_memories_visibility_check check (visibility in ('private', 'group'))
+  `,
+  `
+  alter table agent_schedule_memories
+    drop constraint if exists agent_schedule_memories_scope_type_check
+  `,
+  `
+  alter table agent_schedule_memories
+    add constraint agent_schedule_memories_scope_type_check
+    check (scope_type in ('user', 'group', 'room', 'profile'))
+  `,
+  `
+  alter table agent_schedule_memories
+    drop constraint if exists agent_schedule_memories_visibility_check
+  `,
+  `
+  alter table agent_schedule_memories
+    add constraint agent_schedule_memories_visibility_check
+    check (visibility in ('private', 'group', 'profile'))
+  `,
+  `
+  alter table agent_schedule_memories
+    add column if not exists period_key text
+  `,
+  `
+  create unique index if not exists agent_schedule_memories_active_period_idx
+  on agent_schedule_memories (profile_name, schedule_type, period_key)
+  where deleted_at is null and period_key is not null
+  `,
+  `
+  alter table agent_schedule_entries
+    add column if not exists updated_at timestamptz not null default now(),
+    add column if not exists deleted_at timestamptz
   `
 ];
 
