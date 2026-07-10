@@ -10,6 +10,10 @@ describe("function definitions", () => {
     );
   });
 
+  it("exposes Wikipedia lookup as a first-class read capability", () => {
+    expect(FUNCTION_NAMES).toContain("query_wikipedia");
+  });
+
   it("carries router prompt, keyword fallback, and quick reply metadata for sheet music", () => {
     const definition = getFunctionDefinition("find_pop_sheet_music");
 

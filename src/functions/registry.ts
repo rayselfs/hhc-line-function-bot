@@ -1,5 +1,7 @@
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
+import { createWikipediaClient, type WikipediaClient } from "../wikipedia/client.js";
+import type { WikipediaSummarizer } from "../wikipedia/lookup.js";
 import { InMemoryAgentMemoryStore, type AgentMemoryStore } from "../agent/memory-store.js";
 import { MemoryCacheStore, type CacheStore } from "../cache/cache-store.js";
 import { createLlmStatusAdminHandler } from "../llm-diagnostics.js";
@@ -22,6 +24,8 @@ export interface RegistryClients {
   sessionStore?: SessionStore;
   cache?: CacheStore;
   memoryStore?: AgentMemoryStore;
+  wikipedia?: WikipediaClient;
+  wikipediaSummarizer?: WikipediaSummarizer;
   now?: () => Date;
   requestIdFactory?: () => string;
   fetchImpl?: typeof fetch;
@@ -53,6 +57,10 @@ export function createFunctionRegistries(
       notion: config.notion
         ? (clients.notion ?? createNotionDatabaseClient(config.notion))
         : undefined,
+      wikipedia: config.wikipedia
+        ? (clients.wikipedia ?? createWikipediaClient(config.wikipedia))
+        : undefined,
+      wikipediaSummarizer: clients.wikipediaSummarizer,
       sessionStore,
       cache,
       memoryStore,

@@ -2,6 +2,7 @@ export const FUNCTION_NAMES = [
   "find_ppt_slides",
   "query_service_schedule",
   "find_pop_sheet_music",
+  "query_wikipedia",
   "save_memory",
   "retrieve_memory",
   "save_schedule_memory",
@@ -52,7 +53,8 @@ export const MODEL_PROVIDER_LANE_NAMES = [
   "memory_routing",
   "smart_talk",
   "general_agent",
-  "context_compression"
+  "context_compression",
+  "web_summarization"
 ] as const;
 
 export type ModelProviderLane = (typeof MODEL_PROVIDER_LANE_NAMES)[number];
@@ -176,6 +178,11 @@ export interface NotionConfig {
   };
 }
 
+export interface WikipediaConfig {
+  userAgent: string;
+  timeoutMs: number;
+}
+
 export interface AppConfig {
   serviceName: string;
   host: string;
@@ -188,6 +195,7 @@ export interface AppConfig {
   llm: LlmConfig;
   graph?: GraphConfig;
   notion?: NotionConfig;
+  wikipedia?: WikipediaConfig;
   redis?: RedisConfig;
   database?: DatabaseConfig;
   access?: AccessConfig;
@@ -414,7 +422,7 @@ export interface TextGenerationRequest {
   prompt: string;
   profileName: string;
   text: string;
-  category: SmallTalkCategory;
+  category?: SmallTalkCategory;
   maxChars?: number;
 }
 

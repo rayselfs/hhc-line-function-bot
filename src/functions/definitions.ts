@@ -3,6 +3,7 @@ import type { z } from "zod";
 import {
   findPopSheetMusicArgumentsSchema,
   findPptSlidesArgumentsSchema,
+  queryWikipediaArgumentsSchema,
   queryScheduleMemoryArgumentsSchema,
   queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
@@ -48,7 +49,7 @@ export interface FunctionDefinition {
   displayName: string;
   shortDescription: string;
   examples: string[];
-  requires: Array<"graph" | "notion" | "session" | "cache" | "memory">;
+  requires: Array<"graph" | "notion" | "session" | "cache" | "memory" | "wikipedia">;
   scope: "profile" | "group_capable";
   sideEffectLevel: FunctionSideEffectLevel;
   allowedSources: FunctionAllowedSource[];
@@ -264,6 +265,39 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     keywordFallback: {
       keywords: ["查舉牌", "查晨更家族", "查記住的服事", "查保存的服事"],
       stripWords: [...commonStripWords, "查", "找", "看", "記住的", "保存的", "服事表"]
+    }
+  },
+  {
+    name: "query_wikipedia",
+    displayName: "查維基百科",
+    shortDescription: "查詢維基百科條目並整理重點。",
+    examples: ["小哈 查維基百科 馬丁路德", "小哈 維基百科告訴我什麼是量子力學"],
+    requires: ["wikipedia"],
+    scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        prompt: "想查哪個維基百科主題？"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "none" },
+    clarificationPrompt: "想查哪個維基百科主題？",
+    description:
+      '- query_wikipedia: look up one encyclopedia topic in Wikipedia. Arguments: {"query":"topic or person to look up"}. Use only for requests that explicitly ask for Wikipedia or ask for a factual encyclopedia explanation.',
+    argumentSchema: queryWikipediaArgumentsSchema,
+    quickReply: {
+      label: "查維基百科",
+      command: "小哈 查維基百科"
+    },
+    helpText: "查維基百科條目並整理重點。",
+    keywordFallback: {
+      keywords: ["維基百科", "wiki", "wikipedia"],
+      stripWords: [...commonStripWords, "維基百科", "wiki", "wikipedia", "查", "查詢", "幫我"]
     }
   },
   {

@@ -1,0 +1,74 @@
+import type { FunctionHandler } from "../types.js";
+import type { WikipediaArticle, WikipediaClient, WikipediaSearchResult } from "./client.js";
+
+export interface WikipediaSummaryInput {
+  profileName: string;
+  query: string;
+  title: string;
+  language: "zh" | "en";
+  extract: string;
+}
+
+export type WikipediaSummarizer = (input: WikipediaSummaryInput) => Promise<string>;
+
+export interface CreateWikipediaLookupHandlerOptions {
+  client: WikipediaClient;
+  summarize: WikipediaSummarizer;
+}
+
+export function createWikipediaLookupHandler(
+  options: CreateWikipediaLookupHandlerOptions
+): FunctionHandler {
+  return async (rawArgs, context) => {
+    const query = typeof rawArgs.query === "string" ? rawArgs.query.trim() : "";
+    if (!query) {
+      return { ok: true, replyText: "想查哪個維基百科主題？" };
+    }
+
+    const zh = await options.client.search("zh", query, 3);
+    const matches = zh.length > 0 ? zh : await options.client.search("en", query, 3);
+    if (matches.length === 0) {
+      return { ok: true, replyText: "維基百科查不到相關資料。" };
+    }
+
+    const selected = selectBestMatch(matches, query);
+    const article = await options.client.getIntro(selected.language, selected.title);
+    if (!article) {
+      return { ok: true, replyText: "維基百科暫時找不到可整理的條目內容。" };
+    }
+
+    const summary = await options.summarize(toSummaryInput(context.profile.name, query, article));
+    return {
+      ok: true,
+      replyText: [article.title, summary.trim(), `來源：${article.articleUrl}`]
+        .filter(Boolean)
+        .join("\n")
+    };
+  };
+}
+
+function selectBestMatch(matches: WikipediaSearchResult[], query: string): WikipediaSearchResult {
+  const normalizedQuery = normalize(query);
+  return (
+    matches.find((match) => normalize(match.title) === normalizedQuery) ??
+    matches[0]!
+  );
+}
+
+function toSummaryInput(
+  profileName: string,
+  query: string,
+  article: WikipediaArticle
+): WikipediaSummaryInput {
+  return {
+    profileName,
+    query,
+    title: article.title,
+    language: article.language,
+    extract: article.extract
+  };
+}
+
+function normalize(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[\s·・._-]/gu, "");
+}

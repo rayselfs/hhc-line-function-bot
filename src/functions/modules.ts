@@ -26,6 +26,8 @@ import {
   SHEET_MUSIC_INDEX_CACHE_PREFIX
 } from "./find-pop-sheet-music.js";
 import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
+import { createWikipediaLookupHandler, type WikipediaSummarizer } from "../wikipedia/lookup.js";
+import type { WikipediaClient } from "../wikipedia/client.js";
 import { createRetrieveMemoryHandler, createSaveMemoryHandler } from "./agent-memory-functions.js";
 import {
   createQueryScheduleMemoryHandler,
@@ -40,6 +42,8 @@ export interface FunctionModuleContext {
     sessionStore: SessionStore;
     cache: CacheStore;
     memoryStore?: AgentMemoryStore;
+    wikipedia?: WikipediaClient;
+    wikipediaSummarizer?: WikipediaSummarizer;
     now?: () => Date;
     requestIdFactory?: () => string;
   };
@@ -506,6 +510,60 @@ export const FUNCTION_MODULES: FunctionModule[] = [
           query_schedule_memory: createQueryScheduleMemoryHandler({
             memoryStore: clients.memoryStore,
             now: clients.now
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "query_wikipedia",
+    definition: requiredDefinition("query_wikipedia"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈 查維基百科 馬丁路德",
+        expected: { type: "execute", action: "query_wikipedia", arguments: { query: "馬丁路德" } }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈 查維基百科",
+        expected: { type: "execute", action: "query_wikipedia", arguments: { query: "" } }
+      },
+      {
+        kind: "typo",
+        text: "小哈 維基百科 馬丁路得",
+        expected: { type: "execute", action: "query_wikipedia", arguments: { query: "馬丁路得" } }
+      },
+      {
+        kind: "negative",
+        text: "小哈 幫我買咖啡",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 查維基百科 馬丁路德",
+        enabledFunctions: withoutFunction("query_wikipedia"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 查投影片 奇異恩典",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "奇異恩典", matchMode: "fuzzy" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.wikipedia || !clients.wikipediaSummarizer) {
+        return {};
+      }
+      return {
+        functions: {
+          query_wikipedia: createWikipediaLookupHandler({
+            client: clients.wikipedia,
+            summarize: clients.wikipediaSummarizer
           })
         }
       };

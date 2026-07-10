@@ -42,6 +42,19 @@ async function withProfileFile<T>(
 }
 
 describe("config", () => {
+  it("configures an identifiable Wikimedia API client without a secret", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      WIKIMEDIA_USER_AGENT: "HHCLineBot/1.0 (https://alive.org.tw/contact)",
+      WIKIPEDIA_TIMEOUT_MS: "9000"
+    });
+
+    expect(config.wikipedia).toEqual({
+      userAgent: "HHCLineBot/1.0 (https://alive.org.tw/contact)",
+      timeoutMs: 9000
+    });
+  });
+
   it("loads a production profile from PROFILE_CONFIG_PATH", async () => {
     await withProfileFile(
       [

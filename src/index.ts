@@ -6,6 +6,7 @@ import { createAccessStore } from "./access/create-access-store.js";
 import { RedisRegistrationInviteCodeStore } from "./access/registration-invite-code-store.js";
 import { createAgentMemoryStore } from "./agent/create-agent-memory-store.js";
 import { createAgentRuntime } from "./agent/agent-runtime.js";
+import { createWikipediaSummarizer } from "./wikipedia/summarizer.js";
 import { RedisAgentJobStore } from "./agent/jobs.js";
 import { RedisConversationWindowStore } from "./agent/context-manager.js";
 import { createCacheStore } from "./cache/create-cache-store.js";
@@ -85,6 +86,18 @@ const smartTalkFallback = createProfileAwareProvider({
   role: "fallback",
   lane: "smart_talk"
 });
+const wikipediaSummaryPrimary = createProfileAwareProvider({
+  config,
+  providers,
+  role: "primary",
+  lane: "web_summarization"
+});
+const wikipediaSummaryFallback = createProfileAwareProvider({
+  config,
+  providers,
+  role: "fallback",
+  lane: "web_summarization"
+});
 const router = createFunctionRouter({
   primary: functionRoutingPrimary,
   modelFallback: functionRoutingFallback,
@@ -130,7 +143,11 @@ const registries = createFunctionRegistries(config, {
   notion,
   sessionStore,
   cache,
-  memoryStore
+  memoryStore,
+  wikipediaSummarizer: createWikipediaSummarizer({
+    primary: wikipediaSummaryPrimary,
+    fallback: wikipediaSummaryFallback
+  })
 });
 const app = createApp(config, {
   router,

@@ -5,6 +5,7 @@ export const routerEvalEnabledFunctions: FunctionName[] = [
   "find_ppt_slides",
   "query_service_schedule",
   "find_pop_sheet_music",
+  "query_wikipedia",
   "save_memory",
   "retrieve_memory",
   "save_schedule_memory",

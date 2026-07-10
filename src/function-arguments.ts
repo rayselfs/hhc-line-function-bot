@@ -80,6 +80,12 @@ export const retrieveMemoryArgumentsSchema = z
   })
   .strip();
 
+export const queryWikipediaArgumentsSchema = z
+  .object({
+    query: z.string().optional().default("")
+  })
+  .strip();
+
 export const saveScheduleMemoryArgumentsSchema = z
   .object({
     scheduleType: scheduleTypeSchema.optional(),
@@ -108,6 +114,7 @@ export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleA
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
 export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
 export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
+export type QueryWikipediaArguments = z.infer<typeof queryWikipediaArgumentsSchema>;
 export type SaveScheduleMemoryArguments = z.infer<typeof saveScheduleMemoryArgumentsSchema>;
 export type QueryScheduleMemoryArguments = z.infer<typeof queryScheduleMemoryArgumentsSchema>;
 
@@ -119,6 +126,7 @@ export function parseFunctionArguments(
     find_ppt_slides: findPptSlidesArgumentsSchema,
     query_service_schedule: queryServiceScheduleArgumentsSchema,
     find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
+    query_wikipedia: queryWikipediaArgumentsSchema,
     save_memory: saveMemoryArgumentsSchema,
     retrieve_memory: retrieveMemoryArgumentsSchema,
     save_schedule_memory: saveScheduleMemoryArgumentsSchema,

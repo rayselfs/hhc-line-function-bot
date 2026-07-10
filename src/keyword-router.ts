@@ -187,7 +187,11 @@ function extractArguments(rule: KeywordRule, text: string): JsonRecord {
       : cleanupQuery(text, rule.keywordFallback.stripWords);
   const query =
     cleanedQuery ||
-    (rule.name === "find_ppt_slides" || rule.name === "find_pop_sheet_music" ? "" : text.trim());
+    (rule.name === "find_ppt_slides" ||
+    rule.name === "find_pop_sheet_music" ||
+    rule.name === "query_wikipedia"
+      ? ""
+      : text.trim());
   const argumentsRecord: JsonRecord = {
     ...(rule.keywordFallback.defaultArguments ?? {}),
     query
