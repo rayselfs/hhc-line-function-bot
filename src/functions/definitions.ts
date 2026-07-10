@@ -4,11 +4,13 @@ import {
   findPopSheetMusicArgumentsSchema,
   findPptSlidesArgumentsSchema,
   queryWikipediaArgumentsSchema,
+  queryScheduleArgumentsSchema,
   queryScheduleMemoryArgumentsSchema,
   queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
   saveMemoryArgumentsSchema,
   saveResourceArgumentsSchema,
+  saveScheduleArgumentsSchema,
   saveScheduleMemoryArgumentsSchema
 } from "../function-arguments.js";
 import type { AgentResourceType, FunctionName, JsonRecord } from "../types.js";
@@ -65,6 +67,7 @@ export interface FunctionDefinition {
     command: string;
   };
   helpText: string;
+  deprecated?: boolean;
   keywordFallback?: FunctionKeywordFallback;
 }
 
@@ -111,7 +114,85 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     }
   },
   {
+    name: "query_schedule",
+    displayName: "查服事表",
+    shortDescription: "依日期、聚會或服事類型查詢目前可用的服事安排。",
+    examples: [
+      "小哈 下一場服事表",
+      "小哈 查主日服事",
+      "小哈 查 7/19 舉牌服事",
+      "小哈 查 7/17 晨更家族服事"
+    ],
+    requires: ["memory"],
+    scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "schedule_range_or_type",
+        argument: "query",
+        missingWhen: "service_schedule_generic",
+        prompt: "要查哪一天、哪一場聚會，或哪一類服事？",
+        quickReplies: [
+          { label: "下一場", text: "下一場服事" },
+          { label: "本週", text: "本週服事" },
+          { label: "主日", text: "主日服事" },
+          { label: "舉牌", text: "查舉牌服事" }
+        ]
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "retrieve_text" },
+    clarificationPrompt: "要查哪一天、哪一場聚會，或哪一類服事？",
+    description:
+      '- query_schedule: query service schedules by date, meeting, role, or schedule type. It may combine configured schedule sources, but never mention or ask the user to choose an internal data source. Arguments: {"query":"user request", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD optional", "meeting":"optional", "role":"optional", "limit":number optional}.',
+    argumentSchema: queryScheduleArgumentsSchema,
+    quickReply: {
+      label: "查服事表",
+      command: "小哈 查服事表"
+    },
+    helpText: "依日期、聚會或類型查服事表，例如下一場、主日、晨更或舉牌。",
+    keywordFallback: {
+      keywords: ["服事表", "服事"],
+      stripWords: [...commonStripWords]
+    }
+  },
+  {
+    name: "save_schedule",
+    displayName: "記服事表",
+    shortDescription: "把文字版服事表整理為可查詢的短期記憶。",
+    examples: ["小哈幫我記住這份晨更服事表：七/10五黃弘家族2"],
+    requires: ["memory", "session"],
+    scope: "group_capable",
+    sideEffectLevel: "write",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "content",
+        argument: "content",
+        missingWhen: "blank",
+        prompt: "請貼上要記住的服事表文字內容。"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "explicit_text" },
+    clarificationPrompt: "請貼上要記住的服事表文字內容。",
+    description:
+      '- save_schedule: save one canonical structured text-only service schedule. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "visibility":"private|group optional", "confirm":boolean optional}. Preview first unless confirm is true. Do not use for images.',
+    argumentSchema: saveScheduleArgumentsSchema,
+    quickReply: {
+      label: "記服事表",
+      command: "小哈 幫我記住服事表"
+    },
+    helpText: "貼上文字版服事表，先整理預覽，確認後保存 30 天。",
+    keywordFallback: {
+      keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
+      stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]
+    }
+  },
+  {
     name: "query_service_schedule",
+    deprecated: true,
     displayName: "查服事表",
     shortDescription: "幫你看近期聚會的服事安排。",
     examples: ["小哈 下一場聚會服事表", "小哈 查主日服事"],
@@ -204,6 +285,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   },
   {
     name: "save_schedule_memory",
+    deprecated: true,
     displayName: "記服事表",
     shortDescription: "把文字版服事表整理成可查詢的短期記憶。",
     examples: ["小哈幫我記住這份晨更服事表：七/10五黃弘家族2"],
@@ -237,6 +319,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   },
   {
     name: "query_schedule_memory",
+    deprecated: true,
     displayName: "查記住的服事",
     shortDescription: "查詢已記住的文字版服事表，不混用既有影視團隊服事表。",
     examples: ["小哈查7/19舉牌", "小哈查7/17晨更家族服事"],
@@ -437,4 +520,14 @@ export function getFunctionDefinitions(names: FunctionName[]): FunctionDefinitio
   return names
     .map((name) => getFunctionDefinition(name))
     .filter((definition): definition is FunctionDefinition => Boolean(definition));
+}
+
+export function isGrantableFunctionName(name: FunctionName): boolean {
+  return !getFunctionDefinition(name)?.deprecated;
+}
+
+export function userFacingFunctionNames(): FunctionName[] {
+  return FUNCTION_DEFINITIONS.filter((definition) => !definition.deprecated).map(
+    (definition) => definition.name
+  );
 }

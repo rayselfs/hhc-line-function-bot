@@ -1,10 +1,12 @@
 import type { AccessStore } from "../access/types.js";
 import type { RegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
-import type { WebAllowlistEntry, WebAllowlistStore } from "../web/allowlist.js";
 import { InMemoryConfirmationStore, type ConfirmationStore } from "./confirmation-store.js";
-import { getFunctionDefinition } from "../functions/definitions.js";
 import {
-  FUNCTION_NAMES,
+  getFunctionDefinition,
+  isGrantableFunctionName,
+  userFacingFunctionNames
+} from "../functions/definitions.js";
+import {
   isFunctionName,
   type AdminActionName,
   type BotProfileConfig,
@@ -21,7 +23,6 @@ export interface AdminActionRegistryOptions {
   registrationInviteCodeTtlMinutes: number;
   confirmationStore?: ConfirmationStore;
   confirmationTtlMinutes?: number;
-  webAllowlistStore?: WebAllowlistStore;
 }
 
 export interface AdminActionExecutionInput {
@@ -80,10 +81,6 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     switch (input.action) {
       case "invite_code_create":
         return this.createInviteCode(input.profile, input.event.source.userId);
-      case "web_allowlist_list":
-        return this.listWebAllowlist(input.profile);
-      case "web_allowlist_add":
-        return this.addWebAllowlist(input);
       case "function_scope_grant":
         return this.grantFunctionScope(input);
       case "function_scope_revoke":
@@ -172,64 +169,6 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         "請複製下面這一行給要開通的使用者或群組：",
         `/registry ${invite.code}`
       ].join("\n")
-    };
-  }
-
-  private async listWebAllowlist(profile: BotProfileConfig): Promise<FunctionExecutionResult> {
-    const store = this.options.webAllowlistStore;
-    if (!store) {
-      return { ok: true, replyText: "Web allowlist store is not configured." };
-    }
-    const entries = await store.list(profile.name);
-    return {
-      ok: true,
-      replyText:
-        entries.length === 0
-          ? "Web allowlist\n(none)"
-          : ["Web allowlist", ...entries.map(formatWebAllowlistEntry)].join("\n")
-    };
-  }
-
-  private async addWebAllowlist(
-    input: AdminActionExecutionInput
-  ): Promise<FunctionExecutionResult> {
-    const store = this.options.webAllowlistStore;
-    if (!store) {
-      return { ok: true, replyText: "Web allowlist store is not configured." };
-    }
-    const actorUserId = input.event.source.userId;
-    if (!actorUserId) {
-      return { ok: true, replyText: "你沒有權限使用 admin 指令。" };
-    }
-    const target = parseWebAllowlistTarget(input.arguments);
-    if (!target.ok) {
-      return { ok: true, replyText: target.replyText };
-    }
-    const entry = await store.add({
-      profileName: input.profile.name,
-      domain: target.domain,
-      pathPrefix: target.pathPrefix,
-      label: target.label,
-      createdBy: actorUserId
-    });
-    await this.options.accessStore.recordAudit({
-      profileName: input.profile.name,
-      actorUserId,
-      action: "web_allowlist.add",
-      targetType: "web_allowlist",
-      targetId: entry.id,
-      metadata: { domain: entry.domain, pathPrefix: entry.pathPrefix }
-    });
-    return {
-      ok: true,
-      replyText: [
-        "Added web allowlist",
-        `id: ${entry.id}`,
-        `domain: ${entry.domain}`,
-        entry.pathPrefix ? `path: ${entry.pathPrefix}` : undefined
-      ]
-        .filter((line): line is string => Boolean(line))
-        .join("\n")
     };
   }
 
@@ -406,59 +345,6 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
   }
 }
 
-function formatWebAllowlistEntry(entry: WebAllowlistEntry): string {
-  return [
-    `- ${entry.id}`,
-    entry.enabled ? "enabled" : "disabled",
-    entry.domain,
-    entry.pathPrefix ? `path=${entry.pathPrefix}` : undefined,
-    entry.label ? `label=${entry.label}` : undefined
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function parseWebAllowlistTarget(
-  args: JsonRecord | undefined
-):
-  | { ok: true; domain: string; pathPrefix?: string; label?: string }
-  | { ok: false; replyText: string } {
-  const rawTarget = readStringArg(args, ["url", "domain", "website", "target"]);
-  if (!rawTarget) {
-    return {
-      ok: false,
-      replyText: "請提供要加入白名單的 HTTPS 網址或 domain，例如：https://example.org"
-    };
-  }
-  const explicitPathPrefix = readStringArg(args, ["pathPrefix", "path", "path_prefix"]);
-  const label = readStringArg(args, ["label", "name"]);
-
-  if (/^http:\/\//iu.test(rawTarget)) {
-    return { ok: false, replyText: "只支援 HTTPS 網址。" };
-  }
-  if (/^https:\/\//iu.test(rawTarget)) {
-    try {
-      const url = new URL(rawTarget);
-      return {
-        ok: true,
-        domain: url.hostname,
-        pathPrefix:
-          explicitPathPrefix ?? (url.pathname && url.pathname !== "/" ? url.pathname : undefined),
-        label
-      };
-    } catch {
-      return { ok: false, replyText: "網址格式不正確，請提供 HTTPS 網址。" };
-    }
-  }
-
-  return {
-    ok: true,
-    domain: rawTarget,
-    pathPrefix: explicitPathPrefix,
-    label
-  };
-}
-
 function parseFunctionScopeArgs(input: AdminActionExecutionInput):
   | {
       ok: true;
@@ -475,7 +361,7 @@ function parseFunctionScopeArgs(input: AdminActionExecutionInput):
   if (!functionName) {
     return {
       ok: false,
-      replyText: `請提供 functionName，可用功能：${FUNCTION_NAMES.join(", ")}`
+      replyText: `請提供 functionName，可用功能：${userFacingFunctionNames().join(", ")}`
     };
   }
   const target = readFunctionScopeTarget(input.arguments, input.event);
@@ -489,7 +375,7 @@ type FunctionScopeTarget = { type: "group"; groupId: string } | { type: "user"; 
 
 function readFunctionName(args: JsonRecord | undefined): FunctionName | undefined {
   const value = readStringArg(args, ["functionName", "function", "function_name", "name"]);
-  return value && isFunctionName(value) ? value : undefined;
+  return value && isFunctionName(value) && isGrantableFunctionName(value) ? value : undefined;
 }
 
 function readTargetGroupId(args: JsonRecord | undefined, event: LineEvent): string | undefined {

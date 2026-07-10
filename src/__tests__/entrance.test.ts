@@ -12,7 +12,6 @@ import { createPendingFunctionTextMessageHandler } from "../functions/pending-fu
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
 import { InMemorySessionStore } from "../state/session-store.js";
-import { InMemoryWebAllowlistStore } from "../web/allowlist.js";
 import type {
   AppConfig,
   FunctionExecutionResult,
@@ -1310,7 +1309,7 @@ describe("LINE entrance", () => {
     await accessStore.addUserFunctionGrant({
       profileName: "main",
       userId: "Uallowed",
-      functionName: "save_schedule_memory",
+      functionName: "save_schedule",
       createdBy: "Uadmin"
     });
     const app = createTestApp(config, {
@@ -1336,7 +1335,7 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+        enabledFunctions: ["query_service_schedule", "save_schedule"]
       })
     );
   });
@@ -1361,7 +1360,7 @@ describe("LINE entrance", () => {
       type: "message",
       replyToken: "grant-reply",
       source: { type: "user", userId: "Uadmin" },
-      message: { type: "text", text: "/function-user-grant save_schedule_memory Uallowed" }
+      message: { type: "text", text: "/function-user-grant save_schedule Uallowed" }
     });
     const routeBody = lineBody({
       type: "message",
@@ -1384,14 +1383,14 @@ describe("LINE entrance", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(replyText.mock.calls[0]?.[1]).toContain("save_schedule_memory");
+    expect(replyText.mock.calls[0]?.[1]).toContain("save_schedule");
     await expect(accessStore.listUserFunctionGrants("main", "Uallowed")).resolves.toEqual([
-      "save_schedule_memory"
+      "save_schedule"
     ]);
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+        enabledFunctions: ["query_service_schedule", "save_schedule"]
       })
     );
   });
@@ -1717,6 +1716,35 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[0]?.[1]).toContain("我能：查投影片、查服事表。");
     expect(replyText.mock.calls[0]?.[1]).not.toContain("我是小哈");
     expect(replyText.mock.calls[0]?.[1]).toContain("你可以試試：");
+  });
+
+  it("does not disclose profile write functions in a regular user's capability reply", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["query_schedule", "save_schedule", "save_resource"];
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createTestApp(config, {
+      router: { route },
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "小哈你能做什麼" }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    const reply = String(replyText.mock.calls[0]?.[1]);
+    expect(reply).toContain("查服事表");
+    expect(reply).not.toContain("記服事表");
+    expect(reply).not.toContain("保存連結資源");
   });
 
   it("introduces sheet music lookup without exposing storage details", async () => {
@@ -2399,61 +2427,6 @@ describe("LINE entrance", () => {
     );
   });
 
-  it("lets admins manage the controlled web allowlist", async () => {
-    const route = vi.fn<FunctionRouterPort["route"]>();
-    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const accessStore = new InMemoryAccessStore();
-    const webAllowlistStore = new InMemoryWebAllowlistStore({
-      now: () => new Date("2026-07-08T10:00:00.000Z")
-    });
-    const app = createApp(accessConfig(), {
-      router: { route },
-      accessStore,
-      webAllowlistStore,
-      createLineReplyClient: () => ({ replyText })
-    });
-
-    const addBody = lineBody({
-      type: "message",
-      replyToken: "reply-token-1",
-      source: { type: "user", userId: "Uroot" },
-      message: { type: "text", text: "/web-allowlist-add example.org /news" }
-    });
-    const addRes = await app.inject({
-      method: "POST",
-      url: "/api/line/webhook/helper",
-      headers: signedHeaders(addBody, "helper-secret"),
-      payload: addBody
-    });
-
-    expect(addRes.statusCode).toBe(200);
-    expect(replyText.mock.calls[0]?.[1]).toContain("example.org");
-
-    const listBody = lineBody({
-      type: "message",
-      replyToken: "reply-token-2",
-      source: { type: "user", userId: "Uroot" },
-      message: { type: "text", text: "/web-allowlist" }
-    });
-    const listRes = await app.inject({
-      method: "POST",
-      url: "/api/line/webhook/helper",
-      headers: signedHeaders(listBody, "helper-secret"),
-      payload: listBody
-    });
-
-    expect(listRes.statusCode).toBe(200);
-    expect(replyText.mock.calls[1]?.[1]).toContain("path=/news");
-    expect(accessStore.audit).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "web_allowlist.add",
-          targetType: "web_allowlist"
-        })
-      ])
-    );
-  });
-
   it("lets admins create an invite code through direct natural language", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const adminRoute = vi.fn().mockResolvedValue({
@@ -2502,51 +2475,6 @@ describe("LINE entrance", () => {
         })
       ])
     );
-  });
-
-  it("passes natural-language admin route arguments to the registry", async () => {
-    const route = vi.fn<FunctionRouterPort["route"]>();
-    const adminRoute = vi.fn().mockResolvedValue({
-      type: "execute",
-      action: "web_allowlist_add",
-      arguments: { url: "https://example.org/news", label: "Example" },
-      provider: "ollama"
-    });
-    const adminActionRegistry = {
-      execute: vi.fn().mockResolvedValue({ ok: true, replyText: "added" }),
-      confirm: vi.fn()
-    };
-    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(accessConfig(), {
-      router: { route },
-      adminActionRouter: { route: adminRoute },
-      adminActionRegistry,
-      accessStore: new InMemoryAccessStore(),
-      createLineReplyClient: () => ({ replyText })
-    });
-
-    const body = lineBody({
-      type: "message",
-      replyToken: "reply-token",
-      source: { type: "user", userId: "Uroot" },
-      message: { type: "text", text: "allow website https://example.org/news" }
-    });
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/line/webhook/helper",
-      headers: signedHeaders(body, "helper-secret"),
-      payload: body
-    });
-
-    expect(res.statusCode).toBe(200);
-    expect(route).not.toHaveBeenCalled();
-    expect(adminActionRegistry.execute).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "web_allowlist_add",
-        arguments: { url: "https://example.org/news", label: "Example" }
-      })
-    );
-    expect(replyText).toHaveBeenCalledWith("reply-token", "added", undefined);
   });
 
   it("lets admins manage current-group function scope through natural language", async () => {

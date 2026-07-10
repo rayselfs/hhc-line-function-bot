@@ -26,12 +26,14 @@ import {
   SHEET_MUSIC_INDEX_CACHE_PREFIX
 } from "./find-pop-sheet-music.js";
 import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
+import { createQueryScheduleHandler } from "./query-schedule.js";
 import { createWikipediaLookupHandler, type WikipediaSummarizer } from "../wikipedia/lookup.js";
 import type { WikipediaClient } from "../wikipedia/client.js";
 import { createRetrieveMemoryHandler, createSaveMemoryHandler } from "./agent-memory-functions.js";
 import { createSaveResourceHandler } from "./save-resource.js";
 import {
   createQueryScheduleMemoryHandler,
+  createSaveScheduleHandler,
   createSaveScheduleMemoryHandler
 } from "./schedule-memory.js";
 
@@ -163,6 +165,146 @@ export const FUNCTION_MODULES: FunctionModule[] = [
             graph: clients.graph,
             sessionStore: clients.sessionStore,
             now: clients.now
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "query_schedule",
+    definition: requiredDefinition("query_schedule"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈 下一場聚會服事表",
+        expected: {
+          type: "execute",
+          action: "query_schedule",
+          arguments: { query: "下一場聚會服事表" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈 查服事表",
+        expected: {
+          type: "execute",
+          action: "query_schedule",
+          arguments: { query: "小哈 查服事表" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈 查7/19舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule",
+          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈 幫我訂便當",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 下一場聚會服事表",
+        enabledFunctions: withoutFunction("query_schedule"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 查投影片 主日報告",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "主日報告", matchMode: "fuzzy" }
+        }
+      }
+    ],
+    register: ({ config, clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          query_schedule: createQueryScheduleHandler({
+            memoryStore: clients.memoryStore,
+            notion: clients.notion,
+            databaseId: config.notion?.databaseId,
+            properties: config.notion?.properties,
+            timeZone: config.timeZone,
+            sessionStore: clients.sessionStore,
+            now: clients.now,
+            requestIdFactory: clients.requestIdFactory
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "save_schedule",
+    definition: requiredDefinition("save_schedule"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
+        expected: {
+          type: "execute",
+          action: "save_schedule",
+          arguments: { content: "七/10五黃弘家族2" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈記住晨更服事表",
+        expected: {
+          type: "execute",
+          action: "save_schedule",
+          arguments: { content: "" }
+        }
+      },
+      {
+        kind: "typo",
+        text: "小哈保存舉牌服事表：7/19黃弘家族(音樂人)",
+        expected: {
+          type: "execute",
+          action: "save_schedule",
+          arguments: { content: "7/19黃弘家族(音樂人)" }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈今天晚餐吃什麼",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
+        enabledFunctions: withoutFunction("save_schedule"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查7/19舉牌",
+        expected: {
+          type: "execute",
+          action: "query_schedule",
+          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          save_schedule: createSaveScheduleHandler({
+            memoryStore: clients.memoryStore,
+            sessionStore: clients.sessionStore,
+            now: clients.now,
+            requestIdFactory: clients.requestIdFactory
           })
         }
       };
@@ -497,7 +639,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         text: "小哈查服事表",
         expected: {
           type: "execute",
-          action: "query_service_schedule",
+          action: "query_schedule",
           arguments: { query: "小哈查服事表" }
         }
       }
@@ -757,7 +899,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         text: "小哈查服事表",
         expected: {
           type: "execute",
-          action: "query_service_schedule",
+          action: "query_schedule",
           arguments: { query: "小哈查服事表" }
         }
       }
@@ -779,11 +921,21 @@ export const FUNCTION_MODULES: FunctionModule[] = [
 ];
 
 export function getRouterEvalCases(): RouterEvalCase[] {
-  return FUNCTION_MODULES.flatMap((module) => module.routerEvalCases);
+  return FUNCTION_MODULES.filter((module) => !module.definition.deprecated).flatMap(
+    (module) => module.routerEvalCases
+  );
 }
 
 function withoutFunction(name: FunctionName): FunctionName[] {
-  return FUNCTION_NAMES.filter((functionName) => functionName !== name);
+  const legacyAlias =
+    name === "query_schedule"
+      ? "query_service_schedule"
+      : name === "save_schedule"
+        ? "save_schedule_memory"
+        : undefined;
+  return FUNCTION_NAMES.filter(
+    (functionName) => functionName !== name && functionName !== legacyAlias
+  );
 }
 
 function requiredDefinition(name: FunctionName): FunctionDefinition {

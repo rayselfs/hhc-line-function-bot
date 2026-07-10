@@ -37,6 +37,7 @@ export function normalizeFunctionArguments(
       return normalizePptSlideArguments(args, input);
     case "find_pop_sheet_music":
       return normalizeSheetMusicArguments(args, input);
+    case "query_schedule":
     case "query_service_schedule":
       return normalizeServiceScheduleArguments(args, input);
     default:

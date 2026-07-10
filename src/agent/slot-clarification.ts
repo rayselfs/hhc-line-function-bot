@@ -69,7 +69,12 @@ export function applyPendingSlotAnswer(
   args: JsonRecord,
   answer: string
 ): JsonRecord {
-  if (action === "save_schedule_memory" || action === "save_memory" || action === "save_resource") {
+  if (
+    action === "save_schedule_memory" ||
+    action === "save_schedule" ||
+    action === "save_memory" ||
+    action === "save_resource"
+  ) {
     return {
       ...args,
       confirm: /^(保存|確認|確定|好|可以|存)$/u.test(answer.trim()),

@@ -190,8 +190,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
           }
         : undefined,
     wikipedia: {
-      userAgent:
-        env.WIKIMEDIA_USER_AGENT || "HHCLineBot/1.0 (https://alive.org.tw/contact)",
+      userAgent: env.WIKIMEDIA_USER_AGENT || "HHCLineBot/1.0 (https://alive.org.tw/contact)",
       timeoutMs: readInt(env.WIKIPEDIA_TIMEOUT_MS, 8000)
     },
     redis: env.REDIS_URL?.trim()

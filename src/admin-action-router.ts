@@ -178,7 +178,6 @@ function buildAdminRouterPrompt(enabledActions: string[]): string {
     "Never invent an action name.",
     "When executing an action, include an arguments object with only fields explicitly present or safely inferred from the user text.",
     "Known argument fields:",
-    "- web_allowlist_add: url or domain, optional pathPrefix, optional label.",
     "- function_scope_grant/function_scope_revoke: functionName, optional targetType ('group' or 'user'), optional groupId, optional userId. If the source is a group and the user says this group/current group, omit groupId and use targetType='group'. If the text names a user id, use targetType='user' and userId.",
     "- function_scope_list: optional targetType ('group' or 'user'), optional groupId, optional userId. If the source is a group and the user asks about this group/current group, omit groupId and use targetType='group'.",
     "Available admin actions:",

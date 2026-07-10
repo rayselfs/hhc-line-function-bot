@@ -37,32 +37,6 @@ describe("admin action router", () => {
     });
   });
 
-  it("routes web allowlist requests with provider arguments", async () => {
-    const qwen = provider(
-      JSON.stringify({
-        action: "web_allowlist_add",
-        confidence: 0.91,
-        arguments: { url: "https://example.org/news", label: "Example" }
-      })
-    );
-    const router = createAdminActionRouter({ primary: qwen });
-
-    const result = await router.route({
-      profileName: "helper",
-      text: "allow https://example.org/news for web lookup",
-      enabledActions: ["web_allowlist_add"],
-      source: { type: "user", userId: "Uroot" }
-    });
-
-    expect(result).toEqual({
-      type: "execute",
-      action: "web_allowlist_add",
-      arguments: { url: "https://example.org/news", label: "Example" },
-      confidence: 0.91,
-      provider: "ollama"
-    });
-  });
-
   it("denies unknown admin actions", async () => {
     const router = createAdminActionRouter({
       primary: provider(JSON.stringify({ action: "access_delete_everything" }))

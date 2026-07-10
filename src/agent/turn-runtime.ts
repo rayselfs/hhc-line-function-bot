@@ -84,6 +84,7 @@ const IN_FLIGHT_TTL_MS = 120_000;
 const IN_FLIGHT_FUNCTIONS = new Set<FunctionName>([
   "find_ppt_slides",
   "find_pop_sheet_music",
+  "query_schedule",
   "query_service_schedule"
 ]);
 
@@ -179,7 +180,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         });
         if (result) {
           if (result.executedAction) {
-            await recordFunctionWriteAudit(options.accessStore, context, result.executedAction, {}, result);
+            await recordFunctionWriteAudit(
+              options.accessStore,
+              context,
+              result.executedAction,
+              {},
+              result
+            );
           }
           const textHandlerFunctionName = functionNameForAgentResource(
             result.agentResource?.resourceType

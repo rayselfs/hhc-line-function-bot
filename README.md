@@ -16,25 +16,26 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Clarification state for missing slots, so users can ask `查投影片`, `查流行歌譜`, or generic `查服事表` and answer the follow-up with just the missing value.
 - Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
-- Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, explicit text/resource memories, and resource aliases.
+- Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, and explicit text/resource memories.
 - Requester-scoped short conversation windows, so group follow-up messages can continue naturally without letting other users inherit context.
 - Long-running task handoff: slow turns can reply with a "check result" postback instead of using LINE push quota.
-- Controlled web allowlist storage and admin commands for future safe web lookup features.
+- Free Wikipedia-only lookup: Chinese Wikipedia first, English fallback, then source-bounded summary generation.
 - Optional Redis backend for sessions, cache, recent errors, rate limiting, and one-time registration invite codes.
 - Per-profile access policy with PostgreSQL-backed user/group/admin registration.
 - Public `/help`, `/registry <code>`, and `/whoami` commands.
 - Direct-chat admin commands for a single bootstrap `adminUserId` plus DB-managed admins.
-- Admin natural language for selected management actions: invite-code creation, web allowlist add/list, and group function scope management.
+- Admin natural language for selected management actions: invite-code creation and group function scope management.
 - Minimal `/healthz`, data-layer `/readyz`, and admin-only `/diag` diagnostics.
 - Destructive admin-action confirmation infrastructure through `/confirm <code>`.
 - Function handlers:
   - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
-  - `query_service_schedule`: queries Notion with env-configured property mapping.
+  - `query_schedule`: one user-facing service-schedule query that selects configured sources without exposing them.
   - `find_pop_sheet_music`: searches a configured OneDrive/SharePoint sheet music folder recursively, including shortcut folders, and returns 24 hour sharing links.
-  - `save_memory`: saves text only when the user explicitly asks the bot to remember it.
+  - `query_wikipedia`: reads a matching Wikipedia introduction and returns a source-bounded summary.
+  - `save_memory`: previews and saves explicit text only after confirmation.
+  - `save_resource`: previews and saves an explicit HTTPS PPT/sheet-music link only after confirmation.
   - `retrieve_memory`: retrieves explicitly saved text memories.
-  - `save_schedule_memory`: previews and saves pasted text-only service schedules as scoped 30 day structured memory.
-  - `query_schedule_memory`: queries structured schedule memories such as morning-prayer family schedules or street-sign service schedules without mixing them with the Notion media-team schedule.
+  - `save_schedule`: previews and saves one canonical text-only service schedule as scoped 30-day structured memory.
 
 Disabled, unknown, unclear, or explicitly denied actions are denied. There is no Azure OpenAI fallback in this version.
 
@@ -173,10 +174,9 @@ Bootstrap superadmin direct-chat commands for LLM provider operations:
 Keyword fallback is intentionally narrow:
 
 - `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`
-- `query_service_schedule`: `服事表`, `服事`
+- `query_schedule`: `服事表`, `服事`
 - `find_pop_sheet_music`: `流行歌譜`, `流行歌曲樂譜`, `樂譜`, `歌譜`, `sheet music`
-- `save_schedule_memory`: `記住晨更`, `記住舉牌`, or pasted text schedules with date rows.
-- `query_schedule_memory`: `查舉牌`, `查晨更家族`, `查仙履奇緣`.
+- `save_schedule`: `記住晨更`, `記住舉牌`, or pasted text schedules with date rows.
 
 Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
 
@@ -198,15 +198,15 @@ Multi-result PPT and sheet music searches store short-lived in-memory sessions a
 
 If a PPT or sheet music request is missing the title keyword, the bot stores a short-lived pending function session and asks for the missing title. The user's next plain-text reply from the same LINE source and requester fills the missing `query` argument and runs the original function.
 
-If a service schedule request is too generic, such as `查服事表`, the bot asks which range to use and offers Quick Replies for `下一場`, `本週`, `明天`, and `主日`.
+If a schedule request is too generic, such as `查服事表`, the bot asks which date, meeting, or schedule type to use and offers Quick Replies.
 
 ## Agent Runtime And Memory
 
-The agent turn runtime centralizes natural-language task execution after LINE entrance checks. It handles pre-route memory follow-ups, pending text sessions, admin natural-language actions, routing, missing-slot clarification, memory aliases, in-flight duplicate locks, function execution, and sanitized turn traces.
+The agent turn runtime centralizes natural-language task execution after LINE entrance checks. It handles pre-route resource recall, pending text sessions, admin natural-language actions, routing, missing-slot clarification, in-flight duplicate locks, function execution, and sanitized turn traces.
 
 This keeps new functions on a consistent contract: define the capability, normalize arguments, add any required slots, register the handler, and let the runtime apply the shared safety rails.
 
-The memory layer adds controlled memory without making the bot an unrestricted chat recorder.
+The memory layer adds controlled memory without making the bot an unrestricted chat recorder. Explicit group memories are private to the requester by default; group sharing must be explicit. Writes are confirmed and audited, owner/admin deletion is enforced, and expired records are physically purged.
 
 - Recent PPT and sheet music results store only resource metadata: profile, LINE scope, requester, file title, Graph drive id, and item id.
 - This automatic resource metadata is a controlled read-function exception for recall and aliasing. It is not the same as a user explicitly asking the bot to remember or save content.
@@ -246,21 +246,11 @@ Sheet music search uses a short-lived in-memory file index cache. Admins can cle
 
 Admin commands use slash syntax and are gated by each profile's bootstrap `adminUserId` or DB-managed admin principals. `/help` lists public commands and enabled functions. `/help admin` lists common admin commands by group, and `/help admin all` includes advanced and diagnostic commands.
 
-Admins can also use natural language for selected admin actions. For example, an admin can ask the bot to create an invite code, list web allowlist entries, add a website to the allowlist, or manage a group's function scope. Invite-code and web allowlist natural language are direct-chat only. Function scope grant/revoke/list is the only group natural-language exception, and only when an admin clearly asks to manage the current group.
+Admins can also use natural language for selected admin actions: invite-code creation and function-scope management. Invite-code creation is direct-chat only. Function scope grant/revoke/list is the only group natural-language exception, and only when an admin clearly asks to manage the current group.
 
 `/registry <code>` remains a deterministic slash command and is not routed through the LLM. Admin natural-language requests pass through a conservative local hint check, the admin action router, the policy gate, and the admin action registry. `/last-routes` records sanitized admin route/action outcomes without raw message text or invite codes. Use `pnpm eval:admin` when changing admin intent hints or adding admin actions.
 
 Destructive admin actions must be confirmed with `/confirm <code>`. Invite-code creation is a `security_change` action and remains admin direct-chat only plus audited, but does not require confirmation.
-
-Controlled web allowlist commands are admin direct-chat commands. Admins can also add/list web allowlist entries with direct-chat natural language. They prepare safe, profile-scoped web lookup by allowing only HTTPS domains and optional path prefixes. Private-network and localhost targets are still denied by code-level guardrails.
-
-```text
-/web-allowlist
-/web-allowlist-add <domain> [pathPrefix]
-/web-allowlist-enable <id>
-/web-allowlist-disable <id>
-/web-allowlist-remove <id>
-```
 
 Common commands:
 
@@ -280,7 +270,6 @@ Common commands:
 /function-user-revoke <functionName> <userId>
 /function-user-scopes <userId>
 /audit-list [limit]
-/web-allowlist
 ```
 
 Advanced commands:
@@ -301,10 +290,6 @@ Advanced commands:
 /last-agent-turns [limit]
 /memory-status
 /llm-use
-/web-allowlist-add <domain> [pathPrefix]
-/web-allowlist-enable <id>
-/web-allowlist-disable <id>
-/web-allowlist-remove <id>
 ```
 
 Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/last-agent-turns` shows the latest sanitized agent runtime phases so admins can debug whether a request stopped at memory, clarification, routing, in-flight locking, or function execution.

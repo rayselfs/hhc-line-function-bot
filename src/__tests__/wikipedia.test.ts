@@ -33,7 +33,9 @@ describe("Wikipedia client", () => {
     expect(fetchImpl).toHaveBeenCalledWith(
       expect.stringContaining("zh.wikipedia.org/w/api.php"),
       expect.objectContaining({
-        headers: expect.objectContaining({ "user-agent": "HHCLineBot/1.0 (https://alive.org.tw/contact)" })
+        headers: expect.objectContaining({
+          "user-agent": "HHCLineBot/1.0 (https://alive.org.tw/contact)"
+        })
       })
     );
   });
@@ -49,7 +51,10 @@ describe("Wikipedia client", () => {
         { status: 200 }
       )
     );
-    const client = createWikipediaClient({ userAgent: "HHCLineBot/1.0 (https://alive.org.tw/contact)", fetchImpl });
+    const client = createWikipediaClient({
+      userAgent: "HHCLineBot/1.0 (https://alive.org.tw/contact)",
+      fetchImpl
+    });
 
     await expect(client.getIntro("zh", "馬丁·路德")).resolves.toEqual({
       language: "zh",

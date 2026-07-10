@@ -4,7 +4,6 @@ import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { InMemoryRegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
 import { InMemoryConfirmationStore } from "../actions/confirmation-store.js";
 import { createAdminActionRegistry } from "../actions/admin-registry.js";
-import { InMemoryWebAllowlistStore } from "../web/allowlist.js";
 import type { BotProfileConfig } from "../types.js";
 
 function profile(registrationEnabled = true): BotProfileConfig {
@@ -119,101 +118,6 @@ describe("admin action registry", () => {
     expect(result.replyText).toContain("/registry ADMINCODE");
   });
 
-  it("adds a web allowlist entry from routed natural-language arguments", async () => {
-    const accessStore = new InMemoryAccessStore();
-    const webAllowlistStore = new InMemoryWebAllowlistStore();
-    const registry = createAdminActionRegistry({
-      accessStore,
-      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
-      registrationInviteCodeTtlMinutes: 60,
-      webAllowlistStore
-    });
-
-    const result = await registry.execute({
-      action: "web_allowlist_add",
-      profile: profile(),
-      event: {
-        type: "message",
-        source: { type: "user", userId: "Uroot" }
-      },
-      arguments: {
-        url: "https://example.org/news/today",
-        label: "Example News"
-      }
-    });
-
-    const entries = await webAllowlistStore.list("helper");
-    expect(result.replyText).toContain("Added web allowlist");
-    expect(entries).toEqual([
-      expect.objectContaining({
-        domain: "example.org",
-        pathPrefix: "/news/today",
-        label: "Example News",
-        enabled: true
-      })
-    ]);
-    expect(accessStore.audit).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "web_allowlist.add",
-          targetType: "web_allowlist",
-          metadata: { domain: "example.org", pathPrefix: "/news/today" }
-        })
-      ])
-    );
-  });
-
-  it("asks for a website when web allowlist add is missing a target", async () => {
-    const registry = createAdminActionRegistry({
-      accessStore: new InMemoryAccessStore(),
-      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
-      registrationInviteCodeTtlMinutes: 60,
-      webAllowlistStore: new InMemoryWebAllowlistStore()
-    });
-
-    const result = await registry.execute({
-      action: "web_allowlist_add",
-      profile: profile(),
-      event: {
-        type: "message",
-        source: { type: "user", userId: "Uroot" }
-      },
-      arguments: {}
-    });
-
-    expect(result.replyText).toContain("請提供要加入白名單");
-  });
-
-  it("lists web allowlist entries from natural-language admin actions", async () => {
-    const accessStore = new InMemoryAccessStore();
-    const webAllowlistStore = new InMemoryWebAllowlistStore();
-    await webAllowlistStore.add({
-      profileName: "helper",
-      domain: "example.org",
-      pathPrefix: "/news",
-      createdBy: "Uroot"
-    });
-    const registry = createAdminActionRegistry({
-      accessStore,
-      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
-      registrationInviteCodeTtlMinutes: 60,
-      webAllowlistStore
-    });
-
-    const result = await registry.execute({
-      action: "web_allowlist_list",
-      profile: profile(),
-      event: {
-        type: "message",
-        source: { type: "user", userId: "Uroot" }
-      }
-    });
-
-    expect(result.replyText).toContain("Web allowlist");
-    expect(result.replyText).toContain("example.org");
-    expect(result.replyText).toContain("path=/news");
-  });
-
   it("grants and revokes current-group function scopes from routed arguments", async () => {
     const accessStore = new InMemoryAccessStore();
     const registry = createAdminActionRegistry({
@@ -283,7 +187,7 @@ describe("admin action registry", () => {
       arguments: {
         targetType: "user",
         userId: "Uwriter",
-        functionName: "save_schedule_memory"
+        functionName: "save_schedule"
       }
     });
     const list = await registry.execute({
@@ -299,28 +203,28 @@ describe("admin action registry", () => {
       arguments: {
         targetType: "user",
         userId: "Uwriter",
-        functionName: "save_schedule_memory"
+        functionName: "save_schedule"
       }
     });
 
     await expect(accessStore.listUserFunctionGrants("helper", "Uwriter")).resolves.toEqual([]);
-    expect(grant.replyText).toContain("save_schedule_memory");
+    expect(grant.replyText).toContain("save_schedule");
     expect(grant.replyText).toContain("user: Uwriter");
-    expect(list.replyText).toContain("user-grants: save_schedule_memory");
-    expect(revoke.replyText).toContain("save_schedule_memory");
+    expect(list.replyText).toContain("user-grants: save_schedule");
+    expect(revoke.replyText).toContain("save_schedule");
     expect(accessStore.audit).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           action: "access.function.user.grant",
           targetType: "user",
           targetId: "Uwriter",
-          metadata: { functionName: "save_schedule_memory" }
+          metadata: { functionName: "save_schedule" }
         }),
         expect.objectContaining({
           action: "access.function.user.revoke",
           targetType: "user",
           targetId: "Uwriter",
-          metadata: { functionName: "save_schedule_memory" }
+          metadata: { functionName: "save_schedule" }
         })
       ])
     );

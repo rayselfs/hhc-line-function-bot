@@ -49,10 +49,7 @@ export function createWikipediaLookupHandler(
 
 function selectBestMatch(matches: WikipediaSearchResult[], query: string): WikipediaSearchResult {
   const normalizedQuery = normalize(query);
-  return (
-    matches.find((match) => normalize(match.title) === normalizedQuery) ??
-    matches[0]!
-  );
+  return matches.find((match) => normalize(match.title) === normalizedQuery) ?? matches[0]!;
 }
 
 function toSummaryInput(
@@ -70,5 +67,8 @@ function toSummaryInput(
 }
 
 function normalize(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[\s·・._-]/gu, "");
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s·・._-]/gu, "");
 }

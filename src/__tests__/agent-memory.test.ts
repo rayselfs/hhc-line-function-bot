@@ -170,6 +170,43 @@ describe("agent memory", () => {
     ]);
   });
 
+  it("allows only an owner or an admin to delete a group memory and physically purges it", async () => {
+    const now = new Date("2026-07-08T00:00:00.000Z");
+    const store = new InMemoryAgentMemoryStore({ now: () => now });
+    const memory = await store.saveTextMemory({
+      profileName: "helper",
+      source: { type: "group", groupId: "C1", userId: "U1" },
+      createdBy: "U1",
+      content: "私人提醒"
+    });
+
+    await expect(
+      store.forgetMemory({
+        profileName: "helper",
+        source: { type: "group", groupId: "C1", userId: "U2" },
+        id: memory.id,
+        deletedBy: "U2"
+      })
+    ).resolves.toBe(false);
+    await expect(
+      store.forgetMemory({
+        profileName: "helper",
+        source: { type: "group", groupId: "C1", userId: "Uadmin" },
+        id: memory.id,
+        deletedBy: "Uadmin",
+        isAdmin: true
+      })
+    ).resolves.toBe(true);
+    await expect(store.purgeExpired()).resolves.toMatchObject({ textMemories: 1 });
+    await expect(
+      store.listTextMemories({
+        profileName: "helper",
+        source: { type: "group", groupId: "C1", userId: "U1" },
+        requesterUserId: "U1"
+      })
+    ).resolves.toEqual([]);
+  });
+
   it("recalls the latest resource through the agent runtime without routing again", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });

@@ -12,7 +12,11 @@ export interface WikipediaArticle extends Omit<WikipediaSearchResult, "snippet">
 }
 
 export interface WikipediaClient {
-  search(language: WikipediaLanguage, query: string, limit: number): Promise<WikipediaSearchResult[]>;
+  search(
+    language: WikipediaLanguage,
+    query: string,
+    limit: number
+  ): Promise<WikipediaSearchResult[]>;
   getIntro(language: WikipediaLanguage, title: string): Promise<WikipediaArticle | undefined>;
 }
 
@@ -138,5 +142,8 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function stripHtml(value: string): string {
-  return value.replace(/<[^>]+>/gu, "").replace(/&quot;/gu, '"').replace(/&amp;/gu, "&");
+  return value
+    .replace(/<[^>]+>/gu, "")
+    .replace(/&quot;/gu, '"')
+    .replace(/&amp;/gu, "&");
 }

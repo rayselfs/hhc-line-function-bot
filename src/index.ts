@@ -26,7 +26,6 @@ import { createRedisRuntime } from "./redis.js";
 import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
 import { createSessionStore } from "./state/create-session-store.js";
-import { PostgresWebAllowlistStore, runWebAllowlistMigrations } from "./web/allowlist.js";
 
 const config = loadConfigFromEnv(process.env);
 
@@ -113,11 +112,13 @@ const adminActionRouter = createAdminActionRouter({
 const accessStore = await createAccessStore({ db: postgres?.pool });
 const memoryStore = await createAgentMemoryStore({ db: postgres?.pool });
 await memoryStore.purgeExpired();
-const memoryPurgeTimer = setInterval(() => {
-  void memoryStore.purgeExpired();
-}, 6 * 60 * 60 * 1000);
+const memoryPurgeTimer = setInterval(
+  () => {
+    void memoryStore.purgeExpired().catch(() => undefined);
+  },
+  6 * 60 * 60 * 1000
+);
 memoryPurgeTimer.unref();
-const webAllowlistStore = postgres?.pool ? await createPostgresWebAllowlistStore() : undefined;
 const graph = config.graph ? createGraphDriveClient(config.graph) : undefined;
 const notion = config.notion ? createNotionDatabaseClient(config.notion) : undefined;
 const registrationInviteCodeStore = redis
@@ -170,7 +171,6 @@ const app = createApp(config, {
   sessionStore,
   agentJobStore,
   conversationWindowStore,
-  webAllowlistStore,
   textGenerator: smartTalkPrimary,
   textFallbackGenerator: smartTalkFallback,
   agentRuntime: createAgentRuntime({ memoryStore, graph, accessStore }),
@@ -183,11 +183,3 @@ const app = createApp(config, {
 });
 
 await app.listen({ host: config.host, port: config.port });
-
-async function createPostgresWebAllowlistStore(): Promise<PostgresWebAllowlistStore> {
-  if (!postgres?.pool) {
-    throw new Error("postgres_required");
-  }
-  await runWebAllowlistMigrations(postgres.pool);
-  return new PostgresWebAllowlistStore(postgres.pool);
-}

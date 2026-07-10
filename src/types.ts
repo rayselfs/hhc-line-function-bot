@@ -1,5 +1,7 @@
 export const FUNCTION_NAMES = [
   "find_ppt_slides",
+  "query_schedule",
+  "save_schedule",
   "query_service_schedule",
   "find_pop_sheet_music",
   "query_wikipedia",
@@ -30,8 +32,6 @@ export type SmallTalkCategory = (typeof SMALL_TALK_CATEGORIES)[number];
 
 export const ADMIN_ACTION_NAMES = [
   "invite_code_create",
-  "web_allowlist_list",
-  "web_allowlist_add",
   "function_scope_grant",
   "function_scope_revoke",
   "function_scope_list"

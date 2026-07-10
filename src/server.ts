@@ -32,7 +32,12 @@ import {
   groupEngagementIgnoredReason
 } from "./engagement.js";
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
-import { getFunctionDefinition, getFunctionDefinitions } from "./functions/definitions.js";
+import {
+  getFunctionDefinition,
+  getFunctionDefinitions,
+  isGrantableFunctionName,
+  userFacingFunctionNames
+} from "./functions/definitions.js";
 import { MemoryInFlightStore, type InFlightStore } from "./in-flight/in-flight-store.js";
 import { createIntroReply } from "./intro.js";
 import { buildFunctionQuickReplies, buildPostbackQuickReply } from "./line-reply.js";
@@ -42,7 +47,6 @@ import { messages } from "./messages.js";
 import { sanitizeActionTelemetryEvent } from "./observability/action-telemetry.js";
 import { resolveRequesterDisplayName } from "./requester-personalization.js";
 import { createControlledSmallTalkReply } from "./small-talk.js";
-import { InMemoryWebAllowlistStore, type WebAllowlistStore } from "./web/allowlist.js";
 import {
   formatLastErrors,
   InMemoryLastErrorStore,
@@ -78,7 +82,7 @@ import type {
   TextGenerationProvider,
   TextMessageHandlerRegistry
 } from "./types.js";
-import { FUNCTION_NAMES, isFunctionName } from "./types.js";
+import { isFunctionName } from "./types.js";
 
 export interface AppDependencies {
   router: FunctionRouterPort;
@@ -107,7 +111,6 @@ export interface AppDependencies {
   sessionStore?: SessionStore;
   agentJobStore?: AgentJobStore;
   conversationWindowStore?: ConversationWindowStore;
-  webAllowlistStore?: WebAllowlistStore;
   textFallbackGenerator?: TextGenerationProvider;
 }
 
@@ -154,16 +157,6 @@ const builtInAdminCommandGroups: AdminCommandHelpGroup[] = [
       { usage: "/function-user-grant <functionName> <userId>", description: "開放功能給使用者" },
       { usage: "/function-user-revoke <functionName> <userId>", description: "移除使用者功能開放" },
       { usage: "/function-user-scopes <userId>", description: "查看使用者可用功能" }
-    ]
-  },
-  {
-    title: "Web allowlist",
-    entries: [
-      { usage: "/web-allowlist", description: "list controlled web targets" },
-      { usage: "/web-allowlist-add <domain> [pathPrefix]", description: "allow a HTTPS domain" },
-      { usage: "/web-allowlist-enable <id>", description: "enable a web target" },
-      { usage: "/web-allowlist-disable <id>", description: "disable a web target" },
-      { usage: "/web-allowlist-remove <id>", description: "remove a web target" }
     ]
   },
   {
@@ -226,7 +219,6 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const registrationInviteCodeStore =
     deps.registrationInviteCodeStore ?? new InMemoryRegistrationInviteCodeStore();
   const registrationInviteCodeTtlMinutes = config.access?.registrationInviteCodeTtlMinutes ?? 60;
-  const webAllowlistStore = deps.webAllowlistStore ?? new InMemoryWebAllowlistStore();
   const adminActionRegistry =
     deps.adminActionRegistry ??
     createAdminActionRegistry({
@@ -234,8 +226,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
       registrationInviteCodeStore,
       registrationInviteCodeTtlMinutes,
       confirmationStore: deps.confirmationStore,
-      confirmationTtlMinutes: config.access?.confirmationTtlMinutes,
-      webAllowlistStore
+      confirmationTtlMinutes: config.access?.confirmationTtlMinutes
     });
   const lastErrorStore =
     deps.lastErrorStore ?? new InMemoryLastErrorStore(config.lastErrors?.maxEntries ?? 20);
@@ -324,8 +315,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         textFallbackGenerator,
         deps.agentRuntime,
         agentJobStore,
-        conversationWindowStore,
-        webAllowlistStore
+        conversationWindowStore
       );
     });
   }
@@ -359,8 +349,7 @@ async function handleWebhook(
   textFallbackGenerator: TextGenerationProvider | undefined,
   agentRuntime: AgentRuntime | undefined,
   agentJobStore: AgentJobStore,
-  conversationWindowStore: ConversationWindowStore,
-  webAllowlistStore: WebAllowlistStore
+  conversationWindowStore: ConversationWindowStore
 ) {
   const signature = getHeaderValue(request.headers["x-line-signature"]);
   if (!signature) {
@@ -527,8 +516,7 @@ async function handleWebhook(
           adminActionRegistry,
           diagnostics,
           agentTraceStore,
-          requestId,
-          webAllowlistStore
+          requestId
         );
       } catch (error) {
         await lastErrorStore.record({
@@ -693,12 +681,16 @@ async function resolveEffectiveFunctions(
     ? profile.enabledFunctions
     : profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
   const userGrants = event.source.userId
-    ? await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
+    ? mapLegacyFunctionNames(
+        await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
+      )
     : [];
   if (event.source.type !== "group" || !event.source.groupId) {
     return mergeFunctionNames(profileFunctions, userGrants);
   }
-  const groupGrants = await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId);
+  const groupGrants = mapLegacyFunctionNames(
+    await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId)
+  );
   return mergeFunctionNames(mergeFunctionNames(profileFunctions, groupGrants), userGrants);
 }
 
@@ -1319,8 +1311,7 @@ async function handleAdminCommand(
   adminActionRegistry: AdminActionRegistry,
   diagnostics: AppDiagnostics,
   agentTraceStore: AgentTraceStore,
-  requestId: string,
-  webAllowlistStore: WebAllowlistStore
+  requestId: string
 ): Promise<FunctionExecutionResult> {
   const parsed = parseAdminCommand(text);
   if (!parsed) {
@@ -1416,8 +1407,7 @@ async function handleAdminCommand(
     profile,
     event,
     accessStore,
-    adminActionRegistry,
-    webAllowlistStore
+    adminActionRegistry
   );
   if (accessResult) {
     return accessResult;
@@ -1503,8 +1493,7 @@ async function handleAdminAccessCommand(
   profile: BotProfileConfig,
   event: LineEvent,
   accessStore: AccessStore,
-  adminActionRegistry: AdminActionRegistry,
-  webAllowlistStore: WebAllowlistStore
+  adminActionRegistry: AdminActionRegistry
 ): Promise<FunctionExecutionResult | undefined> {
   const actorUserId = event.source.userId;
   if (!actorUserId) {
@@ -1530,102 +1519,6 @@ async function handleAdminAccessCommand(
             }`
         )
       ].join("\n")
-    };
-  }
-
-  if (command === "web-allowlist") {
-    const entries = await webAllowlistStore.list(profile.name);
-    return {
-      ok: true,
-      replyText:
-        entries.length === 0
-          ? "Web allowlist\n(none)"
-          : [
-              "Web allowlist",
-              ...entries.map((entry) =>
-                [
-                  `- ${entry.id}`,
-                  entry.enabled ? "enabled" : "disabled",
-                  entry.domain,
-                  entry.pathPrefix ? `path=${entry.pathPrefix}` : undefined,
-                  entry.label ? `label=${entry.label}` : undefined
-                ]
-                  .filter(Boolean)
-                  .join(" ")
-              )
-            ].join("\n")
-    };
-  }
-
-  if (command === "web-allowlist-add") {
-    const domain = args[0];
-    if (!domain) {
-      return { ok: true, replyText: "Usage: /web-allowlist-add <domain> [pathPrefix]" };
-    }
-    const entry = await webAllowlistStore.add({
-      profileName: profile.name,
-      domain,
-      pathPrefix: args[1],
-      createdBy: actorUserId
-    });
-    await accessStore.recordAudit({
-      profileName: profile.name,
-      actorUserId,
-      action: "web_allowlist.add",
-      targetType: "web_allowlist",
-      targetId: entry.id,
-      metadata: { domain: entry.domain, pathPrefix: entry.pathPrefix }
-    });
-    return {
-      ok: true,
-      replyText: `Added web allowlist\nid: ${entry.id}\ndomain: ${entry.domain}${
-        entry.pathPrefix ? `\npath: ${entry.pathPrefix}` : ""
-      }`
-    };
-  }
-
-  if (command === "web-allowlist-enable" || command === "web-allowlist-disable") {
-    const id = args[0];
-    if (!id) {
-      return { ok: true, replyText: `Usage: /${command} <id>` };
-    }
-    const enabled = command === "web-allowlist-enable";
-    const changed = await webAllowlistStore.setEnabled(profile.name, id, enabled);
-    if (changed) {
-      await accessStore.recordAudit({
-        profileName: profile.name,
-        actorUserId,
-        action: enabled ? "web_allowlist.enable" : "web_allowlist.disable",
-        targetType: "web_allowlist",
-        targetId: id
-      });
-    }
-    return {
-      ok: true,
-      replyText: changed
-        ? `${enabled ? "Enabled" : "Disabled"} web allowlist ${id}`
-        : "Web allowlist entry not found"
-    };
-  }
-
-  if (command === "web-allowlist-remove") {
-    const id = args[0];
-    if (!id) {
-      return { ok: true, replyText: "Usage: /web-allowlist-remove <id>" };
-    }
-    const removed = await webAllowlistStore.remove(profile.name, id);
-    if (removed) {
-      await accessStore.recordAudit({
-        profileName: profile.name,
-        actorUserId,
-        action: "web_allowlist.remove",
-        targetType: "web_allowlist",
-        targetId: id
-      });
-    }
-    return {
-      ok: true,
-      replyText: removed ? `Removed web allowlist ${id}` : "Web allowlist entry not found"
     };
   }
 
@@ -1961,11 +1854,11 @@ function parseAccessPrincipalType(
 }
 
 function parseFunctionName(value: string | undefined): FunctionName | undefined {
-  return value && isFunctionName(value) ? value : undefined;
+  return value && isFunctionName(value) && isGrantableFunctionName(value) ? value : undefined;
 }
 
 function formatFunctionNames(): string {
-  return FUNCTION_NAMES.join(", ");
+  return userFacingFunctionNames().join(", ");
 }
 
 function mergeFunctionNames(
@@ -1973,6 +1866,20 @@ function mergeFunctionNames(
   grantedFunctions: FunctionName[]
 ): FunctionName[] {
   return Array.from(new Set([...profileFunctions, ...grantedFunctions]));
+}
+
+function mapLegacyFunctionNames(functionNames: FunctionName[]): FunctionName[] {
+  return functionNames.map((name) => {
+    switch (name) {
+      case "query_service_schedule":
+      case "query_schedule_memory":
+        return "query_schedule";
+      case "save_schedule_memory":
+        return "save_schedule";
+      default:
+        return name;
+    }
+  });
 }
 
 function isKnownAdminCommand(command: string, adminHandlers: AdminHandlerRegistry): boolean {

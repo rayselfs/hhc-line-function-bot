@@ -35,10 +35,7 @@ describe("generic query clarification", () => {
     expect(result?.replyText).toContain("查投影片");
     expect(result?.replyText).toContain("查服事表");
     expect(result?.replyText).not.toContain("儲存服事表");
-    expect(result?.quickReplies?.map((item) => item.label)).toEqual([
-      "查投影片",
-      "查服事表"
-    ]);
+    expect(result?.quickReplies?.map((item) => item.label)).toEqual(["查投影片", "查服事表"]);
   });
 
   it("does not intercept a request that already has a query target", () => {

@@ -27,13 +27,14 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
       const text = input.text.trim();
       const memoryIntent = extractMemoryIntent(text);
       if (memoryIntent) {
-        if (!input.enabledFunctions.includes(memoryIntent.action)) {
+        const action = compatibleMemoryAction(memoryIntent.action, input.enabledFunctions);
+        if (!action) {
           return { type: "deny", reason: "function_disabled", provider: "keyword" };
         }
         return {
           type: "execute",
-          action: memoryIntent.action,
-          arguments: normalizeFunctionArguments(memoryIntent.action, memoryIntent.arguments, {
+          action,
+          arguments: normalizeFunctionArguments(action, memoryIntent.arguments, {
             text
           }),
           provider: "keyword"
@@ -66,7 +67,10 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
         return { type: "deny", reason: "keyword_no_match", provider: "keyword" };
       }
 
-      const enabledMatches = matches.filter((match) => input.enabledFunctions.includes(match.name));
+      let enabledMatches = matches.filter((match) => input.enabledFunctions.includes(match.name));
+      if (input.enabledFunctions.includes("query_schedule")) {
+        enabledMatches = enabledMatches.filter((match) => match.name !== "query_service_schedule");
+      }
       if (enabledMatches.length === 0) {
         return { type: "deny", reason: "function_disabled", provider: "keyword" };
       }
@@ -166,14 +170,14 @@ function extractScheduleMemoryIntent(
   const content = extractScheduleMemoryContent(value);
   if (content !== undefined) {
     return {
-      action: "save_schedule_memory",
+      action: "save_schedule",
       arguments: { content }
     };
   }
 
   if (/^(?:查|找|看|給我|幫我查).*(?:舉牌|晨更家族|家族晨更|仙履奇緣)/u.test(value)) {
     return {
-      action: "query_schedule_memory",
+      action: "query_schedule",
       arguments: {
         query: cleanScheduleMemoryRouteQuery(value),
         ...(value.includes("舉牌") || value.includes("為耶穌")
@@ -187,6 +191,22 @@ function extractScheduleMemoryIntent(
   }
 
   return undefined;
+}
+
+function compatibleMemoryAction(
+  action: FunctionName,
+  enabledFunctions: FunctionName[]
+): FunctionName | undefined {
+  if (enabledFunctions.includes(action)) {
+    return action;
+  }
+  const legacy =
+    action === "save_schedule"
+      ? "save_schedule_memory"
+      : action === "query_schedule"
+        ? "query_schedule_memory"
+        : undefined;
+  return legacy && enabledFunctions.includes(legacy) ? legacy : undefined;
 }
 
 function extractScheduleMemoryContent(value: string): string | undefined {

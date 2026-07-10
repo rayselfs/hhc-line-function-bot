@@ -204,15 +204,16 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
               deletedBy: input.context.event.source.userId,
               isAdmin: input.isAdmin
             });
-        const removedSchedule = removedText || removedResource
-          ? false
-          : await options.memoryStore.forgetScheduleMemory({
-              profileName: input.context.profile.name,
-              source: input.context.event.source,
-              id,
-              deletedBy: input.context.event.source.userId,
-              isAdmin: input.isAdmin
-            });
+        const removedSchedule =
+          removedText || removedResource
+            ? false
+            : await options.memoryStore.forgetScheduleMemory({
+                profileName: input.context.profile.name,
+                source: input.context.event.source,
+                id,
+                deletedBy: input.context.event.source.userId,
+                isAdmin: input.isAdmin
+              });
         if (removedText || removedResource || removedSchedule) {
           await recordMemoryAudit(options.accessStore, input, "memory.delete");
         }
@@ -287,7 +288,6 @@ function isRecentResourceRecall(text: string): boolean {
   return /再給我一次|剛剛那份|剛才那份|剛剛那個|上一份|再傳一次|再貼一次/u.test(text);
 }
 
-
 function resourceTypesForAction(action: FunctionName): AgentResourceType[] | undefined {
   switch (action) {
     case "find_ppt_slides":
@@ -311,11 +311,12 @@ function formatResourceMemory(memory: AgentResourceRecord): string {
 
 function formatScheduleMemory(memory: {
   id: string;
+  memoryId: string;
   serviceDate: string;
   meetingName: string;
   assignee: string;
 }): string {
-  return `- ${memory.serviceDate} ${memory.meetingName}：${memory.assignee} (${memory.id})`;
+  return `- ${memory.serviceDate} ${memory.meetingName}：${memory.assignee} (${memory.memoryId})`;
 }
 
 function parseMemoryCommand(text: string): { command: string; args: string[] } | undefined {

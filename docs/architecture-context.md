@@ -266,10 +266,9 @@ random job id but can only be read from the same profile, LINE source, and
 requester user id. With Redis configured, job results survive app restarts until
 their TTL expires.
 
-Controlled web lookup must go through `src/web/allowlist.ts`. The store is
-profile-scoped, supports PostgreSQL persistence, and the guard only allows HTTPS
-domains/path prefixes while denying localhost and private-network targets even
-if an admin accidentally adds them.
+Public web lookup is intentionally not supported. The only external knowledge
+function is `query_wikipedia`, which uses the Wikipedia API with a fixed
+language fallback and never fetches arbitrary user-supplied URLs.
 
 ## External Dependencies
 
@@ -309,8 +308,8 @@ Use this map for common issues:
   `handleAgentTextTurnWithLongJob` in `src/server.ts`.
 - Follow-up without wake word fails for same user: `src/agent/context-manager.ts`
   and the conversation window checks in `src/server.ts`.
-- Web lookup route denies a URL: `src/web/allowlist.ts` and admin
-  `/web-allowlist` commands.
+- Wikipedia lookup has no result: `src/wikipedia/client.ts` and
+  `src/wikipedia/lookup.ts`.
 - Follow-up recall or aliases fail: `src/agent/agent-runtime.ts`,
   `src/agent/*memory-store.ts`, and `src/__tests__/agent-memory.test.ts`.
 - Admin command denied: `adminUserId`, DB admin principals, `adminDirectOnly`,

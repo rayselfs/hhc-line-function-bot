@@ -428,7 +428,14 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and ($5::boolean = true or created_by = $6)
       returning id
       `,
-      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
+      [
+        input.profileName,
+        scope.type,
+        scope.id,
+        input.id,
+        input.isAdmin ?? false,
+        input.deletedBy ?? null
+      ]
     );
     return result.rows.length > 0;
   }
@@ -447,7 +454,14 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and ($5::boolean = true or created_by = $6)
       returning id
       `,
-      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
+      [
+        input.profileName,
+        scope.type,
+        scope.id,
+        input.id,
+        input.isAdmin ?? false,
+        input.deletedBy ?? null
+      ]
     );
     return result.rows.length > 0;
   }
@@ -466,7 +480,14 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and ($5::boolean = true or created_by = $6)
       returning id
       `,
-      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
+      [
+        input.profileName,
+        scope.type,
+        scope.id,
+        input.id,
+        input.isAdmin ?? false,
+        input.deletedBy ?? null
+      ]
     );
     return result.rows.length > 0;
   }
@@ -474,15 +495,15 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
   async purgeExpired(now = this.now()): Promise<AgentMemoryPurgeResult> {
     const expiresAt = now.toISOString();
     const resources = await this.db.query<{ id: string }>(
-      "delete from agent_resources where expires_at <= $1 returning id",
+      "delete from agent_resources where expires_at <= $1 or deleted_at is not null returning id",
       [expiresAt]
     );
     const textMemories = await this.db.query<{ id: string }>(
-      "delete from agent_text_memories where expires_at <= $1 returning id",
+      "delete from agent_text_memories where expires_at <= $1 or deleted_at is not null returning id",
       [expiresAt]
     );
     const scheduleMemories = await this.db.query<{ id: string }>(
-      "delete from agent_schedule_memories where expires_at <= $1 returning id",
+      "delete from agent_schedule_memories where expires_at <= $1 or deleted_at is not null returning id",
       [expiresAt]
     );
     const aliases = await this.db.query<{ id: string }>(

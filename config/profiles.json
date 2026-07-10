@@ -12,12 +12,13 @@
     "acceptMention": true,
     "enabledFunctions": [
       "find_ppt_slides",
-      "query_service_schedule",
+      "query_schedule",
       "find_pop_sheet_music",
       "query_wikipedia",
-      "save_schedule_memory",
+      "save_schedule",
       "save_resource",
-      "query_schedule_memory"
+      "save_memory",
+      "retrieve_memory"
     ],
     "adminUserIdEnv": "LINE_HELPER_ADMIN_USER_ID",
     "adminDirectOnly": true,

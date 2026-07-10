@@ -12,7 +12,7 @@ import type {
   AgentScheduleEntryRecord,
   AgentScheduleType
 } from "../agent/memory-store.js";
-import type { FunctionHandler } from "../types.js";
+import type { FunctionHandler, FunctionName } from "../types.js";
 import type { SessionStore } from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 
@@ -36,6 +36,7 @@ export interface ScheduleMemoryFunctionOptions {
   sessionStore?: SessionStore;
   now?: () => Date;
   requestIdFactory?: () => string;
+  action?: FunctionName;
 }
 
 export function parseScheduleMemoryContent(
@@ -57,6 +58,7 @@ export function createSaveScheduleMemoryHandler(
 ): FunctionHandler {
   const now = options.now ?? (() => new Date());
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
+  const action = options.action ?? "save_schedule_memory";
   return async (rawArgs, context) => {
     const args = saveScheduleMemoryArgumentsSchema.parse(rawArgs);
     const content = scheduleMemoryContent(args);
@@ -88,7 +90,7 @@ export function createSaveScheduleMemoryHandler(
         await storePendingFunctionQuery({
           sessionStore: options.sessionStore,
           requestId: requestIdFactory(),
-          action: "save_schedule_memory",
+          action,
           arguments: {
             scheduleType: parsed.scheduleType,
             title: parsed.title,
@@ -128,6 +130,10 @@ export function createSaveScheduleMemoryHandler(
       replyText: `已保存 ${parsed.entries.length} 筆${scheduleTypeLabel(parsed.scheduleType)}，之後可以請我查。`
     };
   };
+}
+
+export function createSaveScheduleHandler(options: ScheduleMemoryFunctionOptions): FunctionHandler {
+  return createSaveScheduleMemoryHandler({ ...options, action: "save_schedule" });
 }
 
 export function createQueryScheduleMemoryHandler(

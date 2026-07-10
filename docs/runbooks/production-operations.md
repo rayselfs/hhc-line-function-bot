@@ -17,7 +17,6 @@ Direct-message admin commands:
 /last-routes
 /last-errors
 /last-agent-turns
-/web-allowlist
 /help
 /help admin
 /help admin all
@@ -78,7 +77,7 @@ The line bot does not expose LLM auth callback routes. Public gateway routing sh
 - Redis: verify the ACA secret `REDIS_URL` is set and `/readyz` shows Redis `ok`.
 - Redis also stores requester-scoped conversation windows and long-running job results. If Redis is down, production should fail startup instead of silently losing those results.
 - Postgres: verify `DATABASE_URL` and `DATABASE_SSL` are set and `/readyz` shows Postgres `ok`.
-- Postgres stores access principals, audit events, agent memory, and controlled web allowlist entries.
+- Postgres stores access principals, audit events, and agent memory metadata.
 - Ollama: use `/llm-status` or `/diag`, not `/readyz`.
 - Graph: use function smoke tests through LINE, then `/diag` for configured/not configured state.
 - Notion: use `pnpm check:notion` locally or function smoke tests through LINE, then `/diag` for configured/not configured state.
@@ -115,17 +114,6 @@ Do not paste these into LINE, logs, commits, screenshots, or public issues:
 - Notion token or database ID.
 - Raw user messages from production.
 
-## Controlled Web Lookup Prep
+## Wikipedia Lookup
 
-Future web lookup functions must use the profile-scoped allowlist before fetching any URL.
-Manage entries from direct admin chat:
-
-```text
-/web-allowlist
-/web-allowlist-add <domain> [pathPrefix]
-/web-allowlist-enable <id>
-/web-allowlist-disable <id>
-/web-allowlist-remove <id>
-```
-
-The guard allows HTTPS only and still blocks localhost/private-network targets even when an entry exists.
+The bot does not perform arbitrary web browsing or maintain an administrator web allowlist. `query_wikipedia` uses the public Wikipedia API only, tries Chinese before English, and passes the selected article introduction to the configured source-bounded summarizer.

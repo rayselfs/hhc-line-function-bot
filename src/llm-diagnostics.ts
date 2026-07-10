@@ -95,6 +95,9 @@ function formatProfileProviderPolicy(profile: BotProfileConfig): string[] {
     "lanes:",
     ...MODEL_PROVIDER_LANE_NAMES.map((lane) => {
       const lanePolicy = policy[lane];
+      if (!lanePolicy) {
+        return `- ${lane}: not configured`;
+      }
       const route = lanePolicy.fallback
         ? `${lanePolicy.primary} -> ${lanePolicy.fallback}`
         : lanePolicy.primary;

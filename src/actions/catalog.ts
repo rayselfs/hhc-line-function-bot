@@ -86,45 +86,6 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
     ]
   },
   {
-    name: "web_allowlist_list",
-    kind: "admin_action",
-    auth: "admin",
-    sourcePolicy: "direct",
-    sideEffect: "read_only",
-    naturalLanguage: true,
-    description: "List profile-scoped controlled web allowlist entries.",
-    naturalLanguageHints: [
-      "web allowlist",
-      "allowed websites",
-      "allowlisted websites",
-      "website allowlist",
-      "白名單網站",
-      "網站白名單",
-      "允許哪些網站"
-    ]
-  },
-  {
-    name: "web_allowlist_add",
-    kind: "admin_action",
-    auth: "admin",
-    sourcePolicy: "direct",
-    sideEffect: "security_change",
-    naturalLanguage: true,
-    auditAction: "web_allowlist.add",
-    description:
-      "Add an HTTPS website to the profile-scoped controlled web allowlist. Arguments: url or domain; optional pathPrefix and label.",
-    naturalLanguageHints: [
-      "allow website",
-      "add website",
-      "allow web",
-      "add web allowlist",
-      "加入白名單",
-      "加入網站白名單",
-      "允許網站",
-      "開放網站"
-    ]
-  },
-  {
     name: "function_scope_grant",
     kind: "admin_action",
     auth: "admin",

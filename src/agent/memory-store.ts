@@ -278,7 +278,9 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       .filter((record) =>
         this.resourceMatches(record, input.profileName, scope, input.resourceTypes)
       )
-      .filter((record) => this.isVisible(record, input.requesterUserId ?? input.source.userId, scope))
+      .filter((record) =>
+        this.isVisible(record, input.requesterUserId ?? input.source.userId, scope)
+      )
       .filter((record) => !query || normalizeLookupText(resourceSearchText(record)).includes(query))
       .sort(descendingCreatedAt)
       .slice(0, input.limit ?? 5);
@@ -356,7 +358,9 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     const query = normalizeLookupText(input.query ?? "");
     return Array.from(this.textMemories.values())
       .filter((record) => this.textMemoryMatches(record, input.profileName, scope))
-      .filter((record) => this.isVisible(record, input.requesterUserId ?? input.source.userId, scope))
+      .filter((record) =>
+        this.isVisible(record, input.requesterUserId ?? input.source.userId, scope)
+      )
       .filter((record) => !query || normalizeLookupText(memorySearchText(record)).includes(query))
       .sort(descendingCreatedAt)
       .slice(0, input.limit ?? 5);
@@ -566,7 +570,10 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     if (scope.type === "user") {
       return true;
     }
-    return record.visibility === "group" || Boolean(requesterUserId && record.createdBy === requesterUserId);
+    return (
+      record.visibility === "group" ||
+      Boolean(requesterUserId && record.createdBy === requesterUserId)
+    );
   }
 
   private active(record: { expiresAt: string; deletedAt?: string }): boolean {
@@ -603,10 +610,7 @@ function defaultVisibility(scope: AgentMemoryScope): AgentMemoryVisibility {
   return scope.type === "group" || scope.type === "room" ? "private" : "private";
 }
 
-function canDelete(
-  record: { createdBy?: string },
-  input: ForgetAgentMemoryInput
-): boolean {
+function canDelete(record: { createdBy?: string }, input: ForgetAgentMemoryInput): boolean {
   return Boolean(input.isAdmin || (input.deletedBy && input.deletedBy === record.createdBy));
 }
 

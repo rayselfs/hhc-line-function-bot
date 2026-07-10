@@ -57,6 +57,38 @@ export const queryServiceScheduleArgumentsSchema = z
     }
   });
 
+export const queryScheduleArgumentsSchema = z
+  .object({
+    query: z.string().optional().default(""),
+    date: dateKeySchema.optional(),
+    dateIntent: z
+      .enum([
+        "today",
+        "tomorrow",
+        "day_after_tomorrow",
+        "this_week",
+        "next_meeting",
+        "specific_date",
+        "upcoming"
+      ])
+      .optional(),
+    specificDate: dateKeySchema.optional(),
+    meeting: z.string().optional(),
+    role: z.string().optional(),
+    scheduleType: scheduleTypeSchema.optional(),
+    limit: numericLimitSchema.optional()
+  })
+  .strip()
+  .superRefine((value, context) => {
+    if (value.dateIntent === "specific_date" && !value.specificDate && !value.date) {
+      context.addIssue({
+        code: "custom",
+        path: ["specificDate"],
+        message: "specificDate or date is required when dateIntent is specific_date"
+      });
+    }
+  });
+
 export const findPopSheetMusicArgumentsSchema = z
   .object({
     query: z.string().optional().default(""),
@@ -113,6 +145,8 @@ export const saveScheduleMemoryArgumentsSchema = z
   })
   .strip();
 
+export const saveScheduleArgumentsSchema = saveScheduleMemoryArgumentsSchema;
+
 export const queryScheduleMemoryArgumentsSchema = z
   .object({
     scheduleType: scheduleTypeSchema.optional(),
@@ -127,12 +161,14 @@ export const queryScheduleMemoryArgumentsSchema = z
 
 export type FindPptSlidesArguments = z.infer<typeof findPptSlidesArgumentsSchema>;
 export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleArgumentsSchema>;
+export type QueryScheduleArguments = z.infer<typeof queryScheduleArgumentsSchema>;
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
 export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
 export type SaveResourceArguments = z.infer<typeof saveResourceArgumentsSchema>;
 export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
 export type QueryWikipediaArguments = z.infer<typeof queryWikipediaArgumentsSchema>;
 export type SaveScheduleMemoryArguments = z.infer<typeof saveScheduleMemoryArgumentsSchema>;
+export type SaveScheduleArguments = z.infer<typeof saveScheduleArgumentsSchema>;
 export type QueryScheduleMemoryArguments = z.infer<typeof queryScheduleMemoryArgumentsSchema>;
 
 export function parseFunctionArguments(
@@ -141,6 +177,8 @@ export function parseFunctionArguments(
 ): JsonRecord | undefined {
   const schema = {
     find_ppt_slides: findPptSlidesArgumentsSchema,
+    query_schedule: queryScheduleArgumentsSchema,
+    save_schedule: saveScheduleArgumentsSchema,
     query_service_schedule: queryServiceScheduleArgumentsSchema,
     find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
     query_wikipedia: queryWikipediaArgumentsSchema,
