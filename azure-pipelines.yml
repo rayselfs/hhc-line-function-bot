@@ -143,7 +143,7 @@ stages:
                 echo "Deploying ${image_ref} to $(containerAppName)"
 
                 legacy_profile_envs=()
-                for env_name in BOT_PROFILES_BASE64_JSON BOT_PROFILES_JSON PROFILE_CONFIG_VERSION; do
+                for env_name in BOT_PROFILES_BASE64_JSON BOT_PROFILES_JSON PROFILE_CONFIG_VERSION PPT_ALLOWED_EXTENSIONS PPT_DEFAULT_INCLUDE_PDF; do
                   value="$(az containerapp show \
                     --resource-group "$(resourceGroup)" \
                     --name "$(containerAppName)" \
@@ -172,7 +172,6 @@ stages:
                   "RATE_LIMIT_MAX_REQUESTS=20"
                   "LAST_ERRORS_MAX_ENTRIES=20"
                   "GRAPH_SHEET_MUSIC_FOLDER_PATH=文件/流行歌譜 (捷徑)"
-                  "PPT_DEFAULT_INCLUDE_PDF=false"
                   "SHEET_MUSIC_ALLOWED_EXTENSIONS=pdf,jpg,jpeg"
                   "SHEET_MUSIC_DEFAULT_RECURSIVE=true"
                 )

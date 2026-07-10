@@ -43,12 +43,12 @@ Read these first when starting work:
 
 The first-class functions are:
 
-- `find_ppt_slides`: search Microsoft Graph/OneDrive PPT or PDF files and return temporary sharing links.
-- `query_service_schedule`: query Notion service schedule data and return a focused service list.
+- `find_ppt_slides`: search configured `.pptx`, `.ppt`, `.key`, or `.odp` presentation files and return temporary sharing links.
+- `query_schedule`: query configured service schedule sources and return a focused service list without exposing the source.
 - `find_pop_sheet_music`: search Microsoft Graph/OneDrive sheet music folders, including shortcut folders, and return temporary sharing links.
-- `save_memory`: save explicit text memories only when the user clearly asks 小哈 to remember/save/store content.
-- `retrieve_memory`: retrieve explicit text memories in the current LINE scope.
-- Explicit external PPT/sheet-music links can be saved as resource memories and found by the same lookup functions.
+- `query_wikipedia`: query Wikipedia for supported factual lookups.
+- `save_schedule`: preview and manage profile-shared structured service schedules with one-year retention.
+- Generic `save_memory`, `save_resource`, and `retrieve_memory` modules are not enabled on the helper production profile.
 - Intro/help behavior is not a normal function execution path; keep it friendly and do not expose implementation details such as OneDrive or Notion to ordinary users.
 - User functions, admin actions, and system actions are separate action kinds. Do not add management behavior to `enabledFunctions`.
 - Admin natural language is direct-chat only. It may route to selected admin actions, currently invite-code creation, after admin identity and source policy checks.
@@ -153,6 +153,8 @@ When adding or changing an admin action:
 - Successful PPT and sheet-music lookup metadata is a controlled `read`-function exception: it may store short-lived, scope-local resource metadata for recall, but it is not user-authored saved content and must not store raw files or generated sharing links.
 - External resource memories may store user-provided URLs, but only when the user explicitly asks the bot to remember/save/store that resource.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
+- Structured schedules are profile-shared, not requester/source-scoped. The same helper schedule can be queried from managed direct chats and groups.
+- Structured schedule replacement and entry add/update/delete require preview and confirmation. The same schedule type and month has one active canonical record.
 - Do not add automatic group-chat recording. Text memory must be explicit user intent.
 - Do not add LINE attachment download/storage without an explicit new plan; current resource memory v2 is text/link only.
 - Agent turn traces are diagnostic metadata only. Do not store raw user text, file names, invite codes, secrets, or generated sharing links in traces.

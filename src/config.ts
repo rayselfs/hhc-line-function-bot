@@ -163,10 +163,8 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
               env.SHEET_MUSIC_ALLOWED_EXTENSIONS || "pdf,jpg,jpeg"
             ).map((ext) => (ext.startsWith(".") ? ext : `.${ext}`)),
             sheetMusicRecursive: readBool(env.SHEET_MUSIC_DEFAULT_RECURSIVE, true),
-            allowedExtensions: readList(env.PPT_ALLOWED_EXTENSIONS || "ppt,pptx,pdf").map((ext) =>
-              ext.startsWith(".") ? ext : `.${ext}`
-            ),
-            defaultIncludePdf: readBool(env.PPT_DEFAULT_INCLUDE_PDF, false),
+            allowedExtensions: [".pptx", ".ppt", ".key", ".odp"],
+            defaultIncludePdf: false,
             linkType: readGraphLinkType(env.GRAPH_LINK_TYPE),
             linkScope: readGraphLinkScope(env.GRAPH_LINK_SCOPE)
           }

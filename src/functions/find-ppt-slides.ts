@@ -135,10 +135,6 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
           {
             label: "重新查投影片",
             action: { type: "message", label: "重新查投影片", text: "小哈 查投影片" }
-          },
-          {
-            label: "查PDF投影片",
-            action: { type: "message", label: "查PDF投影片", text: "小哈 查投影片 pdf" }
           }
         ]
       };

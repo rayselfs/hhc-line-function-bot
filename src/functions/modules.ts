@@ -180,7 +180,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         expected: {
           type: "execute",
           action: "query_schedule",
-          arguments: { query: "下一場聚會服事表" }
+          arguments: { query: "下一場聚會服事表", dateIntent: "next_meeting" }
         }
       },
       {
@@ -320,7 +320,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         expected: {
           type: "execute",
           action: "query_service_schedule",
-          arguments: { query: "下一場聚會服事表" }
+          arguments: { query: "下一場聚會服事表", dateIntent: "next_meeting" }
         }
       },
       {

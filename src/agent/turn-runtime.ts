@@ -8,7 +8,6 @@ import {
 import { guardSystemRouteWithFunctionIntent } from "./function-intent-guard.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
 import { messages } from "../messages.js";
-import { buildFunctionQuickReplies } from "../line-reply.js";
 import { createControlledSmallTalkReply, smallTalkCategoryFromArguments } from "../small-talk.js";
 import { createIntroReply } from "../intro.js";
 import { createQueryClarificationReply } from "../query-clarification.js";
@@ -332,13 +331,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       }
 
       if (route.type === "deny") {
-        const quickReplies = buildFunctionQuickReplies(input.profile);
-        return finish(input, steps, {
-          ok: true,
-          replyText:
-            quickReplies.length > 0 ? messages.unsupportedWithSuggestions : messages.unsupported,
-          quickReplies: quickReplies.length > 0 ? quickReplies : undefined
-        });
+        return finish(input, steps, { ok: true, replyText: messages.unsupported });
       }
 
       const normalizedArguments = normalizeFunctionArguments(route.action, route.arguments, {

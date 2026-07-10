@@ -185,11 +185,29 @@ describe("config", () => {
     });
 
     expect(config.graph).toMatchObject({
+      allowedExtensions: [".pptx", ".ppt", ".key", ".odp"],
+      defaultIncludePdf: false,
       sheetMusicFolderItemId: "sheet-folder",
       sheetMusicFolderPath: "文件/流行歌譜 (捷徑)",
       sheetMusicAllowedExtensions: [".pdf", ".jpg", ".jpeg"],
       sheetMusicRecursive: true
     });
+  });
+
+  it("does not allow environment variables to widen PPT file types", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      GRAPH_TENANT_ID: "tenant",
+      GRAPH_CLIENT_ID: "client",
+      GRAPH_CLIENT_SECRET: "secret",
+      GRAPH_DRIVE_ID: "drive",
+      GRAPH_PPT_FOLDER_ITEM_ID: "ppt-folder",
+      PPT_ALLOWED_EXTENSIONS: "pdf,exe",
+      PPT_DEFAULT_INCLUDE_PDF: "true"
+    });
+
+    expect(config.graph?.allowedExtensions).toEqual([".pptx", ".ppt", ".key", ".odp"]);
+    expect(config.graph?.defaultIncludePdf).toBe(false);
   });
 
   it("loads profile admin settings from adminUserId only", () => {

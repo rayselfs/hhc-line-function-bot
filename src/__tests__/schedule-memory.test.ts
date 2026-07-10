@@ -222,6 +222,32 @@ describe("schedule memory", () => {
     ]);
   });
 
+  it("states which canonical schedule will be replaced in the preview", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+    await save(
+      {
+        title: "七月份家族晨更安排",
+        content: "7/17五世緯家園",
+        scheduleType: "morning_prayer_family",
+        confirm: true
+      },
+      context()
+    );
+
+    const preview = await save(
+      {
+        content: "7/18六新婦家族",
+        scheduleType: "morning_prayer_family"
+      },
+      context()
+    );
+
+    expect(preview.replyText).toContain("將取代現有的「七月份家族晨更安排」");
+  });
+
   it("previews and confirms a single schedule entry update", async () => {
     const store = new InMemoryAgentMemoryStore({
       now: () => new Date("2026-07-10T00:00:00.000Z")

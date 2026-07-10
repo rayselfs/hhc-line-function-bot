@@ -11,11 +11,11 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Action catalog that separates user functions, admin actions, and system actions.
 - Policy gate and admin action registry for natural-language admin operations.
 - Conservative keyword fallback when Ollama times out, is unreachable, or returns invalid JSON.
-- LINE Quick Reply suggestions for supported functions.
+- LINE Quick Reply suggestions for clarification and result selection.
 - Postback-based selection state for multi-result flows, currently used by PPT and sheet music search.
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Definition-driven clarification state for missing slots. A generic capability request such as `查投影片`, `查流行歌譜`, `查維基百科`, or `查服事表` never runs a lookup; the bot asks for the missing value first.
-- Intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts, scoped to each profile's enabled functions.
+- Friendly intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts without exposing internal function names or backing services.
 - Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, and explicit text/resource memories.
 - Requester-scoped short conversation windows, so group follow-up messages can continue naturally without letting other users inherit context.
 - Long-running task handoff: slow turns can reply with a "check result" postback instead of using LINE push quota.
@@ -28,14 +28,13 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Minimal `/healthz`, data-layer `/readyz`, and admin-only `/diag` diagnostics.
 - Destructive admin-action confirmation infrastructure through `/confirm <code>`.
 - Function handlers:
-  - `find_ppt_slides`: searches a configured Microsoft Graph drive folder, fuzzy-matches PPT/PDF names, and returns 24 hour sharing links.
+  - `find_ppt_slides`: searches a configured presentation folder, fuzzy-matches `.pptx`, `.ppt`, `.key`, and `.odp` names, and returns 24 hour sharing links.
   - `query_schedule`: one user-facing service-schedule query that selects configured sources without exposing them.
   - `find_pop_sheet_music`: searches a configured OneDrive/SharePoint sheet music folder recursively, including shortcut folders, and returns 24 hour sharing links.
   - `query_wikipedia`: reads a matching Wikipedia introduction and returns a source-bounded summary.
-  - `save_memory`: previews and saves explicit text only after confirmation.
-  - `save_resource`: previews and saves an explicit HTTPS PPT/sheet-music link only after confirmation.
-  - `retrieve_memory`: retrieves explicitly saved text memories.
-  - `save_schedule`: previews and saves one canonical text-only service schedule as scoped 30-day structured memory.
+  - `save_schedule`: previews and manages the helper profile's shared canonical text-only service schedules with one-year retention.
+
+The helper production profile enables only the controlled church lookup functions and structured schedule management. Generic text/resource memory functions remain internal modules but are not enabled for ordinary helper conversations.
 
 Disabled, unknown, unclear, or explicitly denied actions are denied. There is no Azure OpenAI fallback in this version.
 
@@ -173,7 +172,7 @@ Bootstrap superadmin direct-chat commands for LLM provider operations:
 
 Keyword fallback is intentionally narrow:
 
-- `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`
+- `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`, `keynote`, `odp`
 - `query_schedule`: `服事表`, `服事`
 - `find_pop_sheet_music`: `流行歌譜`, `流行歌曲樂譜`, `樂譜`, `歌譜`, `sheet music`
 - `save_schedule`: `記住晨更`, `記住舉牌`, or pasted text schedules with date rows.
@@ -216,7 +215,9 @@ The memory layer adds controlled memory without making the bot an unrestricted c
 - Recent-result recall is requester-scoped. In a group, another user cannot accidentally recall someone else's latest result.
 - Resource aliases are scope-scoped. A user can say `以後 X 就用這份` after a successful result, and the bot will try that alias before doing a folder search in the same group or direct chat.
 - Text memories are saved only when the user clearly asks the bot to remember, save, or store content. Normal group chatter is not saved.
-- Structured schedule memories are separate from plain text memories. They store a schedule header plus date-based entries, scoped by profile and LINE source, and expire after 30 days.
+- Structured schedule memories are separate from plain text memories. They store a schedule header plus date-based entries, are shared across the helper profile, and expire after one year.
+- Saving another schedule of the same type and month replaces the previous canonical schedule after confirmation. Entry add, update, delete, and whole-schedule delete use the same preview-and-confirm flow.
+- Queries such as `下次世緯家園服事是什麼時候？` and `下一次中平家族什麼時候舉牌？` search these shared entries. Identity-based `我下一次服事是什麼時候？` remains out of scope until LINE identity is bound to the church login system.
 - Structured schedule memory is text-only in this version. The bot should ask for pasted text instead of trying to store or parse schedule images.
 - Text memories currently expire after 30 days.
 - LINE image/file attachment saving is not implemented in this version. Ask the bot to remember a title plus URL instead.

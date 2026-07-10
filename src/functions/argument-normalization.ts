@@ -108,14 +108,18 @@ function normalizeServiceScheduleArguments(
   args: JsonRecord,
   input: FunctionArgumentNormalizationInput
 ): JsonRecord {
+  const next = { ...args };
+  if (!stringArg(next, "dateIntent") && /下一場|下場|最近一場|下一次|下次/u.test(input.text)) {
+    next.dateIntent = "next_meeting";
+  }
   const query = stringArg(args, "query");
   if (query === "主日") {
-    return { ...args, query: "主日服事" };
+    return { ...next, query: "主日服事" };
   }
   if (query) {
-    return args;
+    return next;
   }
-  return { ...args, query: input.text.trim() };
+  return { ...next, query: input.text.trim() };
 }
 
 export function extractSheetMusicQuery(text: string): string {

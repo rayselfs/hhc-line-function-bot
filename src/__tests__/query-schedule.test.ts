@@ -96,8 +96,24 @@ describe("query_schedule", () => {
       now: () => new Date("2026-07-10T00:00:00.000Z")
     });
     const save = createSaveScheduleHandler({ memoryStore: store });
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi.fn().mockResolvedValue([
+        {
+          id: "unrelated",
+          properties: {
+            日期: { type: "date", date: { start: "2026-07-12" } },
+            聚會: { type: "rich_text", rich_text: [{ plain_text: "主日" }] },
+            角色: { type: "rich_text", rich_text: [{ plain_text: "投影" }] },
+            同工: { type: "rich_text", rich_text: [{ plain_text: "知樂" }] }
+          }
+        }
+      ])
+    };
     const query = createQueryScheduleHandler({
       memoryStore: store,
+      notion,
+      databaseId: "database-1",
+      properties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" },
       now: () => new Date("2026-07-10T00:00:00.000Z")
     });
     await save(
@@ -120,6 +136,8 @@ describe("query_schedule", () => {
 
     expect(result.replyText).toContain("7月17日");
     expect(result.replyText).toContain("世緯家園");
+    expect(result.replyText).not.toContain("知樂");
+    expect(notion.queryDatabase).not.toHaveBeenCalled();
   });
 
   it("filters the next street-sign service by family", async () => {

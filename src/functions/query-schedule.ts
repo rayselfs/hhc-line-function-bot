@@ -94,7 +94,7 @@ function isScheduleListRequest(query: string): boolean {
 }
 
 function isMemorySpecificRequest(query: string): boolean {
-  return /舉牌|為耶穌|晨更家族|家族晨更|仙履奇緣/u.test(query);
+  return /舉牌|為耶穌|晨更家族|家族晨更|仙履奇緣|家族|家園/u.test(query);
 }
 
 function isNoScheduleResult(replyText: string): boolean {

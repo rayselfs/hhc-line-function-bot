@@ -163,6 +163,17 @@ function applyRoutePolicy(
       keywordFallback
     );
   }
+  if (
+    route.type === "respond" &&
+    route.action === "small_talk" &&
+    isProgrammingHelpRequest(input.text)
+  ) {
+    return recoverControlledRoute(
+      { type: "deny", reason: "system_route_evidence_missing", provider: "router" },
+      input,
+      keywordFallback
+    );
+  }
   if (route.type !== "execute") {
     return route;
   }
@@ -262,6 +273,12 @@ function isIntroRequest(text: string): boolean {
     "你會什麼",
     "能做什麼"
   ].includes(normalized);
+}
+
+function isProgrammingHelpRequest(text: string): boolean {
+  return /(?:python|javascript|typescript|golang|程式|程式碼|code).*(?:怎麼|如何|幫我|寫|修改|除錯|debug)|(?:怎麼|如何|幫我).*(?:python|javascript|typescript|golang|程式|程式碼|code)/iu.test(
+    text.normalize("NFKC")
+  );
 }
 
 function withFallbackDiagnostics(

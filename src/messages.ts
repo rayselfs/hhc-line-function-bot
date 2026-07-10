@@ -1,5 +1,4 @@
 export const messages = {
-  unsupportedWithSuggestions: "目前不支援這個請求，請改用下方功能。",
   unsupported: "目前不支援這個請求。",
   functionNotConfigured: "這個功能尚未設定完成。",
   requestFailed: "處理請求時發生錯誤，請稍後再試。",

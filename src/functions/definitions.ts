@@ -95,7 +95,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         argument: "query",
         missingWhen: "blank",
         genericRequest: {
-          phrases: ["投影片", "ppt", "powerpoint", "slides", "pdf"]
+          phrases: ["投影片", "ppt", "powerpoint", "slides", "keynote", "odp"]
         },
         prompt: "要查哪一份投影片？請直接回覆名稱。"
       }
@@ -109,16 +109,16 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     memoryPolicy: { kind: "resource_metadata" },
     clarificationPrompt: "要查哪一份投影片？請直接回覆名稱。",
     description:
-      '- find_ppt_slides: find church PowerPoint/PDF slide files by title or keyword. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "fileType":"ppt|pdf|any optional", "includePdf": boolean optional, "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
+      '- find_ppt_slides: find church presentation files by title or keyword. Only pptx, ppt, key, and odp files are searchable. Arguments: {"query":"extracted filename/title keyword", "originalQuery":"full user request optional", "matchMode":"fuzzy|exact optional"}. Use fuzzy for typo-tolerant song/title lookup.',
     argumentSchema: findPptSlidesArgumentsSchema,
     quickReply: {
       label: "查投影片",
       command: "小哈 查投影片"
     },
-    helpText: "查 OneDrive 裡的投影片或 PDF，找到後回 1 天有效下載連結。",
+    helpText: "查教會投影片，找到後回 1 天有效下載連結。",
     keywordFallback: {
       keywords: ["投影片", "ppt", "powerpoint", "slides"],
-      stripWords: [...commonStripWords, "投影片", "ppt", "powerpoint", "slides", "pdf"],
+      stripWords: [...commonStripWords, "投影片", "ppt", "powerpoint", "slides", "keynote", "odp"],
       defaultArguments: { matchMode: "fuzzy" }
     }
   },
@@ -181,7 +181,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   {
     name: "save_schedule",
     displayName: "記服事表",
-    shortDescription: "把文字版服事表整理為可查詢的短期記憶。",
+    shortDescription: "把文字版服事表整理為可查詢的共用資料。",
     examples: ["小哈幫我記住這份晨更服事表：七/10五黃弘家族2"],
     requires: ["memory", "session"],
     scope: "group_capable",
@@ -208,7 +208,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "記服事表",
       command: "小哈 幫我記住服事表"
     },
-    helpText: "貼上文字版服事表，先整理預覽，確認後保存 30 天。",
+    helpText: "貼上文字版服事表，先整理預覽，確認後保存一年。",
     keywordFallback: {
       keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
       stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]
@@ -353,7 +353,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "記服事表",
       command: "小哈 幫我記住服事表"
     },
-    helpText: "貼上文字版服事表，先整理預覽，確認後保存 30 天。",
+    helpText: "貼上文字版服事表，先整理預覽，確認後保存一年。",
     keywordFallback: {
       keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
       stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]

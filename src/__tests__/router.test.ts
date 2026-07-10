@@ -156,6 +156,29 @@ describe("function router", () => {
     expect(result).toMatchObject({ type: "deny", reason: "write_evidence_missing" });
   });
 
+  it("rejects programming help even when the model mistakes it for small talk", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "small_talk",
+        arguments: { category: "persona" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "小哈，這個 Python code 怎麼寫？",
+      enabledFunctions: ["query_wikipedia"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({ type: "deny", reason: "system_route_evidence_missing" });
+  });
+
   it("accepts a structured schedule update grounded in the user text", async () => {
     const qwen = provider(
       JSON.stringify({

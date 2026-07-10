@@ -1023,7 +1023,7 @@ async function handlePublicAccessCommand(
         replyText: formatAdminCommandHelpByMode(adminHandlers, parsed.args[1] === "all")
       };
     }
-    return formatPublicHelp(profile);
+    return formatPublicHelp();
   }
   if (parsed.command === "whoami") {
     return handleWhoamiCommand(profile, event, accessStore);
@@ -1041,7 +1041,7 @@ async function handlePublicAccessCommand(
   );
 }
 
-function formatPublicHelp(profile: BotProfileConfig): FunctionExecutionResult {
+function formatPublicHelp(): FunctionExecutionResult {
   return {
     ok: true,
     replyText: [

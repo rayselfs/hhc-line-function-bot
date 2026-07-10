@@ -15,10 +15,7 @@
       "query_schedule",
       "find_pop_sheet_music",
       "query_wikipedia",
-      "save_schedule",
-      "save_resource",
-      "save_memory",
-      "retrieve_memory"
+      "save_schedule"
     ],
     "adminUserIdEnv": "LINE_HELPER_ADMIN_USER_ID",
     "adminDirectOnly": true,

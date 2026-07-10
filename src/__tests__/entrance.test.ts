@@ -214,7 +214,7 @@ describe("LINE entrance", () => {
     expect(router.route).not.toHaveBeenCalled();
   });
 
-  it("selects the profile by webhook path and suggests only enabled quick replies on deny", async () => {
+  it("selects the profile by webhook path without exposing functions on deny", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -247,14 +247,7 @@ describe("LINE entrance", () => {
       enabledFunctions: ["find_ppt_slides"],
       text: "小哈 不支援的要求"
     });
-    expect(replyText).toHaveBeenCalledWith("reply-token", "目前不支援這個請求，請改用下方功能。", {
-      quickReplies: [
-        {
-          label: "查投影片",
-          action: { type: "message", label: "查投影片", text: "小哈 查投影片" }
-        }
-      ]
-    });
+    expect(replyText).toHaveBeenCalledWith("reply-token", "目前不支援這個請求。", undefined);
   });
 
   it("emits route and function observer events without raw message text", async () => {

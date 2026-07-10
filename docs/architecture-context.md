@@ -191,9 +191,10 @@ handler:
 - scope-local aliases such as "以後 X 就用這份"
 - explicit external resource links such as "幫我記住這份投影片 https://..."
 - explicit text memories such as "幫我記住..."
-- structured text-only schedule memories such as morning-prayer family schedules
-  and street-sign service schedules. These use shared schedule tables with a
-  `schedule_type` discriminator instead of one table per schedule kind.
+- profile-shared structured text-only schedule memories such as morning-prayer
+  family schedules and street-sign service schedules. These use shared schedule
+  tables with a `schedule_type` discriminator, one-year retention, and one
+  canonical record per schedule type and month.
 - memory commands such as `/memories`, `/forget-memory <id>`, and
   `/memory-status`
 - sanitized turn diagnostics through `/last-agent-turns`
@@ -209,7 +210,8 @@ metadata exception: they may store short-lived, scope-local resource metadata fo
 recall and aliasing. This does not authorize user-authored saved content. Any
 explicit "remember/save/store" behavior, including external links, text memory,
 or structured schedule memory, remains a write action and must pass the normal
-function permission rules.
+function permission rules. Schedule replacement and entry mutation always use a
+preview-and-confirm flow.
 
 When adding resource memory for a function:
 

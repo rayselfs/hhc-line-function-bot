@@ -103,6 +103,18 @@ export function createSaveScheduleMemoryHandler(
     }
 
     if (!args.confirm && !isConfirmText(args.query)) {
+      const periodKey = parsed.entries[0]?.serviceDate.slice(0, 7);
+      const existing = periodKey
+        ? (
+            await options.memoryStore.listScheduleMemories({
+              profileName: context.profile.name,
+              limit: 20
+            })
+          ).find(
+            (schedule) =>
+              schedule.scheduleType === parsed.scheduleType && schedule.periodKey === periodKey
+          )
+        : undefined;
       if (options.sessionStore) {
         await storePendingFunctionQuery({
           sessionStore: options.sessionStore,
@@ -121,7 +133,7 @@ export function createSaveScheduleMemoryHandler(
 
       return {
         ok: true,
-        replyText: formatSchedulePreview(parsed),
+        replyText: formatSchedulePreview(parsed, existing?.title),
         quickReplies: [
           { label: "保存", action: { type: "message", label: "保存", text: "保存" } },
           { label: "取消", action: { type: "message", label: "取消", text: "取消" } }
@@ -463,7 +475,7 @@ function scheduleMemoryContent(args: SaveScheduleMemoryArguments): string {
   return (args.content || args.query || "").trim();
 }
 
-function formatSchedulePreview(parsed: ParsedScheduleMemory): string {
+function formatSchedulePreview(parsed: ParsedScheduleMemory, replacingTitle?: string): string {
   const sample = parsed.entries
     .slice(0, 3)
     .map(
@@ -472,8 +484,11 @@ function formatSchedulePreview(parsed: ParsedScheduleMemory): string {
   return [
     `我整理到 ${parsed.entries.length} 筆${scheduleTypeLabel(parsed.scheduleType)}。`,
     ...sample,
+    replacingTitle ? `這將取代現有的「${replacingTitle}」。` : undefined,
     "要保存嗎？"
-  ].join("\n");
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function formatScheduleEntry(entry: AgentScheduleEntryRecord): string {

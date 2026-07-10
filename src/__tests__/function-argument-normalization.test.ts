@@ -158,6 +158,19 @@ describe("function argument normalization", () => {
     });
   });
 
+  it("infers next meeting intent from an explicit natural-language schedule request", () => {
+    expect(
+      normalizeFunctionArguments(
+        "query_schedule",
+        { query: "下次世緯家園服事是什麼時候" },
+        { text: "小哈 下次世緯家園服事是什麼時候" }
+      )
+    ).toMatchObject({
+      query: "下次世緯家園服事是什麼時候",
+      dateIntent: "next_meeting"
+    });
+  });
+
   it("clears model-inferred content when the user only asks to remember a schedule", () => {
     expect(
       normalizeFunctionArguments(
