@@ -24,8 +24,6 @@ Read these first when starting work:
 7. `src/state/*`, `src/cache/*`, and `src/redis.ts` for session/cache persistence.
 8. `src/__tests__/*` before changing behavior; tests are the best executable map of expected bot behavior.
 
-Use `skills/hhc-line-deploy-guard/SKILL.md` before diagnosing Azure DevOps deploys or validating ACA profile-config inventory. Production profiles are file-backed; do not recreate or update `bot-profiles-base64-json`.
-
 ## Current Product Shape
 
 - One service can host multiple LINE bot profiles on canonical webhook paths, for example `/api/line/webhook/helper`.

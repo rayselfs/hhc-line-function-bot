@@ -14,10 +14,6 @@ describe("production profile configuration deployment contract", () => {
     const dockerfile = readProjectFile("Dockerfile");
     const manifest = readProjectFile("aca.containerapp.yaml");
     const pipeline = readProjectFile("azure-pipelines.yml");
-    const deployGuard = readProjectFile("skills/hhc-line-deploy-guard/SKILL.md");
-    const deployGuardScript = readProjectFile(
-      "skills/hhc-line-deploy-guard/scripts/profile-config.ps1"
-    );
 
     expect(dockerfile).toContain("COPY config ./config");
     expect(manifest).toContain("name: PROFILE_CONFIG_PATH");
@@ -30,9 +26,6 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("--remove-env-vars");
     expect(pipeline).toContain("--secret-names bot-profiles-base64-json");
     expect(pipeline).not.toContain("--secret-name bot-profiles-base64-json");
-    expect(deployGuard).toContain("PROFILE_CONFIG_PATH");
-    expect(deployGuardScript).toContain("PROFILE_CONFIG_PATH");
-    expect(deployGuardScript).not.toContain("Set-ProfileSecretJson");
     expect(readProjectFile("README.md")).toContain("sole complete");
     expect(readProjectFile("README.md")).not.toContain("Example shape:");
     expect(readProjectFile("README.md")).not.toContain('"personaPrompt"');

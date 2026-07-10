@@ -41,7 +41,7 @@ Remote API providers are profile-scoped. Configure the internal `helper` profile
 - Production profiles live in `config/profiles.json` and are loaded through `PROFILE_CONFIG_PATH=/app/config/profiles.json`. Do not use `BOT_PROFILES_JSON`, `BOT_PROFILES_BASE64_JSON`, or `bot-profiles-base64-json` in ACA.
 - Store only referenced LINE values as separate ACA secrets/env vars: `LINE_HELPER_CHANNEL_SECRET`, `LINE_HELPER_CHANNEL_ACCESS_TOKEN`, and `LINE_HELPER_ADMIN_USER_ID`.
 - Keep persona, conversation, safety, and format rules in `smallTalk.prompting`. Production LLM profiles require all four layers; do not hard-code helper personality or safety fallback text.
-- Before deployment, run `corepack pnpm config:validate`. After deployment, run `skills\hhc-line-deploy-guard\scripts\profile-config.ps1 -Action check`.
+- Before deployment, run `corepack pnpm config:validate`. The deployment pipeline sets the profile path, removes legacy profile configuration, and waits for the new revision to become ready.
 
 ## Registration And Admin Safety
 

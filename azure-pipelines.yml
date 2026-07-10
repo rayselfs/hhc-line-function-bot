@@ -16,8 +16,6 @@ trigger:
       - src/**
       - config/**
       - aca.containerapp.yaml
-    exclude:
-      - skills/**
 
 pr:
   branches:
@@ -37,8 +35,6 @@ pr:
       - src/**
       - config/**
       - aca.containerapp.yaml
-    exclude:
-      - skills/**
 
 pool:
   vmImage: ubuntu-latest
