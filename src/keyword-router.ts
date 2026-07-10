@@ -90,6 +90,10 @@ function extractMemoryIntent(
   text: string
 ): { action: FunctionName; arguments: JsonRecord } | undefined {
   const value = stripWakeAddress(text.trim());
+  const resourceSaveIntent = extractResourceSaveIntent(value);
+  if (resourceSaveIntent) {
+    return resourceSaveIntent;
+  }
   const scheduleMemoryIntent = extractScheduleMemoryIntent(value);
   if (scheduleMemoryIntent) {
     return scheduleMemoryIntent;
@@ -121,6 +125,39 @@ function extractMemoryIntent(
     };
   }
   return undefined;
+}
+
+function extractResourceSaveIntent(
+  value: string
+): { action: FunctionName; arguments: JsonRecord } | undefined {
+  if (!/^(?:幫我|請|麻煩)?(?:記住|保存|儲存)/u.test(value)) {
+    return undefined;
+  }
+  const url = value.match(/https:\/\/[^\s，,。)）]+/u)?.[0];
+  if (!url) {
+    if (/(?:投影片|簡報|ppt|powerpoint|slide|歌譜|樂譜|sheet\s*music)/iu.test(value)) {
+      return { action: "save_resource", arguments: { url: "" } };
+    }
+    return undefined;
+  }
+  const resourceType = /(?:投影片|簡報|ppt|powerpoint|slide)/iu.test(value)
+    ? "ppt_slide"
+    : /(?:歌譜|樂譜|sheet\s*music)/iu.test(value)
+      ? "sheet_music"
+      : undefined;
+  const title = value.match(/(?:名稱|標題|名字)(?:是|叫)?[：:\s]*(.+)$/u)?.[1]?.trim();
+  return {
+    action: "save_resource",
+    arguments: {
+      url,
+      ...(resourceType ? { resourceType } : {}),
+      ...(title ? { title: cleanupResourceTitle(title) } : {})
+    }
+  };
+}
+
+function cleanupResourceTitle(value: string): string {
+  return value.replace(/[。.!！?？]+$/u, "").trim();
 }
 
 function extractScheduleMemoryIntent(

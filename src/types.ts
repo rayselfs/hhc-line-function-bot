@@ -4,6 +4,7 @@ export const FUNCTION_NAMES = [
   "find_pop_sheet_music",
   "query_wikipedia",
   "save_memory",
+  "save_resource",
   "retrieve_memory",
   "save_schedule_memory",
   "query_schedule_memory"
@@ -467,6 +468,7 @@ export interface AgentResourceReference {
 export interface FunctionExecutionResult {
   ok: boolean;
   replyText: string;
+  executedAction?: FunctionName;
   quickReplies?: QuickReplyItem[];
   agentResource?: AgentResourceReference;
   smallTalkTrace?: {

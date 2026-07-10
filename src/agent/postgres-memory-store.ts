@@ -5,6 +5,8 @@ import {
   normalizeLookupText,
   scopeFromSource,
   type AgentMemoryScope,
+  type AgentMemoryVisibility,
+  type AgentMemoryPurgeResult,
   type AgentMemoryStore,
   type AgentMemorySummary,
   type AgentResourceRecord,
@@ -56,8 +58,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       insert into agent_resources
         (id, profile_name, scope_type, scope_id, resource_type, title, query_text,
          storage_provider, drive_id, item_id, external_url, source_label, description,
-         created_by, expires_at)
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         created_by, visibility, expires_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       returning *
       `,
       [
@@ -75,6 +77,7 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         input.storage.provider === "external_link" ? (input.storage.sourceLabel ?? null) : null,
         input.storage.provider === "external_link" ? (input.storage.description ?? null) : null,
         input.createdBy ?? null,
+        input.visibility ?? "private",
         input.expiresAt ?? this.defaultExpiresAt()
       ]
     );
@@ -122,6 +125,12 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     if (input.resourceTypes?.length) {
       values.push(input.resourceTypes);
     }
+    const visibilityFilter = visibilitySqlFilter(
+      "visibility",
+      scope,
+      input.requesterUserId ?? input.source.userId,
+      values
+    );
     const limitParam = values.length + 1;
     values.push(Math.max(input.limit ?? 5, 50));
     const result = await this.db.query(
@@ -132,6 +141,7 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and scope_type = $2
         and scope_id = $3
         ${typeFilter}
+        ${visibilityFilter}
         and deleted_at is null
         and expires_at > now()
       order by created_at desc
@@ -190,6 +200,17 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     if (input.resourceTypes?.length) {
       values.push(input.resourceTypes);
     }
+    const requesterUserId = input.requesterUserId ?? input.source.userId;
+    const visibilityFilter = visibilitySqlFilter(
+      "r.visibility",
+      scope,
+      requesterUserId,
+      values,
+      "r.created_by"
+    );
+    const aliasOwnerFilter = requesterUserId
+      ? `and a.created_by = $${values.push(requesterUserId)}`
+      : "and false";
     const result = await this.db.query(
       `
       select r.*
@@ -202,6 +223,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and r.deleted_at is null
         and r.expires_at > now()
         ${typeFilter}
+        ${visibilityFilter}
+        ${aliasOwnerFilter}
       order by a.created_at desc
       limit 1
       `,
@@ -215,8 +238,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     const result = await this.db.query(
       `
       insert into agent_text_memories
-        (id, profile_name, scope_type, scope_id, title, content, query_text, created_by, expires_at)
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (id, profile_name, scope_type, scope_id, title, content, query_text, created_by, visibility, expires_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       returning *
       `,
       [
@@ -228,6 +251,7 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         input.content,
         input.query ?? null,
         input.createdBy ?? null,
+        input.visibility ?? "private",
         input.expiresAt ?? this.defaultExpiresAt()
       ]
     );
@@ -237,6 +261,15 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
   async searchTextMemories(input: SearchAgentTextMemoriesInput): Promise<AgentTextMemoryRecord[]> {
     const scope = scopeFromSource(input.source);
     const limit = Math.max(input.limit ?? 5, 5);
+    const values: unknown[] = [input.profileName, scope.type, scope.id];
+    const visibilityFilter = visibilitySqlFilter(
+      "visibility",
+      scope,
+      input.requesterUserId ?? input.source.userId,
+      values
+    );
+    const limitParam = values.length + 1;
+    values.push(Math.max(limit, 50));
     const result = await this.db.query(
       `
       select *
@@ -244,12 +277,13 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       where profile_name = $1
         and scope_type = $2
         and scope_id = $3
+        ${visibilityFilter}
         and deleted_at is null
         and expires_at > now()
       order by created_at desc
-      limit $4
+      limit $${limitParam}
       `,
-      [input.profileName, scope.type, scope.id, Math.max(limit, 50)]
+      values
     );
     const query = normalizeLookupText(input.query ?? "");
     return result.rows
@@ -271,8 +305,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     const memoryResult = await this.db.query(
       `
       insert into agent_schedule_memories
-        (id, profile_name, scope_type, scope_id, schedule_type, title, original_text, created_by, expires_at)
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (id, profile_name, scope_type, scope_id, schedule_type, title, original_text, created_by, visibility, expires_at)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       returning *
       `,
       [
@@ -284,6 +318,7 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         input.title,
         input.originalText,
         input.createdBy ?? null,
+        input.visibility ?? "private",
         expiresAt
       ]
     );
@@ -329,6 +364,14 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       values.push(input.date);
       filters.push(`and e.service_date = $${values.length}::date`);
     }
+    filters.push(
+      visibilitySqlFilter(
+        "m.visibility",
+        scope,
+        input.requesterUserId ?? input.source.userId,
+        values
+      )
+    );
     const limitParam = values.length + 1;
     values.push(Math.max(input.limit ?? 10, 50));
     const result = await this.db.query(
@@ -341,6 +384,8 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         m.scope_id,
         m.schedule_type,
         m.title as schedule_title,
+        m.visibility,
+        m.created_by,
         m.created_at as memory_created_at,
         m.expires_at,
         m.deleted_at
@@ -380,9 +425,10 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and scope_id = $3
         and id = $4
         and deleted_at is null
+        and ($5::boolean = true or created_by = $6)
       returning id
       `,
-      [input.profileName, scope.type, scope.id, input.id]
+      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
     );
     return result.rows.length > 0;
   }
@@ -398,11 +444,56 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
         and scope_id = $3
         and id = $4
         and deleted_at is null
+        and ($5::boolean = true or created_by = $6)
       returning id
       `,
-      [input.profileName, scope.type, scope.id, input.id]
+      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
     );
     return result.rows.length > 0;
+  }
+
+  async forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
+    const scope = scopeFromSource(input.source);
+    const result = await this.db.query(
+      `
+      update agent_schedule_memories
+      set deleted_at = now()
+      where profile_name = $1
+        and scope_type = $2
+        and scope_id = $3
+        and id = $4
+        and deleted_at is null
+        and ($5::boolean = true or created_by = $6)
+      returning id
+      `,
+      [input.profileName, scope.type, scope.id, input.id, input.isAdmin ?? false, input.deletedBy ?? null]
+    );
+    return result.rows.length > 0;
+  }
+
+  async purgeExpired(now = this.now()): Promise<AgentMemoryPurgeResult> {
+    const expiresAt = now.toISOString();
+    const resources = await this.db.query<{ id: string }>(
+      "delete from agent_resources where expires_at <= $1 returning id",
+      [expiresAt]
+    );
+    const textMemories = await this.db.query<{ id: string }>(
+      "delete from agent_text_memories where expires_at <= $1 returning id",
+      [expiresAt]
+    );
+    const scheduleMemories = await this.db.query<{ id: string }>(
+      "delete from agent_schedule_memories where expires_at <= $1 returning id",
+      [expiresAt]
+    );
+    const aliases = await this.db.query<{ id: string }>(
+      "delete from agent_resource_aliases where resource_id not in (select id from agent_resources) returning id"
+    );
+    return {
+      resources: resources.rows.length,
+      textMemories: textMemories.rows.length,
+      scheduleMemories: scheduleMemories.rows.length,
+      aliases: aliases.rows.length
+    };
   }
 
   async summary(): Promise<AgentMemorySummary> {
@@ -446,6 +537,7 @@ function mapResource(row: Record<string, unknown>): AgentResourceRecord {
     id: String(row.id),
     profileName: String(row.profile_name),
     scope: mapScope(row),
+    visibility: memoryVisibility(row.visibility),
     resourceType: row.resource_type as AgentResourceType,
     title: String(row.title),
     query: optionalString(row.query_text),
@@ -474,6 +566,7 @@ function mapTextMemory(row: Record<string, unknown>): AgentTextMemoryRecord {
     id: String(row.id),
     profileName: String(row.profile_name),
     scope: mapScope(row),
+    visibility: memoryVisibility(row.visibility),
     title: optionalString(row.title),
     content: String(row.content),
     query: optionalString(row.query_text),
@@ -492,6 +585,7 @@ function mapScheduleMemory(
     id: String(row.id),
     profileName: String(row.profile_name),
     scope: mapScope(row),
+    visibility: memoryVisibility(row.visibility),
     scheduleType: row.schedule_type as AgentScheduleMemoryRecord["scheduleType"],
     title: String(row.title),
     originalText: String(row.original_text),
@@ -509,6 +603,8 @@ function mapScheduleEntry(row: Record<string, unknown>): AgentScheduleEntryRecor
     memoryId: String(row.memory_id ?? row.schedule_memory_id),
     profileName: String(row.profile_name),
     scope: mapScope(row),
+    visibility: memoryVisibility(row.visibility),
+    createdBy: optionalString(row.created_by),
     scheduleType: row.schedule_type as AgentScheduleEntryRecord["scheduleType"],
     scheduleTitle: String(row.schedule_title ?? row.title),
     serviceDate: toDateKey(row.service_date),
@@ -529,6 +625,27 @@ function mapScope(row: Record<string, unknown>): AgentMemoryScope {
     type: row.scope_type as AgentMemoryScope["type"],
     id: String(row.scope_id)
   };
+}
+
+function memoryVisibility(value: unknown): AgentMemoryVisibility {
+  return value === "group" ? "group" : "private";
+}
+
+function visibilitySqlFilter(
+  column: string,
+  scope: AgentMemoryScope,
+  requesterUserId: string | undefined,
+  values: unknown[],
+  createdByColumn = "created_by"
+): string {
+  if (scope.type === "user") {
+    return "";
+  }
+  if (!requesterUserId) {
+    return `and ${column} = 'group'`;
+  }
+  values.push(requesterUserId);
+  return `and (${column} = 'group' or ${createdByColumn} = $${values.length})`;
 }
 
 function memorySearchText(record: AgentTextMemoryRecord): string {

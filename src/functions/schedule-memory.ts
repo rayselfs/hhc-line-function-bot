@@ -115,19 +115,11 @@ export function createSaveScheduleMemoryHandler(
       profileName: context.profile.name,
       source: context.event.source,
       createdBy: context.event.source.userId,
+      visibility: args.visibility ?? "private",
       scheduleType: parsed.scheduleType,
       title: parsed.title,
       originalText: content,
       entries: parsed.entries,
-      expiresAt
-    });
-    await options.memoryStore.saveTextMemory({
-      profileName: context.profile.name,
-      source: context.event.source,
-      createdBy: context.event.source.userId,
-      title: parsed.title,
-      content,
-      query: parsed.title,
       expiresAt
     });
 
@@ -151,6 +143,7 @@ export function createQueryScheduleMemoryHandler(
     const entries = await options.memoryStore.searchScheduleEntries({
       profileName: context.profile.name,
       source: context.event.source,
+      requesterUserId: context.event.source.userId,
       scheduleType: inferredType,
       date,
       meetingName: args.meeting,

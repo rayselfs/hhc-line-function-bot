@@ -70,7 +70,22 @@ export const saveMemoryArgumentsSchema = z
   .object({
     title: z.string().optional(),
     content: z.string().optional().default(""),
-    query: z.string().optional()
+    query: z.string().optional(),
+    visibility: z.enum(["private", "group"]).optional(),
+    confirm: z.boolean().optional(),
+    cancel: z.boolean().optional()
+  })
+  .strip();
+
+export const saveResourceArgumentsSchema = z
+  .object({
+    url: z.string().optional().default(""),
+    resourceType: z.enum(["ppt_slide", "sheet_music"]).optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    visibility: z.enum(["private", "group"]).optional(),
+    confirm: z.boolean().optional(),
+    cancel: z.boolean().optional()
   })
   .strip();
 
@@ -92,6 +107,7 @@ export const saveScheduleMemoryArgumentsSchema = z
     title: z.string().optional(),
     content: z.string().optional().default(""),
     query: z.string().optional(),
+    visibility: z.enum(["private", "group"]).optional(),
     confirm: z.boolean().optional(),
     cancel: z.boolean().optional()
   })
@@ -113,6 +129,7 @@ export type FindPptSlidesArguments = z.infer<typeof findPptSlidesArgumentsSchema
 export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleArgumentsSchema>;
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
 export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
+export type SaveResourceArguments = z.infer<typeof saveResourceArgumentsSchema>;
 export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
 export type QueryWikipediaArguments = z.infer<typeof queryWikipediaArgumentsSchema>;
 export type SaveScheduleMemoryArguments = z.infer<typeof saveScheduleMemoryArgumentsSchema>;
@@ -128,6 +145,7 @@ export function parseFunctionArguments(
     find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
     query_wikipedia: queryWikipediaArgumentsSchema,
     save_memory: saveMemoryArgumentsSchema,
+    save_resource: saveResourceArgumentsSchema,
     retrieve_memory: retrieveMemoryArgumentsSchema,
     save_schedule_memory: saveScheduleMemoryArgumentsSchema,
     query_schedule_memory: queryScheduleMemoryArgumentsSchema

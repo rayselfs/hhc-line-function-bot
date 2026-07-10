@@ -78,12 +78,13 @@ export function createPendingFunctionTextMessageHandler(
         applyPendingSlotAnswer(pending.action, pending.arguments, answer),
         { text: answer }
       );
-      return handler(normalizedArguments, {
+      const result = await handler(normalizedArguments, {
         profile: context.profile,
         event: context.event,
         requestId: context.requestId,
         requesterDisplayName: context.requesterDisplayName
       });
+      return { ...result, executedAction: pending.action };
     }
   };
 }

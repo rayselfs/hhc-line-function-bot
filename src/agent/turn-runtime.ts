@@ -16,6 +16,7 @@ import { sanitizeActionTelemetryEvent } from "../observability/action-telemetry.
 import type { LastErrorStore } from "../observability/last-error-store.js";
 import type { LastRouteRecord, LastRouteStore } from "../observability/last-route-store.js";
 import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
+import { getFunctionDefinition } from "../functions/definitions.js";
 import type { SessionStore } from "../state/session-store.js";
 import type { InFlightKey, InFlightStore } from "../in-flight/in-flight-store.js";
 import type { ContextManager, ConversationWindowStore } from "./context-manager.js";
@@ -177,6 +178,9 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           durationMs: elapsedMs(startedAt)
         });
         if (result) {
+          if (result.executedAction) {
+            await recordFunctionWriteAudit(options.accessStore, context, result.executedAction, {}, result);
+          }
           const textHandlerFunctionName = functionNameForAgentResource(
             result.agentResource?.resourceType
           );
@@ -416,6 +420,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       const functionStartedAt = Date.now();
       try {
         const result = await handler(normalizedArguments, context);
+        await recordFunctionWriteAudit(
+          options.accessStore,
+          context,
+          route.action,
+          normalizedArguments,
+          result
+        );
         await options.agentRuntime?.afterFunctionResult({
           context,
           action: route.action,
@@ -499,6 +510,34 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       }
     }
   };
+}
+
+async function recordFunctionWriteAudit(
+  accessStore: AccessStore | undefined,
+  context: FunctionHandlerContext,
+  action: FunctionName,
+  args: JsonRecord,
+  result: FunctionExecutionResult
+): Promise<void> {
+  const definition = getFunctionDefinition(action);
+  const actorUserId = context.event.source.userId;
+  if (
+    !accessStore ||
+    !actorUserId ||
+    !result.ok ||
+    !definition ||
+    definition.sideEffectLevel === "read"
+  ) {
+    return;
+  }
+  await accessStore.recordAudit({
+    profileName: context.profile.name,
+    actorUserId,
+    action: `function.${definition.sideEffectLevel}.${args.confirm === true ? "commit" : "preview"}`,
+    targetType: "function",
+    targetId: action,
+    metadata: { sourceType: context.event.source.type }
+  });
 }
 
 async function handleNaturalLanguageAdminAction(input: {

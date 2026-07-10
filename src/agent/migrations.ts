@@ -138,6 +138,42 @@ const migrations = [
   `
   create index if not exists agent_schedule_entries_lookup_idx
   on agent_schedule_entries (service_date, meeting_name)
+  `,
+  `
+  alter table agent_resources
+    add column if not exists visibility text not null default 'private'
+  `,
+  `
+  alter table agent_text_memories
+    add column if not exists visibility text not null default 'private'
+  `,
+  `
+  alter table agent_schedule_memories
+    add column if not exists visibility text not null default 'private'
+  `,
+  `
+  alter table agent_resources
+    drop constraint if exists agent_resources_visibility_check
+  `,
+  `
+  alter table agent_resources
+    add constraint agent_resources_visibility_check check (visibility in ('private', 'group'))
+  `,
+  `
+  alter table agent_text_memories
+    drop constraint if exists agent_text_memories_visibility_check
+  `,
+  `
+  alter table agent_text_memories
+    add constraint agent_text_memories_visibility_check check (visibility in ('private', 'group'))
+  `,
+  `
+  alter table agent_schedule_memories
+    drop constraint if exists agent_schedule_memories_visibility_check
+  `,
+  `
+  alter table agent_schedule_memories
+    add constraint agent_schedule_memories_visibility_check check (visibility in ('private', 'group'))
   `
 ];
 

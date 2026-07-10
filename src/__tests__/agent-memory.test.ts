@@ -77,7 +77,7 @@ describe("agent memory", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("uses scoped aliases before falling back to file search", async () => {
+  it("keeps resource aliases requester-scoped in groups", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     const resource = await store.recordResource({
@@ -105,10 +105,10 @@ describe("agent memory", () => {
         alias: "奇異恩典",
         resourceTypes: ["ppt_slide"]
       })
-    ).resolves.toMatchObject({ title: "奇異恩典青年版.pptx" });
+    ).resolves.toBeUndefined();
   });
 
-  it("stores and searches external link resources in the current scope", async () => {
+  it("keeps group resources private by default and shares only when explicit", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     await store.recordResource({
@@ -131,16 +131,40 @@ describe("agent memory", () => {
       store.searchResources({
         profileName: "helper",
         source: { type: "group", groupId: "C1", userId: "U2" },
+        requesterUserId: "U2",
         query: "青年",
+        resourceTypes: ["ppt_slide"],
+        limit: 5
+      })
+    ).resolves.toEqual([]);
+
+    await store.recordResource({
+      profileName: "helper",
+      source: { type: "group", groupId: "C1", userId: "U1" },
+      createdBy: "U1",
+      visibility: "group",
+      resourceType: "ppt_slide",
+      title: "青年聚會共用投影片",
+      query: "青年聚會",
+      storage: { provider: "external_link", url: "https://example.com/youth-shared" },
+      expiresAt: "2026-08-07T00:00:00.000Z"
+    });
+
+    await expect(
+      store.searchResources({
+        profileName: "helper",
+        source: { type: "group", groupId: "C1", userId: "U2" },
+        requesterUserId: "U2",
+        query: "共用",
         resourceTypes: ["ppt_slide"],
         limit: 5
       })
     ).resolves.toMatchObject([
       {
-        title: "青年聚會投影片",
+        title: "青年聚會共用投影片",
         storage: {
           provider: "external_link",
-          url: "https://example.com/youth-slides"
+          url: "https://example.com/youth-shared"
         }
       }
     ]);
@@ -183,7 +207,7 @@ describe("agent memory", () => {
     );
   });
 
-  it("saves explicit external link resources and recalls them without Graph", async () => {
+  it("does not save external link resources before the controlled function gate", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     const runtime = createAgentRuntime({ memoryStore: store, now: () => now });
@@ -192,18 +216,12 @@ describe("agent memory", () => {
       text: "小哈幫我記住這份投影片 https://example.com/youth 名稱是青年聚會投影片",
       context: context()
     });
-    const recalled = await runtime.handleTextBeforeRouting({
-      text: "小哈 再給我一次",
-      context: context()
-    });
 
-    expect(saved?.replyText).toContain("已記住");
-    expect(saved?.replyText).toContain("青年聚會投影片");
-    expect(recalled?.replyText).toContain("青年聚會投影片");
-    expect(recalled?.replyText).toContain("https://example.com/youth");
+    expect(saved).toBeUndefined();
+    await expect(store.summary()).resolves.toMatchObject({ resources: 0 });
   });
 
-  it("asks for resource type before saving an external resource when it is unclear", async () => {
+  it("does not handle incomplete external link saves before routing", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     const runtime = createAgentRuntime({ memoryStore: store, now: () => now });
@@ -213,11 +231,11 @@ describe("agent memory", () => {
       context: context()
     });
 
-    expect(result?.replyText).toContain("這是投影片還是歌譜");
+    expect(result).toBeUndefined();
     await expect(store.summary()).resolves.toMatchObject({ resources: 0 });
   });
 
-  it("saves explicit text memory and retrieves it by query", async () => {
+  it("does not save or retrieve text memory before the controlled function gate", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     const runtime = createAgentRuntime({ memoryStore: store, now: () => now });
@@ -231,8 +249,8 @@ describe("agent memory", () => {
       context: context()
     });
 
-    expect(saved?.replyText).toContain("已記住");
-    expect(retrieved?.replyText).toContain("主日導播是知樂");
+    expect(saved).toBeUndefined();
+    expect(retrieved).toBeUndefined();
   });
 
   it("lists text memories and keeps memory status admin-only", async () => {
@@ -240,9 +258,11 @@ describe("agent memory", () => {
     const store = new InMemoryAgentMemoryStore({ now: () => now });
     const runtime = createAgentRuntime({ memoryStore: store, now: () => now });
 
-    await runtime.handleTextBeforeRouting({
-      text: "小哈幫我記住主日導播是知樂",
-      context: context()
+    await store.saveTextMemory({
+      profileName: "helper",
+      source: context().event.source,
+      createdBy: "U1",
+      content: "主日導播是知樂"
     });
 
     await expect(

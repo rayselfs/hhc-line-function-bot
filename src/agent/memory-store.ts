@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentResourceReference, AgentResourceType, LineSource } from "../types.js";
 
 export type AgentMemoryScopeType = "user" | "group" | "room";
+export type AgentMemoryVisibility = "private" | "group";
 export type AgentScheduleType =
   "morning_prayer_family" | "street_sign_service" | "custom_service_schedule";
 
@@ -15,6 +16,7 @@ export interface AgentResourceRecord extends AgentResourceReference {
   id: string;
   profileName: string;
   scope: AgentMemoryScope;
+  visibility: AgentMemoryVisibility;
   createdBy?: string;
   createdAt: string;
   expiresAt: string;
@@ -25,6 +27,7 @@ export interface AgentTextMemoryRecord {
   id: string;
   profileName: string;
   scope: AgentMemoryScope;
+  visibility: AgentMemoryVisibility;
   title?: string;
   content: string;
   query?: string;
@@ -49,6 +52,8 @@ export interface AgentScheduleEntryRecord extends AgentScheduleEntryInput {
   memoryId: string;
   profileName: string;
   scope: AgentMemoryScope;
+  visibility: AgentMemoryVisibility;
+  createdBy?: string;
   scheduleType: AgentScheduleType;
   scheduleTitle: string;
   createdAt: string;
@@ -60,6 +65,7 @@ export interface AgentScheduleMemoryRecord {
   id: string;
   profileName: string;
   scope: AgentMemoryScope;
+  visibility: AgentMemoryVisibility;
   scheduleType: AgentScheduleType;
   title: string;
   originalText: string;
@@ -74,6 +80,7 @@ export interface RecordAgentResourceInput {
   profileName: string;
   source: LineSource;
   createdBy?: string;
+  visibility?: AgentMemoryVisibility;
   resourceType: AgentResourceType;
   title: string;
   query?: string;
@@ -99,6 +106,7 @@ export interface RememberAgentAliasInput {
 export interface FindAgentResourceByAliasInput {
   profileName: string;
   source: LineSource;
+  requesterUserId?: string;
   alias: string;
   resourceTypes?: AgentResourceType[];
 }
@@ -107,6 +115,7 @@ export interface SaveAgentTextMemoryInput {
   profileName: string;
   source: LineSource;
   createdBy?: string;
+  visibility?: AgentMemoryVisibility;
   title?: string;
   content: string;
   query?: string;
@@ -117,6 +126,7 @@ export interface SaveAgentScheduleMemoryInput {
   profileName: string;
   source: LineSource;
   createdBy?: string;
+  visibility?: AgentMemoryVisibility;
   scheduleType: AgentScheduleType;
   title: string;
   originalText: string;
@@ -127,6 +137,7 @@ export interface SaveAgentScheduleMemoryInput {
 export interface SearchAgentScheduleEntriesInput {
   profileName: string;
   source: LineSource;
+  requesterUserId?: string;
   scheduleType?: AgentScheduleType;
   date?: string;
   meetingName?: string;
@@ -137,6 +148,7 @@ export interface SearchAgentScheduleEntriesInput {
 export interface SearchAgentTextMemoriesInput {
   profileName: string;
   source: LineSource;
+  requesterUserId?: string;
   query?: string;
   limit?: number;
 }
@@ -144,6 +156,7 @@ export interface SearchAgentTextMemoriesInput {
 export interface SearchAgentResourcesInput {
   profileName: string;
   source: LineSource;
+  requesterUserId?: string;
   query?: string;
   resourceTypes?: AgentResourceType[];
   limit?: number;
@@ -154,6 +167,14 @@ export interface ForgetAgentMemoryInput {
   source: LineSource;
   id: string;
   deletedBy?: string;
+  isAdmin?: boolean;
+}
+
+export interface AgentMemoryPurgeResult {
+  resources: number;
+  textMemories: number;
+  scheduleMemories: number;
+  aliases: number;
 }
 
 export interface AgentMemorySummary {
@@ -182,6 +203,8 @@ export interface AgentMemoryStore {
   ): Promise<AgentScheduleEntryRecord[]>;
   forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean>;
   forgetResource(input: ForgetAgentMemoryInput): Promise<boolean>;
+  forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean>;
+  purgeExpired(now?: Date): Promise<AgentMemoryPurgeResult>;
   summary(): Promise<AgentMemorySummary>;
 }
 
@@ -223,6 +246,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       id: randomUUID(),
       profileName: input.profileName,
       scope,
+      visibility: input.visibility ?? defaultVisibility(scope),
       createdBy: input.createdBy,
       resourceType: input.resourceType,
       title: input.title,
@@ -254,6 +278,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       .filter((record) =>
         this.resourceMatches(record, input.profileName, scope, input.resourceTypes)
       )
+      .filter((record) => this.isVisible(record, input.requesterUserId ?? input.source.userId, scope))
       .filter((record) => !query || normalizeLookupText(resourceSearchText(record)).includes(query))
       .sort(descendingCreatedAt)
       .slice(0, input.limit ?? 5);
@@ -299,7 +324,9 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       const resource = this.resources.get(record.resourceId);
       if (
         resource &&
-        this.resourceMatches(resource, input.profileName, scope, input.resourceTypes)
+        this.resourceMatches(resource, input.profileName, scope, input.resourceTypes) &&
+        record.createdBy === (input.requesterUserId ?? input.source.userId) &&
+        this.isVisible(resource, input.requesterUserId ?? input.source.userId, scope)
       ) {
         return resource;
       }
@@ -312,6 +339,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       id: randomUUID(),
       profileName: input.profileName,
       scope: scopeFromSource(input.source),
+      visibility: input.visibility ?? defaultVisibility(scopeFromSource(input.source)),
       title: input.title,
       content: input.content,
       query: input.query,
@@ -328,6 +356,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     const query = normalizeLookupText(input.query ?? "");
     return Array.from(this.textMemories.values())
       .filter((record) => this.textMemoryMatches(record, input.profileName, scope))
+      .filter((record) => this.isVisible(record, input.requesterUserId ?? input.source.userId, scope))
       .filter((record) => !query || normalizeLookupText(memorySearchText(record)).includes(query))
       .sort(descendingCreatedAt)
       .slice(0, input.limit ?? 5);
@@ -349,6 +378,8 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       memoryId,
       profileName: input.profileName,
       scope,
+      visibility: input.visibility ?? defaultVisibility(scope),
+      createdBy: input.createdBy,
       scheduleType: input.scheduleType,
       scheduleTitle: input.title,
       serviceDate: entry.serviceDate,
@@ -365,6 +396,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       id: memoryId,
       profileName: input.profileName,
       scope,
+      visibility: input.visibility ?? defaultVisibility(scope),
       scheduleType: input.scheduleType,
       title: input.title,
       originalText: input.originalText,
@@ -392,6 +424,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
           record.profileName === input.profileName &&
           sameScope(record.scope, scope) &&
           this.active(record) &&
+          this.isVisible(record, input.requesterUserId ?? input.source.userId, scope) &&
           (!input.scheduleType || record.scheduleType === input.scheduleType) &&
           (!input.date || record.serviceDate === input.date) &&
           (!meetingName || normalizeLookupText(record.meetingName).includes(meetingName))
@@ -406,7 +439,12 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   async forgetMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
     const scope = scopeFromSource(input.source);
     const record = this.textMemories.get(input.id);
-    if (!record || record.profileName !== input.profileName || !sameScope(record.scope, scope)) {
+    if (
+      !record ||
+      record.profileName !== input.profileName ||
+      !sameScope(record.scope, scope) ||
+      !canDelete(record, input)
+    ) {
       return false;
     }
     this.textMemories.set(record.id, {
@@ -419,7 +457,12 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   async forgetResource(input: ForgetAgentMemoryInput): Promise<boolean> {
     const scope = scopeFromSource(input.source);
     const record = this.resources.get(input.id);
-    if (!record || record.profileName !== input.profileName || !sameScope(record.scope, scope)) {
+    if (
+      !record ||
+      record.profileName !== input.profileName ||
+      !sameScope(record.scope, scope) ||
+      !canDelete(record, input)
+    ) {
       return false;
     }
     this.resources.set(record.id, {
@@ -427,6 +470,47 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
       deletedAt: this.now().toISOString()
     });
     return true;
+  }
+
+  async forgetScheduleMemory(input: ForgetAgentMemoryInput): Promise<boolean> {
+    const scope = scopeFromSource(input.source);
+    const record = this.scheduleMemories.get(input.id);
+    if (
+      !record ||
+      record.profileName !== input.profileName ||
+      !sameScope(record.scope, scope) ||
+      !canDelete(record, input)
+    ) {
+      return false;
+    }
+    const deletedAt = this.now().toISOString();
+    this.scheduleMemories.set(record.id, { ...record, deletedAt });
+    for (const entry of record.entries) {
+      this.scheduleEntries.set(entry.id, { ...entry, deletedAt });
+    }
+    return true;
+  }
+
+  async purgeExpired(now = this.now()): Promise<AgentMemoryPurgeResult> {
+    const expired = (record: { expiresAt: string; deletedAt?: string }) =>
+      Boolean(record.deletedAt) || Date.parse(record.expiresAt) <= now.getTime();
+    const resources = removeWhere(this.resources, expired);
+    const textMemories = removeWhere(this.textMemories, expired);
+    const scheduleMemoryIds = new Set(
+      Array.from(this.scheduleMemories.values())
+        .filter(expired)
+        .map((record) => record.id)
+    );
+    const scheduleMemories = removeWhere(this.scheduleMemories, expired);
+    removeWhere(
+      this.scheduleEntries,
+      (entry: AgentScheduleEntryRecord) => expired(entry) || scheduleMemoryIds.has(entry.memoryId)
+    );
+    const aliases = removeWhere(
+      this.aliases,
+      (alias: AgentAliasRecord) => !this.resources.has(alias.resourceId)
+    );
+    return { resources, textMemories, scheduleMemories, aliases };
   }
 
   async summary(): Promise<AgentMemorySummary> {
@@ -474,6 +558,17 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
     );
   }
 
+  private isVisible(
+    record: { visibility: AgentMemoryVisibility; createdBy?: string },
+    requesterUserId: string | undefined,
+    scope: AgentMemoryScope
+  ): boolean {
+    if (scope.type === "user") {
+      return true;
+    }
+    return record.visibility === "group" || Boolean(requesterUserId && record.createdBy === requesterUserId);
+  }
+
   private active(record: { expiresAt: string; deletedAt?: string }): boolean {
     return !record.deletedAt && Date.parse(record.expiresAt) > this.now().getTime();
   }
@@ -502,6 +597,28 @@ export function normalizeLookupText(value: string): string {
 
 function sameScope(left: AgentMemoryScope, right: AgentMemoryScope): boolean {
   return left.type === right.type && left.id === right.id;
+}
+
+function defaultVisibility(scope: AgentMemoryScope): AgentMemoryVisibility {
+  return scope.type === "group" || scope.type === "room" ? "private" : "private";
+}
+
+function canDelete(
+  record: { createdBy?: string },
+  input: ForgetAgentMemoryInput
+): boolean {
+  return Boolean(input.isAdmin || (input.deletedBy && input.deletedBy === record.createdBy));
+}
+
+function removeWhere<T>(records: Map<string, T>, predicate: (record: T) => boolean): number {
+  let removed = 0;
+  for (const [id, record] of records) {
+    if (predicate(record)) {
+      records.delete(id);
+      removed += 1;
+    }
+  }
+  return removed;
 }
 
 function descendingCreatedAt<T extends { createdAt: string }>(left: T, right: T): number {

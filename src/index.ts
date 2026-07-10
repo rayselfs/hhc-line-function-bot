@@ -112,6 +112,11 @@ const adminActionRouter = createAdminActionRouter({
 });
 const accessStore = await createAccessStore({ db: postgres?.pool });
 const memoryStore = await createAgentMemoryStore({ db: postgres?.pool });
+await memoryStore.purgeExpired();
+const memoryPurgeTimer = setInterval(() => {
+  void memoryStore.purgeExpired();
+}, 6 * 60 * 60 * 1000);
+memoryPurgeTimer.unref();
 const webAllowlistStore = postgres?.pool ? await createPostgresWebAllowlistStore() : undefined;
 const graph = config.graph ? createGraphDriveClient(config.graph) : undefined;
 const notion = config.notion ? createNotionDatabaseClient(config.notion) : undefined;
@@ -168,7 +173,7 @@ const app = createApp(config, {
   webAllowlistStore,
   textGenerator: smartTalkPrimary,
   textFallbackGenerator: smartTalkFallback,
-  agentRuntime: createAgentRuntime({ memoryStore, graph }),
+  agentRuntime: createAgentRuntime({ memoryStore, graph, accessStore }),
   diagnostics: createDependencyDiagnostics({
     config,
     postgres: postgres?.pool,

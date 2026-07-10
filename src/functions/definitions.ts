@@ -8,6 +8,7 @@ import {
   queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
   saveMemoryArgumentsSchema,
+  saveResourceArgumentsSchema,
   saveScheduleMemoryArgumentsSchema
 } from "../function-arguments.js";
 import type { AgentResourceType, FunctionName, JsonRecord } from "../types.js";
@@ -34,7 +35,7 @@ export interface FunctionRequiredSlot {
 }
 
 export interface FunctionResourcePolicy {
-  kind: "none" | "graph_file";
+  kind: "none" | "graph_file" | "external_link";
   resourceTypes?: AgentResourceType[];
   remember: boolean;
   alias: boolean;
@@ -222,7 +223,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     memoryPolicy: { kind: "explicit_text" },
     clarificationPrompt: "請貼上要記住的服事表文字內容。",
     description:
-      '- save_schedule_memory: save structured text-only service schedules such as 晨更家族服事表 or 為耶穌舉牌服事表. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "confirm": boolean optional}. Preview first unless confirm is true. Do not use for images.',
+      '- save_schedule_memory: save one canonical structured text-only service schedule such as 晨更家族服事表 or 為耶穌舉牌服事表. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "visibility":"private|group optional", "confirm": boolean optional}. Preview first unless confirm is true. Do not use for images or duplicate text memories.',
     argumentSchema: saveScheduleMemoryArgumentsSchema,
     quickReply: {
       label: "記服事表",
@@ -331,6 +332,59 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     keywordFallback: {
       keywords: ["幫我記住", "記住這個", "幫我保存", "幫我儲存"],
       stripWords: [...commonStripWords, "幫我記住", "記住這個", "幫我保存", "幫我儲存"]
+    }
+  },
+  {
+    name: "save_resource",
+    displayName: "保存連結資源",
+    shortDescription: "保存同工明確交代的投影片或歌譜 HTTPS 連結。",
+    examples: [
+      "小哈幫我保存這份投影片 https://example.org/slides 名稱是青年聚會投影片",
+      "小哈保存歌譜 https://example.org/score 名稱是恩典之路歌譜"
+    ],
+    requires: ["memory", "session"],
+    scope: "group_capable",
+    sideEffectLevel: "write",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "url",
+        argument: "url",
+        missingWhen: "blank",
+        prompt: "請提供要保存的 HTTPS 連結。"
+      },
+      {
+        name: "resource_type",
+        argument: "resourceType",
+        missingWhen: "blank",
+        prompt: "這是投影片還是歌譜？"
+      },
+      {
+        name: "title",
+        argument: "title",
+        missingWhen: "blank",
+        prompt: "請提供這份資源的名稱。"
+      }
+    ],
+    resourcePolicy: {
+      kind: "external_link",
+      resourceTypes: ["ppt_slide", "sheet_music"],
+      remember: true,
+      alias: false
+    },
+    memoryPolicy: { kind: "explicit_text" },
+    clarificationPrompt: "請提供要保存的連結、類型與名稱。",
+    description:
+      '- save_resource: save an explicit HTTPS link as a private resource by default. Arguments: {"url":"https URL", "resourceType":"ppt_slide|sheet_music", "title":"user-provided title", "description":"optional", "visibility":"private|group optional", "confirm":boolean optional}. Always preview before persisting. Use visibility group only when the requester explicitly asks to share with the group.',
+    argumentSchema: saveResourceArgumentsSchema,
+    quickReply: {
+      label: "保存連結",
+      command: "小哈幫我保存投影片連結："
+    },
+    helpText: "保存明確提供的投影片或歌譜 HTTPS 連結；預設私人，需確認後才寫入。",
+    keywordFallback: {
+      keywords: ["保存投影片", "儲存投影片", "記住投影片", "保存歌譜", "儲存歌譜", "記住歌譜"],
+      stripWords: [...commonStripWords, "保存", "儲存", "記住", "投影片", "歌譜", "樂譜"]
     }
   },
   {

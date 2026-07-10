@@ -1,27 +1,64 @@
 import { retrieveMemoryArgumentsSchema, saveMemoryArgumentsSchema } from "../function-arguments.js";
 import type { AgentMemoryStore } from "../agent/memory-store.js";
 import type { FunctionHandler } from "../types.js";
+import type { SessionStore } from "../state/session-store.js";
+import { storePendingFunctionQuery } from "./pending-function.js";
+import { randomUUID } from "node:crypto";
 
 const TEXT_MEMORY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface AgentMemoryFunctionOptions {
   memoryStore: AgentMemoryStore;
+  sessionStore?: SessionStore;
   now?: () => Date;
+  requestIdFactory?: () => string;
 }
 
 export function createSaveMemoryHandler(options: AgentMemoryFunctionOptions): FunctionHandler {
   const now = options.now ?? (() => new Date());
+  const requestIdFactory = options.requestIdFactory ?? randomUUID;
   return async (rawArgs, context) => {
     const args = saveMemoryArgumentsSchema.parse(rawArgs);
     const content = (args.content || args.query || "").trim();
+    if (args.cancel || isCancelText(args.query)) {
+      return { ok: true, replyText: "好，我先不保存。" };
+    }
     if (!content) {
       return { ok: true, replyText: "請直接告訴我要記住的內容。" };
+    }
+    const title = args.title?.trim() || inferTitle(content);
+    const visibility = args.visibility ?? "private";
+    if (!args.confirm) {
+      if (options.sessionStore) {
+        await storePendingFunctionQuery({
+          sessionStore: options.sessionStore,
+          requestId: requestIdFactory(),
+          action: "save_memory",
+          arguments: { title, content, query: args.query, visibility, confirm: true },
+          context,
+          now: now()
+        });
+      }
+      return {
+        ok: true,
+        replyText: [
+          "請確認要記住這段資訊：",
+          `名稱：${title}`,
+          `可見範圍：${visibility === "group" ? "群組共用" : "僅你可查"}`,
+          "要保存嗎？"
+        ].join("\n"),
+        quickReplies: [
+          { label: "保存", action: { type: "message", label: "保存", text: "保存" } },
+          { label: "取消", action: { type: "message", label: "取消", text: "取消" } }
+        ]
+      };
     }
     await options.memoryStore.saveTextMemory({
       profileName: context.profile.name,
       source: context.event.source,
       createdBy: context.event.source.userId,
-      title: args.title?.trim() || inferTitle(content),
+      visibility,
+      title,
       content,
       query: args.query,
       expiresAt: new Date(now().getTime() + TEXT_MEMORY_TTL_MS).toISOString()
@@ -30,12 +67,17 @@ export function createSaveMemoryHandler(options: AgentMemoryFunctionOptions): Fu
   };
 }
 
+function isCancelText(value: string | undefined): boolean {
+  return /^(取消|不要|先不要|不用)$/u.test(value?.trim() ?? "");
+}
+
 export function createRetrieveMemoryHandler(options: AgentMemoryFunctionOptions): FunctionHandler {
   return async (rawArgs, context) => {
     const args = retrieveMemoryArgumentsSchema.parse(rawArgs);
     const memories = await options.memoryStore.searchTextMemories({
       profileName: context.profile.name,
       source: context.event.source,
+      requesterUserId: context.event.source.userId,
       query: args.query,
       limit: 3
     });

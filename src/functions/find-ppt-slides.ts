@@ -313,6 +313,7 @@ async function findRememberedPptSlides(
   const resources = await memoryStore?.searchResources({
     profileName: context.profile.name,
     source: context.event.source,
+    requesterUserId: context.event.source.userId,
     query,
     resourceTypes: ["ppt_slide"],
     limit: MAX_CANDIDATES

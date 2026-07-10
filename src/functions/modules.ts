@@ -29,6 +29,7 @@ import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
 import { createWikipediaLookupHandler, type WikipediaSummarizer } from "../wikipedia/lookup.js";
 import type { WikipediaClient } from "../wikipedia/client.js";
 import { createRetrieveMemoryHandler, createSaveMemoryHandler } from "./agent-memory-functions.js";
+import { createSaveResourceHandler } from "./save-resource.js";
 import {
   createQueryScheduleMemoryHandler,
   createSaveScheduleMemoryHandler
@@ -629,7 +630,81 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         functions: {
           save_memory: createSaveMemoryHandler({
             memoryStore: clients.memoryStore,
-            now: clients.now
+            sessionStore: clients.sessionStore,
+            now: clients.now,
+            requestIdFactory: clients.requestIdFactory
+          })
+        }
+      };
+    }
+  },
+  {
+    name: "save_resource",
+    definition: requiredDefinition("save_resource"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈保存投影片 https://example.org/youth 名稱是青年聚會投影片",
+        expected: {
+          type: "execute",
+          action: "save_resource",
+          arguments: {
+            url: "https://example.org/youth",
+            resourceType: "ppt_slide",
+            title: "青年聚會投影片"
+          }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈保存投影片",
+        expected: { type: "execute", action: "save_resource", arguments: { url: "" } }
+      },
+      {
+        kind: "typo",
+        text: "小哈儲存歌譜 https://example.org/score 名稱是恩典之路",
+        expected: {
+          type: "execute",
+          action: "save_resource",
+          arguments: {
+            url: "https://example.org/score",
+            resourceType: "sheet_music",
+            title: "恩典之路"
+          }
+        }
+      },
+      {
+        kind: "negative",
+        text: "小哈幫我買咖啡",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "disabled",
+        text: "小哈保存投影片 https://example.org/youth 名稱是青年聚會投影片",
+        enabledFunctions: withoutFunction("save_resource"),
+        expected: { type: "deny", reason: "function_disabled" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈查投影片 奇異恩典",
+        expected: {
+          type: "execute",
+          action: "find_ppt_slides",
+          arguments: { query: "奇異恩典", matchMode: "fuzzy" }
+        }
+      }
+    ],
+    register: ({ clients }) => {
+      if (!clients.memoryStore) {
+        return {};
+      }
+      return {
+        functions: {
+          save_resource: createSaveResourceHandler({
+            memoryStore: clients.memoryStore,
+            sessionStore: clients.sessionStore,
+            now: clients.now,
+            requestIdFactory: clients.requestIdFactory
           })
         }
       };

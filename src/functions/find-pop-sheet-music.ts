@@ -258,6 +258,7 @@ async function findRememberedSheetMusic(
   const resources = await memoryStore?.searchResources({
     profileName: context.profile.name,
     source: context.event.source,
+    requesterUserId: context.event.source.userId,
     query,
     resourceTypes: ["sheet_music"],
     limit: MAX_CANDIDATES
