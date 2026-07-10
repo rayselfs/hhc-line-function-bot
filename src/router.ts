@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { parseFunctionArguments } from "./function-arguments.js";
 import { normalizeFunctionArguments } from "./functions/argument-normalization.js";
-import { getFunctionDefinitions } from "./functions/definitions.js";
+import { getFunctionDefinition, getFunctionDefinitions } from "./functions/definitions.js";
 import { FUNCTION_NAMES, isFunctionName, isSystemActionName } from "./types.js";
 import type {
   ChatProvider,
@@ -52,10 +52,14 @@ class FunctionRouter implements FunctionRouterPort {
 
     try {
       return this.withLane(
-        parseProviderDecision(
-          this.primaryProviderName(input.profileName),
-          await this.options.primary.completeJson({ ...input, prompt }),
-          input
+        applyRoutePolicy(
+          parseProviderDecision(
+            this.primaryProviderName(input.profileName),
+            await this.options.primary.completeJson({ ...input, prompt }),
+            input
+          ),
+          input,
+          this.options.keywordFallback
         )
       );
     } catch (error) {
@@ -66,10 +70,14 @@ class FunctionRouter implements FunctionRouterPort {
           try {
             return this.withLane(
               withFallbackDiagnostics(
-                parseProviderDecision(
-                  modelFallbackProvider,
-                  await this.options.modelFallback.completeJson({ ...input, prompt }),
-                  input
+                applyRoutePolicy(
+                  parseProviderDecision(
+                    modelFallbackProvider,
+                    await this.options.modelFallback.completeJson({ ...input, prompt }),
+                    input
+                  ),
+                  input,
+                  this.options.keywordFallback
                 ),
                 this.primaryProviderName(input.profileName),
                 fallbackReason
@@ -138,6 +146,88 @@ class FunctionRouter implements FunctionRouterPort {
     }
     return { ...result, lane: this.options.lane };
   }
+}
+
+function applyRoutePolicy(
+  route: RouteResult,
+  input: RouteInput,
+  keywordFallback: KeywordFallbackRouter | undefined
+): RouteResult {
+  if (route.type === "deny") {
+    return route;
+  }
+  if (route.type === "respond" && route.action === "introduce_bot" && !isIntroRequest(input.text)) {
+    return recoverControlledRoute(
+      { type: "deny", reason: "system_route_evidence_missing", provider: "router" },
+      input,
+      keywordFallback
+    );
+  }
+  if (route.type !== "execute") {
+    return route;
+  }
+  const definition = getFunctionDefinition(route.action);
+  if (!definition || definition.sideEffectLevel === "read") {
+    return route;
+  }
+  if (!hasWriteEvidence(input.text, route.arguments)) {
+    return { type: "deny", reason: "write_evidence_missing", provider: "router" };
+  }
+  return route;
+}
+
+function recoverControlledRoute(
+  rejected: RouteResult,
+  input: RouteInput,
+  keywordFallback: KeywordFallbackRouter | undefined
+): RouteResult {
+  const recovered = keywordFallback?.route(input);
+  if (!recovered || recovered.type === "deny") {
+    return rejected;
+  }
+  return {
+    ...recovered,
+    fallbackProvider: rejected.provider === "keyword" ? undefined : rejected.provider,
+    fallbackReason: rejected.type === "deny" ? rejected.reason : "route_policy_rejected"
+  };
+}
+
+function hasWriteEvidence(text: string, args: JsonRecord): boolean {
+  const normalized = text.normalize("NFKC");
+  if (!/(?:記住|保存|儲存|新增|修改|改|刪除|移除)/u.test(normalized)) {
+    return false;
+  }
+  return ["url", "title", "content"].every((key) => {
+    const value = args[key];
+    return (
+      typeof value !== "string" ||
+      !value.trim() ||
+      normalized.includes(value.normalize("NFKC").trim())
+    );
+  });
+}
+
+function isIntroRequest(text: string): boolean {
+  const normalized = text
+    .normalize("NFKC")
+    .trim()
+    .replace(/[!！。.?？\s]+$/g, "")
+    .replace(/^小哈[，,、:：?？\s]*/u, "")
+    .toLowerCase();
+  return [
+    "",
+    "小哈是誰",
+    "小哈你是誰",
+    "你是誰",
+    "help",
+    "功能",
+    "使用說明",
+    "可以幹嘛",
+    "可以做什麼",
+    "你能做什麼",
+    "你會什麼",
+    "能做什麼"
+  ].includes(normalized);
 }
 
 function withFallbackDiagnostics(

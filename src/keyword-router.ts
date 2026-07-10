@@ -41,6 +41,19 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
         };
       }
 
+      const wikipediaIntent = extractWikipediaIntent(text);
+      if (wikipediaIntent) {
+        if (!input.enabledFunctions.includes("query_wikipedia")) {
+          return { type: "deny", reason: "function_disabled", provider: "keyword" };
+        }
+        return {
+          type: "execute",
+          action: "query_wikipedia",
+          arguments: { query: wikipediaIntent },
+          provider: "keyword"
+        };
+      }
+
       const matches = rules.filter((rule) =>
         rule.keywordFallback.keywords.some((keyword) => includesKeyword(text, keyword))
       );
@@ -88,6 +101,19 @@ export function createKeywordFallbackRouter(): KeywordFallbackRouter {
       };
     }
   };
+}
+
+function extractWikipediaIntent(text: string): string | undefined {
+  const value = stripWakeAddress(text.trim())
+    .replace(/[？?。!！]+$/u, "")
+    .trim();
+  const person = value.match(/^(?:請|麻煩)?(?:幫我)?(?:查|找|看)?(.+?)是誰$/u)?.[1]?.trim();
+  const topic = value.match(/^(?:請|麻煩)?(?:幫我)?(?:查|找|看)?什麼是(.+)$/u)?.[1]?.trim();
+  const query = person || topic;
+  if (!query || /^(?:你|我|小哈)$/u.test(query) || /怎麼寫|如何寫|code|程式/iu.test(value)) {
+    return undefined;
+  }
+  return query;
 }
 
 function extractMemoryIntent(

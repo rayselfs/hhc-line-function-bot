@@ -100,6 +100,62 @@ describe("function router", () => {
     });
   });
 
+  it("recovers a factual person lookup when the model mistakes it for bot identity", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "introduce_bot",
+        arguments: { variant: "identity" }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "小哈，幫我查張芸京是誰",
+      enabledFunctions: ["query_wikipedia"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({
+      type: "execute",
+      action: "query_wikipedia",
+      provider: "keyword",
+      arguments: { query: "張芸京" }
+    });
+  });
+
+  it("rejects model-invented write arguments that are absent from the user text", async () => {
+    const qwen = provider(
+      JSON.stringify({
+        action: "save_resource",
+        arguments: {
+          url: "https://example.org/updated-slide",
+          resourceType: "ppt_slide",
+          title: "Updated Slide",
+          visibility: "group"
+        }
+      })
+    );
+    const router = createFunctionRouter({
+      primary: qwen,
+      keywordFallback: createKeywordFallbackRouter(),
+      keywordFallbackEnabled: true
+    });
+
+    const result = await router.route({
+      profileName: "helper",
+      text: "幫我改可見範圍",
+      enabledFunctions: ["save_resource"],
+      source: { type: "user", userId: "U1" }
+    });
+
+    expect(result).toMatchObject({ type: "deny", reason: "write_evidence_missing" });
+  });
+
   it("passes structured service schedule metadata from Qwen", async () => {
     const qwen = provider(
       JSON.stringify({

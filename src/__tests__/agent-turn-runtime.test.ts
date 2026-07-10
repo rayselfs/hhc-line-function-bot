@@ -103,7 +103,7 @@ describe("AgentTurnRuntime", () => {
     });
 
     expect(result?.replyText).toContain("想查什麼");
-    expect(result?.quickReplies?.map((item) => item.label)).toEqual(["查投影片", "查服事表"]);
+    expect(result?.quickReplies).toBeUndefined();
     expect(route).not.toHaveBeenCalled();
   });
 
@@ -304,6 +304,42 @@ describe("AgentTurnRuntime", () => {
         dateIntent: "next_meeting"
       }),
       expect.any(Object)
+    );
+  });
+
+  it("answers identity questions through the configured persona generator", async () => {
+    const generator: TextGenerationProvider = {
+      providerName: "deepseek",
+      completeText: vi.fn().mockResolvedValue("我是小哈，是家教會裡溫暖又可靠的小幫手。")
+    };
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "respond",
+      action: "introduce_bot",
+      arguments: { variant: "identity" },
+      provider: "ollama"
+    });
+    const runtime = createRuntime({ router: { route }, textGenerator: generator });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile([], {
+        smallTalk: {
+          mode: "llm",
+          maxChars: 80,
+          prompting: {
+            personaPrompt: "你是小哈，家教會的小幫手。",
+            conversationRulesPrompt: "自然回答。",
+            safetyRulesPrompt: "不要編造。",
+            formatRulesPrompt: "使用繁體中文。"
+          }
+        }
+      }),
+      event: textEvent("小哈你是誰"),
+      requestId: "req-identity"
+    });
+
+    expect(result?.replyText).toBe("我是小哈，是家教會裡溫暖又可靠的小幫手。");
+    expect(generator.completeText).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "persona", text: "小哈你是誰" })
     );
   });
 

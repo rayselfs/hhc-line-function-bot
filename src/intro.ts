@@ -1,5 +1,4 @@
 import { getFunctionDefinitions } from "./functions/definitions.js";
-import { buildFunctionQuickReplies } from "./line-reply.js";
 import type { BotProfileConfig, FunctionExecutionResult } from "./types.js";
 
 type IntroVariant = "identity" | "capabilities";
@@ -41,21 +40,17 @@ export function createIntroReply(
 
   const definitions = getFunctionDefinitions(profile.enabledFunctions);
   const selectedVariant = variant ?? "identity";
+  if (selectedVariant === "identity") {
+    return { ok: true, replyText: "我是小哈，家教會的小幫手。" };
+  }
   if (definitions.length === 0) {
     return {
       ok: true,
-      replyText:
-        selectedVariant === "capabilities"
-          ? "目前還沒有開放可查詢的項目。"
-          : "我是小哈，家教會小幫手。目前還沒有開放可查詢的項目。"
+      replyText: "目前還沒有開放可查詢的項目。"
     };
   }
 
-  const functionNames = definitions.map((definition) => definition.displayName).join("、");
-  const lines =
-    selectedVariant === "capabilities"
-      ? [`我能：${functionNames}。`]
-      : [`我是小哈，家教會小幫手。需要幫助時可以叫我一聲，我可以：${functionNames}。`];
+  const lines = ["我可以幫你查資料，也能依權限記住或更新教會資訊。"];
   const examples = selectExamples(definitions, options.random ?? Math.random);
 
   return {
@@ -63,7 +58,7 @@ export function createIntroReply(
     replyText: [...lines, "", "你可以試試：", ...examples.map((example) => `- ${example}`)]
       .filter((line) => line !== undefined)
       .join("\n"),
-    quickReplies: buildFunctionQuickReplies(profile)
+    quickReplies: undefined
   };
 }
 

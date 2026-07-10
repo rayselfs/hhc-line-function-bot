@@ -293,6 +293,16 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
 
       if (route.type === "respond") {
         if (route.action === "introduce_bot") {
+          if (introVariantRouteArgument(route.arguments) === "identity") {
+            const result = await createControlledSmallTalkReply({
+              profile: input.profile,
+              text,
+              category: "persona",
+              generator: options.textGenerator,
+              fallbackGenerator: options.textFallbackGenerator
+            });
+            return finish(input, steps, result);
+          }
           const intro = createIntroReply(input.profile, text, {
             force: true,
             variant: introVariantRouteArgument(route.arguments)
