@@ -52,8 +52,7 @@ describe("production profile configuration deployment contract", () => {
     expect(job).toContain('cronExpression: "*/15 * * * *"');
     expect(job).toContain("replicaTimeout: 600");
     expect(job).toContain("image: alive.azurecr.io/alive/hhc-line-function-bot:latest");
-    expect(job).toContain("command:");
-    expect(job).toContain("- node");
+    expect(job).not.toContain("command:");
     expect(job).toContain("args:");
     expect(job).toContain("- dist/tools/sync-catalog.js");
     expect(job).not.toContain("name: CATALOG_SOURCES_PATH");
