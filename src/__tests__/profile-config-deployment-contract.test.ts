@@ -14,10 +14,18 @@ describe("production profile configuration deployment contract", () => {
     const dockerfile = readProjectFile("Dockerfile");
     const manifest = readProjectFile("aca.containerapp.yaml");
     const pipeline = readProjectFile("azure-pipelines.yml");
+    const catalogSources = readProjectFile("config/catalog-sources.json");
 
     expect(dockerfile).toContain("COPY config ./config");
     expect(manifest).toContain("name: PROFILE_CONFIG_PATH");
     expect(manifest).toContain("value: /app/config/profiles.json");
+    expect(manifest).toContain("name: CATALOG_SOURCES_PATH");
+    expect(manifest).toContain("value: /app/config/catalog-sources.json");
+    expect(manifest).toContain("name: GRAPH_POP_SHEET_FOLDER_ITEM_ID");
+    expect(manifest).toContain("name: GRAPH_HYMN_SHEET_FOLDER_ITEM_ID");
+    expect(manifest).toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
+    expect(catalogSources).toContain('"driveIdEnv": "GRAPH_DRIVE_ID"');
+    expect(catalogSources).toContain('"folderItemIdEnv": "GRAPH_POP_SHEET_FOLDER_ITEM_ID"');
     expect(manifest).not.toContain("BOT_PROFILES_BASE64_JSON");
     expect(manifest).not.toContain("bot-profiles-base64-json");
     expect(pipeline).toContain("- config/**");
@@ -31,5 +39,34 @@ describe("production profile configuration deployment contract", () => {
     expect(readProjectFile("README.md")).not.toContain('"personaPrompt"');
     expect(readProjectFile(".env.example")).not.toContain("BOT_PROFILES_JSON=");
     expect(readProjectFile(".env.example")).not.toContain("BOT_PROFILES_BASE64_JSON=");
+  });
+
+  it("defines a scheduled ACA catalog sync job that reuses the app image", () => {
+    const job = readProjectFile("aca.catalog-sync-job.yaml");
+    const pipeline = readProjectFile("azure-pipelines.yml");
+    const readme = readProjectFile("README.md");
+
+    expect(job).toContain("type: Microsoft.App/jobs");
+    expect(job).toContain("triggerType: Schedule");
+    expect(job).toContain('cronExpression: "*/15 * * * *"');
+    expect(job).toContain("replicaTimeout: 600");
+    expect(job).toContain("image: alive.azurecr.io/alive/hhc-line-function-bot:latest");
+    expect(job).toContain("command:");
+    expect(job).toContain("- node");
+    expect(job).toContain("args:");
+    expect(job).toContain("- dist/tools/sync-catalog.js");
+    expect(job).toContain("name: CATALOG_SOURCES_PATH");
+    expect(job).toContain("value: /app/config/catalog-sources.json");
+    expect(job).toContain("name: GRAPH_POP_SHEET_FOLDER_ITEM_ID");
+    expect(job).toContain("name: GRAPH_HYMN_SHEET_FOLDER_ITEM_ID");
+    expect(job).toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
+    expect(job).toContain("name: PROFILE_CONFIG_PATH");
+    expect(job).toContain("value: /app/config/profiles.json");
+    expect(job).toContain("name: DATABASE_URL");
+    expect(job).toContain("name: GRAPH_CLIENT_SECRET");
+    expect(job).not.toContain("ingress:");
+    expect(pipeline).toContain("- aca.catalog-sync-job.yaml");
+    expect(readme).toContain("aca.catalog-sync-job.yaml");
+    expect(readme).toContain("node dist/tools/sync-catalog.js");
   });
 });

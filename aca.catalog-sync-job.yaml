@@ -1,0 +1,74 @@
+name: hhc-line-function-bot-catalog-sync
+type: Microsoft.App/jobs
+location: PLACEHOLDER_AZURE_REGION
+properties:
+  environmentId: PLACEHOLDER_CONTAINER_APP_ENVIRONMENT_ID
+  configuration:
+    triggerType: Schedule
+    replicaTimeout: 600
+    replicaRetryLimit: 1
+    scheduleTriggerConfig:
+      cronExpression: "*/15 * * * *"
+      parallelism: 1
+      replicaCompletionCount: 1
+    secrets:
+      - name: graph-client-secret
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_JOB_SECRETS
+      - name: database-url
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_JOB_SECRETS
+      - name: redis-url
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_JOB_SECRETS
+  template:
+    containers:
+      - name: catalog-sync
+        image: alive.azurecr.io/alive/hhc-line-function-bot:latest
+        command:
+          - node
+        args:
+          - dist/tools/sync-catalog.js
+        env:
+          - name: SERVICE_NAME
+            value: hhc-line-function-bot-catalog-sync
+          - name: TIME_ZONE
+            value: Asia/Taipei
+          - name: PROFILE_CONFIG_PATH
+            value: /app/config/profiles.json
+          - name: CATALOG_SOURCES_PATH
+            value: /app/config/catalog-sources.json
+          - name: DATABASE_URL
+            secretRef: database-url
+          - name: DATABASE_SSL
+            value: "true"
+          - name: REDIS_URL
+            secretRef: redis-url
+          - name: REDIS_KEY_PREFIX
+            value: hhc-line-function-bot
+          - name: GRAPH_TENANT_ID
+            value: PLACEHOLDER_GRAPH_TENANT_ID
+          - name: GRAPH_CLIENT_ID
+            value: PLACEHOLDER_GRAPH_CLIENT_ID
+          - name: GRAPH_CLIENT_SECRET
+            secretRef: graph-client-secret
+          - name: GRAPH_DRIVE_ID
+            value: PLACEHOLDER_GRAPH_DRIVE_ID
+          - name: GRAPH_PPT_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_PPT_FOLDER_ITEM_ID
+          - name: GRAPH_POP_SHEET_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_POP_SHEET_FOLDER_ITEM_ID
+          - name: GRAPH_HYMN_SHEET_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_HYMN_SHEET_FOLDER_ITEM_ID
+          - name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
+          - name: GRAPH_SHEET_MUSIC_FOLDER_PATH
+            value: "文件/流行歌譜 (捷徑)"
+          - name: GRAPH_LINK_SCOPE
+            value: anonymous
+          - name: GRAPH_LINK_TYPE
+            value: view
+          - name: SHEET_MUSIC_ALLOWED_EXTENSIONS
+            value: pdf,jpg,jpeg
+          - name: SHEET_MUSIC_DEFAULT_RECURSIVE
+            value: "true"
+        resources:
+          cpu: 0.5
+          memory: 1Gi

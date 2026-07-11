@@ -82,6 +82,52 @@ The line bot does not expose LLM auth callback routes. Public gateway routing sh
 - Graph: use function smoke tests through LINE, then `/diag` for configured/not configured state.
 - Notion: use `pnpm check:notion` locally or function smoke tests through LINE, then `/diag` for configured/not configured state.
 
+## Catalog Sync Job
+
+Catalog sources live in `config/catalog-sources.json`. The committed file uses environment references such as `GRAPH_POP_SHEET_FOLDER_ITEM_ID`, not real folder IDs. Keep actual Graph drive/folder IDs in ACA environment settings or secrets, never in git.
+
+The webhook service should stay long-running on `node dist/index.js`. Catalog sync runs as a separate ACA Scheduled Job from the same image:
+
+```text
+node dist/tools/sync-catalog.js
+```
+
+Use [`aca.catalog-sync-job.yaml`](../../aca.catalog-sync-job.yaml) as the placeholder manifest. The job is configured as `Microsoft.App/jobs` with `triggerType: Schedule` and `cronExpression: "*/15 * * * *"`.
+
+Required job settings:
+
+- `PROFILE_CONFIG_PATH=/app/config/profiles.json`
+- `CATALOG_SOURCES_PATH=/app/config/catalog-sources.json`
+- `DATABASE_URL`
+- `DATABASE_SSL=true`
+- `GRAPH_TENANT_ID`
+- `GRAPH_CLIENT_ID`
+- `GRAPH_CLIENT_SECRET`
+- `GRAPH_DRIVE_ID`
+- `GRAPH_PPT_FOLDER_ITEM_ID`
+- `GRAPH_POP_SHEET_FOLDER_ITEM_ID`
+- `GRAPH_HYMN_SHEET_FOLDER_ITEM_ID`
+- `GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID` when the weekly report source is enabled
+
+Manual run after deployment:
+
+```powershell
+az containerapp job start `
+  --name hhc-line-function-bot-catalog-sync `
+  --resource-group PLACEHOLDER_RESOURCE_GROUP
+```
+
+Inspect executions:
+
+```powershell
+az containerapp job execution list `
+  --name hhc-line-function-bot-catalog-sync `
+  --resource-group PLACEHOLDER_RESOURCE_GROUP `
+  --output table
+```
+
+The sync output is JSON and includes `sources`, `synced`, `skipped`, `upserted`, `itemSkipped`, and `tombstoned`. If a source is removed from OneDrive, the next full crawl tombstones missing catalog items so normal lookups stop returning deleted files.
+
 ## Rollback
 
 Use Azure CLI to point the Container App back to a previous known-good image:

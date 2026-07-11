@@ -501,7 +501,31 @@ function readCatalogSources(env: NodeJS.ProcessEnv, profileNames: string[]): Cat
       );
     }
   }
-  return sources;
+  return sources.map((source) => ({
+    ...source,
+    rootLocation: resolveCatalogRootLocation(source.sourceKey, source.rootLocation, env)
+  }));
+}
+
+function resolveCatalogRootLocation(
+  sourceKey: string,
+  rootLocation: Record<string, string>,
+  env: NodeJS.ProcessEnv
+): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rootLocation)) {
+    if (key.endsWith("Env")) {
+      const targetKey = key.slice(0, -"Env".length);
+      const envValue = env[value]?.trim();
+      if (!envValue) {
+        throw new Error(`Catalog source ${sourceKey} requires environment variable ${value}`);
+      }
+      resolved[targetKey] = envValue;
+      continue;
+    }
+    resolved[key] = value;
+  }
+  return resolved;
 }
 
 const graphRequiredKeys = [

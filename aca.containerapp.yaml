@@ -54,6 +54,8 @@ properties:
             value: "262144"
           - name: PROFILE_CONFIG_PATH
             value: /app/config/profiles.json
+          - name: CATALOG_SOURCES_PATH
+            value: /app/config/catalog-sources.json
           - name: LINE_HELPER_CHANNEL_SECRET
             secretRef: line-helper-channel-secret
           - name: LINE_HELPER_CHANNEL_ACCESS_TOKEN
@@ -120,6 +122,12 @@ properties:
             value: PLACEHOLDER_GRAPH_DRIVE_ID
           - name: GRAPH_PPT_FOLDER_ITEM_ID
             value: PLACEHOLDER_GRAPH_PPT_FOLDER_ITEM_ID
+          - name: GRAPH_POP_SHEET_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_POP_SHEET_FOLDER_ITEM_ID
+          - name: GRAPH_HYMN_SHEET_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_HYMN_SHEET_FOLDER_ITEM_ID
+          - name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
+            value: PLACEHOLDER_GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
           - name: GRAPH_SHEET_MUSIC_FOLDER_PATH
             value: "文件/流行歌譜 (捷徑)"
           - name: GRAPH_LINK_SCOPE

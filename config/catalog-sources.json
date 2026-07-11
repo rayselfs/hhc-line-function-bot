@@ -1,0 +1,58 @@
+[
+  {
+    "profileName": "helper",
+    "sourceKey": "ppt_slides",
+    "adapterType": "onedrive",
+    "domain": "presentation",
+    "defaultItemKind": "ppt_slide",
+    "rootLocation": {
+      "driveIdEnv": "GRAPH_DRIVE_ID",
+      "folderItemIdEnv": "GRAPH_PPT_FOLDER_ITEM_ID"
+    },
+    "enabled": true,
+    "syncPolicy": { "mode": "scheduled", "intervalMinutes": 15 },
+    "capabilities": { "read": ["helper"], "write": ["helper:ppt_slide:write"] }
+  },
+  {
+    "profileName": "helper",
+    "sourceKey": "pop_sheet_music",
+    "adapterType": "onedrive",
+    "domain": "sheet_music",
+    "defaultItemKind": "pop_sheet",
+    "rootLocation": {
+      "driveIdEnv": "GRAPH_DRIVE_ID",
+      "folderItemIdEnv": "GRAPH_POP_SHEET_FOLDER_ITEM_ID"
+    },
+    "enabled": true,
+    "syncPolicy": { "mode": "scheduled", "intervalMinutes": 15 },
+    "capabilities": { "read": ["helper"], "write": ["helper:pop_sheet:write"] }
+  },
+  {
+    "profileName": "helper",
+    "sourceKey": "hymn_sheet_music",
+    "adapterType": "onedrive",
+    "domain": "sheet_music",
+    "defaultItemKind": "hymn_sheet",
+    "rootLocation": {
+      "driveIdEnv": "GRAPH_DRIVE_ID",
+      "folderItemIdEnv": "GRAPH_HYMN_SHEET_FOLDER_ITEM_ID"
+    },
+    "enabled": true,
+    "syncPolicy": { "mode": "scheduled", "intervalMinutes": 15 },
+    "capabilities": { "read": ["helper"], "write": ["helper:hymn_sheet:write"] }
+  },
+  {
+    "profileName": "helper",
+    "sourceKey": "weekly_report_audio",
+    "adapterType": "onedrive",
+    "domain": "audio",
+    "defaultItemKind": "weekly_report_audio",
+    "rootLocation": {
+      "driveIdEnv": "GRAPH_DRIVE_ID",
+      "folderItemIdEnv": "GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID"
+    },
+    "enabled": false,
+    "syncPolicy": { "mode": "scheduled", "intervalMinutes": 15 },
+    "capabilities": { "read": ["helper"], "write": [] }
+  }
+]
