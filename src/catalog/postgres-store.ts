@@ -7,6 +7,7 @@ import {
   type CatalogItemInput,
   type CatalogItemRecord,
   type CatalogSearchInput,
+  type CatalogSourceListInput,
   type CatalogSourceInput,
   type CatalogSourceRecord,
   type CatalogStore
@@ -95,6 +96,77 @@ export class PostgresCatalogStore implements CatalogStore {
       ]
     );
     return mapSource(result.rows[0]);
+  }
+
+  async createSourceIfMissing(input: CatalogSourceInput): Promise<{
+    source: CatalogSourceRecord;
+    created: boolean;
+  }> {
+    const result = await this.db.query<CatalogSourceRow>(
+      `
+      insert into catalog_sources
+        (id, profile_name, source_key, adapter_type, domain, default_item_kind,
+         root_location, enabled, sync_policy, capabilities, updated_at)
+      values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10::jsonb, now())
+      on conflict (profile_name, source_key) do nothing
+      returning *
+      `,
+      [
+        randomUUID(),
+        input.profileName,
+        input.sourceKey,
+        input.adapterType,
+        input.domain,
+        input.defaultItemKind,
+        JSON.stringify(input.rootLocation),
+        input.enabled,
+        JSON.stringify(input.syncPolicy),
+        JSON.stringify(input.capabilities)
+      ]
+    );
+    if (result.rows[0]) {
+      return { source: mapSource(result.rows[0]), created: true };
+    }
+    const existing = await this.db.query<CatalogSourceRow>(
+      `
+      select *
+      from catalog_sources
+      where profile_name = $1
+        and source_key = $2
+      `,
+      [input.profileName, input.sourceKey]
+    );
+    if (!existing.rows[0]) {
+      throw new Error(`catalog_source_seed_not_found:${input.profileName}:${input.sourceKey}`);
+    }
+    return { source: mapSource(existing.rows[0]), created: false };
+  }
+
+  async listSources(input: CatalogSourceListInput = {}): Promise<CatalogSourceRecord[]> {
+    const values: unknown[] = [];
+    const conditions: string[] = [];
+    if (input.profileName) {
+      values.push(input.profileName);
+      conditions.push(`profile_name = $${values.length}`);
+    }
+    if (input.enabled !== undefined) {
+      values.push(input.enabled);
+      conditions.push(`enabled = $${values.length}`);
+    }
+    if (input.sourceKeys?.length) {
+      values.push(input.sourceKeys);
+      conditions.push(`source_key = any($${values.length}::text[])`);
+    }
+    const result = await this.db.query<CatalogSourceRow>(
+      `
+      select *
+      from catalog_sources
+      ${conditions.length ? `where ${conditions.join("\n        and ")}` : ""}
+      order by profile_name asc, source_key asc
+      `,
+      values
+    );
+    return result.rows.map(mapSource);
   }
 
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {

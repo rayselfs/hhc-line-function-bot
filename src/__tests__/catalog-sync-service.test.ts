@@ -31,11 +31,12 @@ describe("catalog sync service", () => {
       ],
       createSharingLink: async () => "unused"
     };
+    await catalog.upsertSource(enabledSource);
+    await catalog.upsertSource({ ...enabledSource, sourceKey: "disabled_audio", enabled: false });
 
     const result = await syncCatalogSources({
       catalog,
-      graph,
-      sources: [enabledSource, { ...enabledSource, sourceKey: "disabled_audio", enabled: false }]
+      graph
     });
 
     expect(result).toEqual({

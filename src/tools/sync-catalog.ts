@@ -1,4 +1,5 @@
 import { createCatalogStore } from "../catalog/create-catalog-store.js";
+import { buildCatalogSourceSeedsForProfiles, seedCatalogSources } from "../catalog/source-seeds.js";
 import { syncCatalogSources } from "../catalog/sync-service.js";
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
@@ -9,6 +10,10 @@ import { createScheduleStore } from "../schedules/create-schedule-store.js";
 const config = loadConfigFromEnv(process.env);
 const postgres = await createPostgresRuntime(config.database);
 const catalog = await createCatalogStore({ db: postgres?.pool });
+await seedCatalogSources({
+  catalog,
+  sources: buildCatalogSourceSeedsForProfiles(process.env, config.profiles)
+});
 const schedules = await createScheduleStore({ db: postgres?.pool });
 
 try {
@@ -19,8 +24,7 @@ try {
     graph,
     notion,
     notionProperties: config.notion?.properties,
-    schedules,
-    sources: config.catalog?.sources ?? []
+    schedules
   });
   console.log(JSON.stringify({ ok: true, result }));
 } finally {

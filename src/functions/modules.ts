@@ -1059,7 +1059,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         }
       }
     ],
-    register: ({ config, clients }) => {
+    register: ({ clients }) => {
       if (!clients.memoryStore) {
         return {};
       }
@@ -1081,7 +1081,6 @@ export const FUNCTION_MODULES: FunctionModule[] = [
             lineContent: clients.lineContent,
             graph: clients.graph,
             scanner: clients.virusScanner,
-            sources: config.catalog?.sources ?? [],
             now: clients.now
           })
         };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { CatalogItemRecord, CatalogSourceInput, CatalogStore } from "../catalog/store.js";
+import type { CatalogItemRecord, CatalogSourceRecord, CatalogStore } from "../catalog/store.js";
 import type { PendingAttachmentSession, SessionStore } from "../state/session-store.js";
 import type {
   BotProfileConfig,
@@ -32,7 +32,6 @@ export interface PendingAttachmentTextMessageOptions {
   lineContent: LineContentClient;
   graph: GraphDriveClient;
   scanner?: VirusScanner;
-  sources: CatalogSourceInput[];
   maxBytes?: number;
   now?: () => Date;
 }
@@ -107,7 +106,7 @@ export function createPendingAttachmentTextMessageHandler(
           replyText: "請先說明用途：投影片、流行歌譜、詩歌歌譜或教會資料。"
         };
       }
-      const sourceGate = findWritableSource(options.sources, pending.profileName, target);
+      const sourceGate = await findWritableSource(options.catalog, pending.profileName, target);
       if (!sourceGate.ok) {
         await options.sessionStore.delete(pending.id);
         return { ok: true, replyText: sourceGate.replyText };
@@ -198,14 +197,18 @@ async function publishAttachment(input: {
     return { ok: true, replyText: "檔案內容已變更，為安全起見請重新上傳。" };
   }
 
-  const sourceGate = findWritableSource(input.options.sources, input.pending.profileName, target);
+  const sourceGate = await findWritableSource(
+    input.options.catalog,
+    input.pending.profileName,
+    target
+  );
   if (!sourceGate.ok) {
     await input.options.sessionStore.delete(input.pending.id);
     return { ok: true, replyText: sourceGate.replyText };
   }
-  const sourceInput = sourceGate.source;
-  const driveId = sourceInput.rootLocation.driveId;
-  const folderItemId = folderItemIdForTarget(sourceInput, target);
+  const source = sourceGate.source;
+  const driveId = source.rootLocation.driveId;
+  const folderItemId = folderItemIdForTarget(source, target);
   if (!driveId || !folderItemId || !input.options.graph.uploadFile) {
     await input.options.sessionStore.delete(input.pending.id);
     return { ok: true, replyText: "目前沒有可用的 OneDrive 上傳服務。" };
@@ -225,7 +228,6 @@ async function publishAttachment(input: {
     return { ok: true, replyText: "已經有同名檔案，請換一個名稱後重新上傳。" };
   }
 
-  const source = await input.options.catalog.upsertSource(sourceInput);
   const item = await input.options.graph.uploadFile(
     driveId,
     folderItemId,
@@ -423,11 +425,16 @@ function allowedExtensions(itemKind: AttachmentTargetKind): string[] {
   }
 }
 
-function findWritableSource(
-  sources: CatalogSourceInput[],
+async function findWritableSource(
+  catalog: CatalogStore,
   profileName: string,
   target: AttachmentTarget
-): { ok: true; source: CatalogSourceInput } | { ok: false; replyText: string } {
+): Promise<{ ok: true; source: CatalogSourceRecord } | { ok: false; replyText: string }> {
+  const sources = await catalog.listSources({
+    profileName,
+    enabled: true,
+    sourceKeys: [target.sourceKey]
+  });
   const source = sources.find(
     (candidate) =>
       candidate.profileName === profileName &&
@@ -468,7 +475,7 @@ function genericChurchItemKindForExtension(extension: string): AttachmentTargetK
 }
 
 function folderItemIdForTarget(
-  source: CatalogSourceInput,
+  source: CatalogSourceRecord,
   target: AttachmentTarget
 ): string | undefined {
   if (source.sourceKey !== "xiaoha_database") {

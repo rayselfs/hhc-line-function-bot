@@ -287,7 +287,7 @@ canonical functions are `find_ppt_slides`, `find_sheet_music`, and
 `find_resource`; they should call the catalog/search layer with different
 filters instead of implementing separate source-specific searches. Legacy
 `find_pop_sheet_music` is an internal alias only. Future OneDrive-backed
-folders such as weekly report audio should be added as catalog source config,
+folders such as weekly report audio should be added as a `catalog_sources` row,
 an item kind value, resolver aliases, and tests; they must not add another
 OneDrive crawl/search implementation.
 

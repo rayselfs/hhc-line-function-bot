@@ -84,7 +84,7 @@ The line bot does not expose LLM auth callback routes. Public gateway routing sh
 
 ## Catalog Sync Job
 
-Catalog sources live in `config/catalog-sources.json`. The committed file uses environment references such as `GRAPH_POP_SHEET_FOLDER_ITEM_ID`, not real folder IDs. Keep actual Graph drive/folder IDs in ACA environment settings or secrets, never in git.
+Catalog sources live in PostgreSQL `catalog_sources`. Startup and the sync job run an idempotent seed from environment-backed roots such as `GRAPH_POP_SHEET_FOLDER_ITEM_ID`, not real folder IDs in git. Keep actual Graph drive/folder IDs in ACA environment settings or secrets.
 
 The webhook service should stay long-running on `node dist/index.js`. Catalog sync runs as a separate ACA Scheduled Job from the same image:
 
@@ -97,7 +97,6 @@ Use [`aca.catalog-sync-job.yaml`](../../aca.catalog-sync-job.yaml) as the placeh
 Required job settings:
 
 - `PROFILE_CONFIG_PATH=/app/config/profiles.json`
-- `CATALOG_SOURCES_PATH=/app/config/catalog-sources.json`
 - `DATABASE_URL`
 - `DATABASE_SSL=true`
 - `LINE_HELPER_CHANNEL_SECRET`

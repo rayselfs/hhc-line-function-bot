@@ -220,7 +220,7 @@ describe("config", () => {
     });
   });
 
-  it("loads catalog sources from a deployment config file", async () => {
+  it("does not load catalog source registrations from runtime config files", async () => {
     await withJsonFile(
       "hhc-line-function-bot-catalog-",
       [
@@ -242,52 +242,7 @@ describe("config", () => {
           CATALOG_SOURCES_PATH: path
         });
 
-        expect(config.catalog?.sources).toEqual([
-          expect.objectContaining({
-            profileName: "main",
-            sourceKey: "weekly_report_audio",
-            adapterType: "onedrive",
-            defaultItemKind: "weekly_report_audio"
-          })
-        ]);
-      }
-    );
-  });
-
-  it("resolves catalog source root locations from environment references", async () => {
-    await withJsonFile(
-      "hhc-line-function-bot-catalog-env-",
-      [
-        {
-          profileName: "main",
-          sourceKey: "ppt_slides",
-          adapterType: "onedrive",
-          domain: "presentation",
-          defaultItemKind: "ppt_slide",
-          rootLocation: {
-            driveIdEnv: "GRAPH_DRIVE_ID",
-            folderItemIdEnv: "GRAPH_PPT_FOLDER_ITEM_ID"
-          },
-          enabled: true,
-          syncPolicy: { mode: "scheduled", intervalMinutes: 15 },
-          capabilities: { read: ["helper"], write: [] }
-        }
-      ],
-      async (path) => {
-        const config = loadConfigFromEnv({
-          ...baseEnv(),
-          CATALOG_SOURCES_PATH: path,
-          GRAPH_TENANT_ID: "tenant",
-          GRAPH_CLIENT_ID: "client",
-          GRAPH_CLIENT_SECRET: "secret",
-          GRAPH_DRIVE_ID: "drive-from-env",
-          GRAPH_PPT_FOLDER_ITEM_ID: "folder-from-env"
-        });
-
-        expect(config.catalog?.sources[0]?.rootLocation).toEqual({
-          driveId: "drive-from-env",
-          folderItemId: "folder-from-env"
-        });
+        expect(config).not.toHaveProperty("catalog");
       }
     );
   });

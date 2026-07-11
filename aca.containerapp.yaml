@@ -54,8 +54,6 @@ properties:
             value: "262144"
           - name: PROFILE_CONFIG_PATH
             value: /app/config/profiles.json
-          - name: CATALOG_SOURCES_PATH
-            value: /app/config/catalog-sources.json
           - name: LINE_HELPER_CHANNEL_SECRET
             secretRef: line-helper-channel-secret
           - name: LINE_HELPER_CHANNEL_ACCESS_TOKEN

@@ -60,8 +60,19 @@ export interface CatalogSearchInput {
   limit?: number;
 }
 
+export interface CatalogSourceListInput {
+  profileName?: string;
+  enabled?: boolean;
+  sourceKeys?: string[];
+}
+
 export interface CatalogStore {
   upsertSource(input: CatalogSourceInput): Promise<CatalogSourceRecord>;
+  createSourceIfMissing(input: CatalogSourceInput): Promise<{
+    source: CatalogSourceRecord;
+    created: boolean;
+  }>;
+  listSources(input?: CatalogSourceListInput): Promise<CatalogSourceRecord[]>;
   upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord>;
   tombstoneMissingItems(input: {
     sourceId: string;
@@ -85,6 +96,32 @@ export class InMemoryCatalogStore implements CatalogStore {
     };
     this.sources.set(record.id, record);
     return record;
+  }
+
+  async createSourceIfMissing(input: CatalogSourceInput): Promise<{
+    source: CatalogSourceRecord;
+    created: boolean;
+  }> {
+    const existing = Array.from(this.sources.values()).find(
+      (source) => source.profileName === input.profileName && source.sourceKey === input.sourceKey
+    );
+    if (existing) {
+      return { source: existing, created: false };
+    }
+    const source: CatalogSourceRecord = { ...input, id: randomUUID() };
+    this.sources.set(source.id, source);
+    return { source, created: true };
+  }
+
+  async listSources(input: CatalogSourceListInput = {}): Promise<CatalogSourceRecord[]> {
+    const sourceKeys = new Set(input.sourceKeys ?? []);
+    return Array.from(this.sources.values())
+      .filter((source) => !input.profileName || source.profileName === input.profileName)
+      .filter((source) => input.enabled === undefined || source.enabled === input.enabled)
+      .filter((source) => sourceKeys.size === 0 || sourceKeys.has(source.sourceKey))
+      .sort((a, b) =>
+        `${a.profileName}:${a.sourceKey}`.localeCompare(`${b.profileName}:${b.sourceKey}`)
+      );
   }
 
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {

@@ -197,28 +197,6 @@ export interface WebSearchConfig {
   timeoutMs: number;
 }
 
-export interface CatalogSourceConfig {
-  profileName: string;
-  sourceKey: string;
-  adapterType: "onedrive" | "notion" | "manual";
-  domain: string;
-  defaultItemKind: string;
-  rootLocation: Record<string, string>;
-  enabled: boolean;
-  syncPolicy: {
-    mode: "scheduled" | "manual";
-    intervalMinutes?: number;
-  };
-  capabilities: {
-    read: string[];
-    write: string[];
-  };
-}
-
-export interface CatalogConfig {
-  sources: CatalogSourceConfig[];
-}
-
 export interface AppConfig {
   serviceName: string;
   host: string;
@@ -234,7 +212,6 @@ export interface AppConfig {
   wikipedia?: WikipediaConfig;
   virusScan?: VirusScanConfig;
   webSearch?: WebSearchConfig;
-  catalog?: CatalogConfig;
   redis?: RedisConfig;
   database?: DatabaseConfig;
   access?: AccessConfig;

@@ -35,12 +35,13 @@ describe("schedule sync service", () => {
       ])
     };
 
+    await catalog.upsertSource(notionScheduleSource);
+
     const result = await syncCatalogSources({
       catalog,
       schedules,
       notion,
-      notionProperties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" },
-      sources: [notionScheduleSource]
+      notionProperties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" }
     });
 
     expect(result.scheduleUpserted).toBe(1);
@@ -100,19 +101,19 @@ describe("schedule sync service", () => {
         ])
     };
 
+    await catalog.upsertSource(notionScheduleSource);
+
     await syncCatalogSources({
       catalog,
       schedules,
       notion,
-      notionProperties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" },
-      sources: [notionScheduleSource]
+      notionProperties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" }
     });
     const result = await syncCatalogSources({
       catalog,
       schedules,
       notion,
       notionProperties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" },
-      sources: [notionScheduleSource],
       now: () => new Date("2026-07-11T00:00:00.000Z")
     });
 

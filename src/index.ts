@@ -11,6 +11,7 @@ import { RedisAgentJobStore } from "./agent/jobs.js";
 import { RedisConversationWindowStore } from "./agent/context-manager.js";
 import { createCacheStore } from "./cache/create-cache-store.js";
 import { createCatalogStore } from "./catalog/create-catalog-store.js";
+import { buildCatalogSourceSeedsForProfiles, seedCatalogSources } from "./catalog/source-seeds.js";
 import { createGraphDriveClient } from "./clients/graph.js";
 import { createNotionDatabaseClient } from "./clients/notion.js";
 import { createSearxngClient } from "./clients/searxng.js";
@@ -142,9 +143,10 @@ const confirmationStore = redis
 const sessionStore = createSessionStore({ redis });
 const cache = createCacheStore({ redis });
 const catalog = await createCatalogStore({ db: postgres?.pool });
-for (const source of config.catalog?.sources ?? []) {
-  await catalog.upsertSource(source);
-}
+await seedCatalogSources({
+  catalog,
+  sources: buildCatalogSourceSeedsForProfiles(process.env, config.profiles)
+});
 const scheduleStore = await createScheduleStore({ db: postgres?.pool });
 const inFlightStore = createInFlightStore({ redis });
 const agentJobStore = redis

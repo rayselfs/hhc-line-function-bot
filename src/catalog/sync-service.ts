@@ -2,7 +2,7 @@ import type { GraphDriveClient, NotionConfig, NotionDatabaseClient } from "../ty
 import { syncNotionScheduleSource } from "../schedules/notion-sync.js";
 import type { ScheduleStore } from "../schedules/store.js";
 import { syncOneDriveCatalogSource } from "./onedrive-sync.js";
-import type { CatalogSourceInput, CatalogStore } from "./store.js";
+import type { CatalogStore } from "./store.js";
 
 export interface SyncCatalogSourcesOptions {
   catalog: CatalogStore;
@@ -10,7 +10,6 @@ export interface SyncCatalogSourcesOptions {
   notion?: NotionDatabaseClient;
   notionProperties?: NotionConfig["properties"];
   schedules?: ScheduleStore;
-  sources: CatalogSourceInput[];
   now?: () => Date;
 }
 
@@ -29,8 +28,9 @@ export interface SyncCatalogSourcesResult {
 export async function syncCatalogSources(
   options: SyncCatalogSourcesOptions
 ): Promise<SyncCatalogSourcesResult> {
+  const sources = await options.catalog.listSources();
   const result: SyncCatalogSourcesResult = {
-    sources: options.sources.length,
+    sources: sources.length,
     synced: 0,
     skipped: 0,
     upserted: 0,
@@ -41,8 +41,7 @@ export async function syncCatalogSources(
     scheduleTombstoned: 0
   };
 
-  for (const input of options.sources) {
-    const source = await options.catalog.upsertSource(input);
+  for (const source of sources) {
     if (!source.enabled) {
       result.skipped += 1;
       continue;
