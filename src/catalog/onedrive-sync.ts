@@ -1,17 +1,19 @@
 import { extname } from "node:path";
 
 import type { GraphDriveClient } from "../types.js";
-import type { CatalogSourceRecord, CatalogStore } from "./store.js";
+import { catalogStorageIdentity, type CatalogSourceRecord, type CatalogStore } from "./store.js";
 
 export interface OneDriveCatalogSyncOptions {
   catalog: CatalogStore;
   graph: GraphDriveClient;
   source: CatalogSourceRecord;
+  now?: () => Date;
 }
 
 export interface OneDriveCatalogSyncResult {
   upserted: number;
   skipped: number;
+  tombstoned: number;
 }
 
 export async function syncOneDriveCatalogSource(
@@ -19,7 +21,7 @@ export async function syncOneDriveCatalogSource(
 ): Promise<OneDriveCatalogSyncResult> {
   const { catalog, graph, source } = options;
   if (!source.enabled || source.adapterType !== "onedrive") {
-    return { upserted: 0, skipped: 0 };
+    return { upserted: 0, skipped: 0, tombstoned: 0 };
   }
 
   const driveId = source.rootLocation.driveId;
@@ -34,11 +36,18 @@ export async function syncOneDriveCatalogSource(
 
   let upserted = 0;
   let skipped = 0;
+  const liveStorageIdentities: string[] = [];
   for (const item of items) {
     if (item.isFolder || !item.id || !item.name) {
       skipped += 1;
       continue;
     }
+    const storageRef = {
+      provider: "graph" as const,
+      driveId: item.driveId ?? driveId,
+      itemId: item.id
+    };
+    liveStorageIdentities.push(catalogStorageIdentity(storageRef));
     await catalog.upsertItem({
       sourceId: source.id,
       itemKind: source.defaultItemKind,
@@ -47,16 +56,18 @@ export async function syncOneDriveCatalogSource(
       path: item.path,
       extension: extname(item.name).toLowerCase(),
       mimeType: guessMimeType(item.name),
-      storageRef: {
-        provider: "graph",
-        driveId: item.driveId ?? driveId,
-        itemId: item.id
-      }
+      storageRef
     });
     upserted += 1;
   }
 
-  return { upserted, skipped };
+  const tombstoned = await catalog.tombstoneMissingItems({
+    sourceId: source.id,
+    liveStorageIdentities,
+    deletedAt: (options.now ?? (() => new Date()))().toISOString()
+  });
+
+  return { upserted, skipped, tombstoned };
 }
 
 function guessMimeType(filename: string): string | undefined {

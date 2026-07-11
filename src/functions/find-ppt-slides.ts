@@ -5,6 +5,7 @@ import {
   type FindPptSlidesArguments
 } from "../function-arguments.js";
 import type { AgentMemoryStore, AgentResourceRecord } from "../agent/memory-store.js";
+import type { CatalogItemRecord, CatalogStore } from "../catalog/store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 import { buildPostbackQuickReply } from "../line-reply.js";
 import { withRequesterDisplayName } from "../requester-personalization.js";
@@ -51,6 +52,7 @@ type PptCandidate =
 
 export interface FindPptSlidesOptions {
   graph: GraphDriveClient;
+  catalog?: CatalogStore;
   driveId: string;
   folderItemId: string;
   allowedExtensions: string[];
@@ -113,6 +115,63 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
     );
     if (exactRemembered) {
       return createRememberedResourceReply(options.graph, exactRemembered, now());
+    }
+
+    const catalogItems = await findCatalogPptSlides(
+      options.catalog,
+      context.profile.name,
+      rawQuery,
+      extensions
+    );
+    if (catalogItems.length > 0) {
+      const candidates: PptCandidate[] = [
+        ...remembered.map((resource) => ({ kind: "memory" as const, resource })),
+        ...catalogItems.map((item) => ({
+          kind: "graph" as const,
+          item: catalogItemToDriveItem(item)
+        }))
+      ].slice(0, MAX_CANDIDATES);
+
+      if (candidates.length === 1) {
+        return createPptCandidateReply(options.graph, options.driveId, candidates[0], now());
+      }
+
+      if (!canCreateRequesterScopedSession(context.event.source)) {
+        return {
+          ok: true,
+          replyText: "找到多個相近的詩歌投影片，請提供更完整歌名。"
+        };
+      }
+
+      const requestId = requestIdFactory();
+      await sessionStore.set({
+        id: requestId,
+        type: "ppt_selection",
+        profileName: context.profile.name,
+        requesterUserId: context.event.source.userId,
+        source: context.event.source,
+        driveId: options.driveId,
+        items: candidates.map(toSelectionItem),
+        expiresAt: new Date(now().getTime() + SELECTION_TTL_MS).toISOString()
+      });
+
+      return {
+        ok: true,
+        replyText: [
+          withRequesterDisplayName(context, "找到多個相近的詩歌投影片，請回覆編號："),
+          ...candidates.map((candidate, index) => `${index + 1}. ${candidateName(candidate)}`)
+        ].join("\n"),
+        quickReplies: candidates.map((_candidate, index) =>
+          buildPostbackQuickReply(
+            String(index + 1),
+            new URLSearchParams({
+              action: POSTBACK_ACTION,
+              requestId,
+              index: String(index)
+            }).toString()
+          )
+        )
+      };
     }
 
     const allItems = await options.graph.listFolderChildren(options.driveId, options.folderItemId);
@@ -298,7 +357,7 @@ async function selectPptCandidate(options: {
   if (item.memoryResource) {
     return createRememberedReferenceReply(graph, item.memoryResource, now);
   }
-  return createSharingLinkReply(graph, session.driveId, item, now);
+  return createSharingLinkReply(graph, item.driveId ?? session.driveId, item, now);
 }
 
 async function findRememberedPptSlides(
@@ -373,7 +432,7 @@ function createPptCandidateReply(
   if (candidate.kind === "memory") {
     return createRememberedResourceReply(graph, candidate.resource, now);
   }
-  return createSharingLinkReply(graph, driveId, candidate.item, now);
+  return createSharingLinkReply(graph, candidate.item.driveId ?? driveId, candidate.item, now);
 }
 
 function toSelectionItem(candidate: PptCandidate) {
@@ -389,7 +448,44 @@ function toSelectionItem(candidate: PptCandidate) {
       }
     };
   }
-  return { id: candidate.item.id, name: candidate.item.name };
+  return { id: candidate.item.id, driveId: candidate.item.driveId, name: candidate.item.name };
+}
+
+async function findCatalogPptSlides(
+  catalog: CatalogStore | undefined,
+  profileName: string,
+  query: string,
+  extensions: string[]
+): Promise<CatalogItemRecord[]> {
+  if (!catalog) {
+    return [];
+  }
+  const items = await catalog.searchItems({
+    profileName,
+    query,
+    itemKinds: ["ppt_slide"],
+    domains: ["presentation"],
+    limit: MAX_CANDIDATES
+  });
+  return items
+    .filter((item) => item.storageRef.provider === "graph")
+    .filter((item) => extensions.some((extension) => catalogItemExtension(item) === extension));
+}
+
+function catalogItemToDriveItem(item: CatalogItemRecord): DriveItem {
+  if (item.storageRef.provider !== "graph") {
+    throw new Error("catalog_item_not_graph");
+  }
+  return {
+    id: item.storageRef.itemId,
+    driveId: item.storageRef.driveId,
+    name: item.title,
+    path: item.path
+  };
+}
+
+function catalogItemExtension(item: CatalogItemRecord): string {
+  return (item.extension || item.title.match(/\.[a-z0-9]+$/iu)?.[0] || "").toLowerCase();
 }
 
 function candidateName(candidate: PptCandidate): string {

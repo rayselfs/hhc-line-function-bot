@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentResourceStorage } from "../types.js";
 import {
+  catalogStorageIdentity,
   normalizeCatalogText,
   type CatalogItemInput,
   type CatalogItemRecord,
@@ -133,12 +134,32 @@ export class PostgresCatalogStore implements CatalogStore {
         input.sizeBytes ?? null,
         input.sha256 ?? null,
         JSON.stringify(input.storageRef),
-        storageIdentity(input.storageRef),
+        catalogStorageIdentity(input.storageRef),
         input.externalUpdatedAt ?? null,
         input.deletedAt ?? null
       ]
     );
     return this.getItemById(result.rows[0].id);
+  }
+
+  async tombstoneMissingItems(input: {
+    sourceId: string;
+    liveStorageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number> {
+    const result = await this.db.query<{ id: string }>(
+      `
+      update catalog_items
+      set deleted_at = $3,
+          updated_at = now()
+      where source_id = $1
+        and deleted_at is null
+        and not (storage_identity = any($2::text[]))
+      returning id
+      `,
+      [input.sourceId, input.liveStorageIdentities, input.deletedAt]
+    );
+    return result.rows.length;
   }
 
   async searchItems(input: CatalogSearchInput): Promise<CatalogItemRecord[]> {
@@ -270,13 +291,4 @@ function mapItem(row: CatalogItemRow): CatalogItemRecord {
       capabilities: row.capabilities
     }
   };
-}
-
-function storageIdentity(storage: AgentResourceStorage): string {
-  switch (storage.provider) {
-    case "graph":
-      return `${storage.provider}:${storage.driveId}:${storage.itemId}`;
-    case "external_link":
-      return `${storage.provider}:${storage.url}`;
-  }
 }

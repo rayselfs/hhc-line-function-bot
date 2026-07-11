@@ -146,6 +146,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         functions: {
           find_ppt_slides: createFindPptSlidesHandler({
             graph: clients.graph,
+            catalog: clients.catalog,
             driveId: config.graph.driveId,
             folderItemId: config.graph.pptFolderItemId,
             allowedExtensions: config.graph.allowedExtensions,
@@ -453,6 +454,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         functions: {
           find_sheet_music: createFindPopSheetMusicHandler({
             graph: clients.graph,
+            catalog: clients.catalog,
             driveId: config.graph.driveId,
             folderItemId: config.graph.sheetMusicFolderItemId,
             folderPath: config.graph.sheetMusicFolderPath,
@@ -570,6 +572,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         functions: {
           find_pop_sheet_music: createFindPopSheetMusicHandler({
             graph: clients.graph,
+            catalog: clients.catalog,
             driveId: config.graph.driveId,
             folderItemId: config.graph.sheetMusicFolderItemId,
             folderPath: config.graph.sheetMusicFolderPath,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { MemoryCacheStore } from "../cache/cache-store.js";
+import { InMemoryCatalogStore } from "../catalog/store.js";
 import {
   createFindPopSheetMusicHandler,
   createFindPopSheetMusicPostbackHandler,
@@ -51,6 +52,55 @@ function personalizedHandlerContext(): FunctionHandlerContext {
 }
 
 describe("find_pop_sheet_music", () => {
+  it("uses catalog results before crawling the sheet music folder", async () => {
+    const catalog = new InMemoryCatalogStore();
+    const source = await catalog.upsertSource({
+      profileName: "main",
+      sourceKey: "pop_sheet_music",
+      adapterType: "onedrive",
+      domain: "sheet_music",
+      defaultItemKind: "pop_sheet",
+      rootLocation: { driveId: "drive-id", folderItemId: "sheet-folder-id" },
+      enabled: true,
+      syncPolicy: { mode: "scheduled", intervalMinutes: 15 },
+      capabilities: { read: ["helper"], write: [] }
+    });
+    await catalog.upsertItem({
+      sourceId: source.id,
+      itemKind: "pop_sheet",
+      domain: "sheet_music",
+      title: "A TIME FOR US-Andy Williams-043.pdf",
+      storageRef: { provider: "graph", driveId: "catalog-drive", itemId: "catalog-sheet-1" }
+    });
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn(),
+      listFolderFilesRecursive: vi
+        .fn()
+        .mockResolvedValue([{ id: "legacy", driveId: "legacy-drive", name: "A TIME FOR US.pdf" }]),
+      createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/catalog-sheet")
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPopSheetMusicHandler({
+      graph,
+      catalog,
+      driveId: "drive-id",
+      folderItemId: "sheet-folder-id",
+      allowedExtensions: [".pdf", ".jpg", ".jpeg"],
+      cache: new MemoryCacheStore({ now: () => now }),
+      now: () => now
+    });
+
+    const result = await handler({ query: "A TIME FOR US", fileType: "pdf" }, handlerContext());
+
+    expect(result.replyText).toContain("https://download.invalid/catalog-sheet");
+    expect(graph.listFolderFilesRecursive).not.toHaveBeenCalled();
+    expect(graph.createSharingLink).toHaveBeenCalledWith(
+      "catalog-drive",
+      "catalog-sheet-1",
+      "2026-07-05T10:00:00.000Z"
+    );
+  });
+
   it("softly personalizes missing sheet music title clarification", async () => {
     const now = new Date("2026-07-04T10:00:00.000Z");
     const handler = createFindPopSheetMusicHandler({

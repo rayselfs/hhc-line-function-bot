@@ -109,7 +109,7 @@ describe("catalog store", () => {
 
     const result = await syncOneDriveCatalogSource({ catalog: store, graph, source });
 
-    expect(result).toEqual({ upserted: 1, skipped: 0 });
+    expect(result).toEqual({ upserted: 1, skipped: 0, tombstoned: 0 });
     await expect(
       store.searchItems({
         profileName: "helper",
@@ -124,5 +124,37 @@ describe("catalog store", () => {
         storageRef: { provider: "graph", driveId: "drive-1", itemId: "audio-1" }
       }
     ]);
+  });
+
+  it("tombstones catalog items missing from a later OneDrive full crawl", async () => {
+    const store = new InMemoryCatalogStore();
+    const source = await store.upsertSource(helperSource);
+    const graph: GraphDriveClient = {
+      listFolderChildren: async () => [],
+      listFolderFilesRecursive: async () => [
+        { id: "audio-1", driveId: "drive-1", name: "保留.mp3" },
+        { id: "audio-2", driveId: "drive-1", name: "刪除.mp3" }
+      ],
+      createSharingLink: async () => "unused"
+    };
+    await syncOneDriveCatalogSource({ catalog: store, graph, source });
+    graph.listFolderFilesRecursive = async () => [
+      { id: "audio-1", driveId: "drive-1", name: "保留.mp3" }
+    ];
+
+    const result = await syncOneDriveCatalogSource({
+      catalog: store,
+      graph,
+      source,
+      now: () => new Date("2026-07-11T01:00:00.000Z")
+    });
+
+    expect(result).toEqual({ upserted: 1, skipped: 0, tombstoned: 1 });
+    await expect(
+      store.searchItems({
+        profileName: "helper",
+        itemKinds: ["weekly_report_audio"]
+      })
+    ).resolves.toMatchObject([{ title: "保留.mp3" }]);
   });
 });

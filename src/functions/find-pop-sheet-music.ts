@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { CacheStore } from "../cache/cache-store.js";
 import type { AgentMemoryStore, AgentResourceRecord } from "../agent/memory-store.js";
+import type { CatalogItemRecord, CatalogStore } from "../catalog/store.js";
 import {
   findPopSheetMusicArgumentsSchema,
   type FindPopSheetMusicArguments
@@ -37,6 +38,7 @@ export const SHEET_MUSIC_INDEX_CACHE_PREFIX = "sheet-music-index:";
 
 export interface FindPopSheetMusicOptions {
   graph: GraphDriveClient;
+  catalog?: CatalogStore;
   driveId: string;
   folderItemId?: string;
   folderPath?: string;
@@ -110,8 +112,65 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
       return createRememberedResourceReply(options.graph, exactRemembered, now());
     }
 
-    const root = await resolveSheetMusicRoot(options);
     const extensions = resolveSearchExtensions(configuredExtensions, args);
+    const catalogItems = await findCatalogSheetMusic(
+      options.catalog,
+      context.profile.name,
+      rawQuery,
+      extensions
+    );
+    if (catalogItems.length > 0) {
+      const candidates: SheetMusicCandidate[] = [
+        ...remembered.map((resource) => ({ kind: "memory" as const, resource })),
+        ...catalogItems.map((item) => ({
+          kind: "graph" as const,
+          item: catalogItemToDriveItem(item)
+        }))
+      ].slice(0, MAX_CANDIDATES);
+
+      if (candidates.length === 1) {
+        return createSheetMusicCandidateReply(options.graph, candidates[0], now());
+      }
+
+      if (!canCreateRequesterScopedSession(context.event.source)) {
+        return {
+          ok: true,
+          replyText: "找到多個相近的樂譜，請提供更完整歌名或歌手。"
+        };
+      }
+
+      const requestId = requestIdFactory();
+      await sessionStore.set({
+        id: requestId,
+        type: "selection",
+        action: POSTBACK_ACTION,
+        profileName: context.profile.name,
+        requesterUserId: context.event.source.userId,
+        source: context.event.source,
+        items: candidates.map(toSelectionItem),
+        expiresAt: new Date(now().getTime() + SELECTION_TTL_MS).toISOString()
+      });
+
+      return {
+        ok: true,
+        replyText: [
+          withRequesterDisplayName(context, "找到多個相近的樂譜，請選擇："),
+          ...candidates.map((candidate, index) => `${index + 1}. ${candidateName(candidate)}`)
+        ].join("\n"),
+        quickReplies: candidates.map((_candidate, index) =>
+          buildPostbackQuickReply(
+            String(index + 1),
+            new URLSearchParams({
+              action: POSTBACK_ACTION,
+              requestId,
+              index: String(index)
+            }).toString()
+          )
+        )
+      };
+    }
+
+    const root = await resolveSheetMusicRoot(options);
     const allItems = await getCachedFileIndex(options, root);
     const graphCandidates = rankSheetMusicCandidates(
       allItems,
@@ -364,6 +423,43 @@ function resourceMatchesQueryExactly(resource: AgentResourceRecord, rawQuery: st
   return [resource.title, resource.query]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .some((value) => normalizeSearchText(value) === query);
+}
+
+async function findCatalogSheetMusic(
+  catalog: CatalogStore | undefined,
+  profileName: string,
+  query: string,
+  extensions: string[]
+): Promise<CatalogItemRecord[]> {
+  if (!catalog) {
+    return [];
+  }
+  const items = await catalog.searchItems({
+    profileName,
+    query,
+    itemKinds: ["pop_sheet", "hymn_sheet"],
+    domains: ["sheet_music"],
+    limit: MAX_CANDIDATES
+  });
+  return items
+    .filter((item) => item.storageRef.provider === "graph")
+    .filter((item) => extensions.some((extension) => catalogItemExtension(item) === extension));
+}
+
+function catalogItemToDriveItem(item: CatalogItemRecord): DriveItem {
+  if (item.storageRef.provider !== "graph") {
+    throw new Error("catalog_item_not_graph");
+  }
+  return {
+    id: item.storageRef.itemId,
+    driveId: item.storageRef.driveId,
+    name: item.title,
+    path: item.path
+  };
+}
+
+function catalogItemExtension(item: CatalogItemRecord): string {
+  return (item.extension || item.title.match(/\.[a-z0-9]+$/iu)?.[0] || "").toLowerCase();
 }
 
 async function resolveSheetMusicRoot(options: FindPopSheetMusicOptions) {

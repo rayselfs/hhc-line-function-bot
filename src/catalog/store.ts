@@ -62,6 +62,11 @@ export interface CatalogSearchInput {
 export interface CatalogStore {
   upsertSource(input: CatalogSourceInput): Promise<CatalogSourceRecord>;
   upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord>;
+  tombstoneMissingItems(input: {
+    sourceId: string;
+    liveStorageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number>;
   searchItems(input: CatalogSearchInput): Promise<CatalogItemRecord[]>;
 }
 
@@ -86,7 +91,7 @@ export class InMemoryCatalogStore implements CatalogStore {
       (item) =>
         item.sourceId === input.sourceId &&
         item.storageRef.provider === input.storageRef.provider &&
-        storageIdentity(item.storageRef) === storageIdentity(input.storageRef)
+        catalogStorageIdentity(item.storageRef) === catalogStorageIdentity(input.storageRef)
     );
     const record: Omit<CatalogItemRecord, "source"> = {
       ...input,
@@ -95,6 +100,26 @@ export class InMemoryCatalogStore implements CatalogStore {
     };
     this.items.set(record.id, record);
     return this.withSource(record);
+  }
+
+  async tombstoneMissingItems(input: {
+    sourceId: string;
+    liveStorageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number> {
+    const live = new Set(input.liveStorageIdentities);
+    let count = 0;
+    for (const item of Array.from(this.items.values())) {
+      if (
+        item.sourceId === input.sourceId &&
+        !item.deletedAt &&
+        !live.has(catalogStorageIdentity(item.storageRef))
+      ) {
+        this.items.set(item.id, { ...item, deletedAt: input.deletedAt });
+        count += 1;
+      }
+    }
+    return count;
   }
 
   async searchItems(input: CatalogSearchInput): Promise<CatalogItemRecord[]> {
@@ -142,11 +167,11 @@ function searchableText(item: CatalogItemRecord): string {
   );
 }
 
-function storageIdentity(storage: AgentResourceStorage): string {
+export function catalogStorageIdentity(storage: AgentResourceStorage): string {
   switch (storage.provider) {
     case "graph":
-      return `${storage.driveId}:${storage.itemId}`;
+      return `graph:${storage.driveId}:${storage.itemId}`;
     case "external_link":
-      return storage.url;
+      return `external_link:${storage.url}`;
   }
 }

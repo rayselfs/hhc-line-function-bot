@@ -6,6 +6,7 @@ import {
   createFindPptSlidesTextMessageHandler
 } from "../functions/find-ppt-slides.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
+import { InMemoryCatalogStore } from "../catalog/store.js";
 import { createQueryServiceScheduleHandler } from "../functions/query-service-schedule.js";
 import { InMemorySessionStore } from "../state/session-store.js";
 import type {
@@ -52,6 +53,52 @@ function personalizedHandlerContext(): FunctionHandlerContext {
 }
 
 describe("find_ppt_slides", () => {
+  it("uses catalog results before crawling the presentation folder", async () => {
+    const catalog = new InMemoryCatalogStore();
+    const source = await catalog.upsertSource({
+      profileName: "main",
+      sourceKey: "ppt_slides",
+      adapterType: "onedrive",
+      domain: "presentation",
+      defaultItemKind: "ppt_slide",
+      rootLocation: { driveId: "drive-id", folderItemId: "folder-id" },
+      enabled: true,
+      syncPolicy: { mode: "scheduled", intervalMinutes: 15 },
+      capabilities: { read: ["helper"], write: [] }
+    });
+    await catalog.upsertItem({
+      sourceId: source.id,
+      itemKind: "ppt_slide",
+      domain: "presentation",
+      title: "奇異恩典.pptx",
+      storageRef: { provider: "graph", driveId: "catalog-drive", itemId: "catalog-ppt-1" }
+    });
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn().mockResolvedValue([{ id: "legacy", name: "奇異恩典.pptx" }]),
+      createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/catalog-ppt")
+    };
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const handler = createFindPptSlidesHandler({
+      graph,
+      catalog,
+      driveId: "drive-id",
+      folderItemId: "folder-id",
+      allowedExtensions: [".ppt", ".pptx"],
+      defaultIncludePdf: false,
+      now: () => now
+    });
+
+    const result = await handler({ query: "奇異恩典" }, handlerContext());
+
+    expect(result.replyText).toContain("https://download.invalid/catalog-ppt");
+    expect(graph.listFolderChildren).not.toHaveBeenCalled();
+    expect(graph.createSharingLink).toHaveBeenCalledWith(
+      "catalog-drive",
+      "catalog-ppt-1",
+      "2026-07-05T10:00:00.000Z"
+    );
+  });
+
   it("softly personalizes missing PPT title clarification", async () => {
     const now = new Date("2026-07-04T10:00:00.000Z");
     const handler = createFindPptSlidesHandler({
