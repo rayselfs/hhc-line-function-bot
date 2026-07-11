@@ -324,9 +324,14 @@ Advanced commands:
 /last-agent-turns [limit]
 /memory-status
 /llm-use
+/catalog-sources
+/catalog-source-status <sourceKey>
+/catalog-source-enable <sourceKey>
+/catalog-source-disable <sourceKey>
+/catalog-sync-now [sourceKey]
 ```
 
-Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, and `/refresh-sheet-music-cache`. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/last-agent-turns` shows the latest sanitized agent runtime phases so admins can debug whether a request stopped at memory, clarification, routing, in-flight locking, or function execution.
+Registered function modules may add more admin commands, such as `/llm-status`, `/functions`, `/sessions`, `/cache`, `/clear-sessions`, `/refresh-sheet-music-cache`, and catalog source operations. `/catalog-sources` lists DB-owned source registry rows for the current profile. `/catalog-source-enable <sourceKey>` and `/catalog-source-disable <sourceKey>` toggle source availability without changing root metadata or capabilities. `/catalog-sync-now [sourceKey]` runs the catalog sync service manually for one source or all current-profile sources and records access audit events. `/route-test <text>` reports the selected provider, action, arguments, and any fallback reason. `/last-routes` reports recent sanitized route/function outcomes, including whether a query was present, without echoing the raw query. `/last-agent-turns` shows the latest sanitized agent runtime phases so admins can debug whether a request stopped at memory, clarification, routing, in-flight locking, or function execution.
 
 ## OneDrive And Graph
 

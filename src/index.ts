@@ -171,6 +171,7 @@ const registries = createFunctionRegistries(config, {
   catalog,
   scheduleStore,
   memoryStore,
+  accessStore,
   virusScanner,
   webSearch,
   sheetMusicExternalSearchSummarizer: createSheetMusicExternalSearchSummarizer({

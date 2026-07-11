@@ -72,6 +72,11 @@ export interface CatalogStore {
     source: CatalogSourceRecord;
     created: boolean;
   }>;
+  updateSourceEnabled(input: {
+    profileName: string;
+    sourceKey: string;
+    enabled: boolean;
+  }): Promise<CatalogSourceRecord | undefined>;
   listSources(input?: CatalogSourceListInput): Promise<CatalogSourceRecord[]>;
   upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord>;
   tombstoneMissingItems(input: {
@@ -122,6 +127,22 @@ export class InMemoryCatalogStore implements CatalogStore {
       .sort((a, b) =>
         `${a.profileName}:${a.sourceKey}`.localeCompare(`${b.profileName}:${b.sourceKey}`)
       );
+  }
+
+  async updateSourceEnabled(input: {
+    profileName: string;
+    sourceKey: string;
+    enabled: boolean;
+  }): Promise<CatalogSourceRecord | undefined> {
+    const existing = Array.from(this.sources.values()).find(
+      (source) => source.profileName === input.profileName && source.sourceKey === input.sourceKey
+    );
+    if (!existing) {
+      return undefined;
+    }
+    const updated = { ...existing, enabled: input.enabled };
+    this.sources.set(updated.id, updated);
+    return updated;
   }
 
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {

@@ -169,6 +169,25 @@ export class PostgresCatalogStore implements CatalogStore {
     return result.rows.map(mapSource);
   }
 
+  async updateSourceEnabled(input: {
+    profileName: string;
+    sourceKey: string;
+    enabled: boolean;
+  }): Promise<CatalogSourceRecord | undefined> {
+    const result = await this.db.query<CatalogSourceRow>(
+      `
+      update catalog_sources
+      set enabled = $3,
+          updated_at = now()
+      where profile_name = $1
+        and source_key = $2
+      returning *
+      `,
+      [input.profileName, input.sourceKey, input.enabled]
+    );
+    return result.rows[0] ? mapSource(result.rows[0]) : undefined;
+  }
+
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {
     const normalizedTitle = input.normalizedTitle ?? normalizeCatalogText(input.title);
     const result = await this.db.query<{ id: string }>(

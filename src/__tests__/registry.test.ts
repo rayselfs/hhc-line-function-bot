@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { MemoryCacheStore } from "../cache/cache-store.js";
+import { InMemoryAccessStore } from "../access/memory-access-store.js";
+import { InMemoryCatalogStore, type CatalogSourceInput } from "../catalog/store.js";
 import { createFunctionRegistries } from "../functions/registry.js";
 import { InMemorySessionStore } from "../state/session-store.js";
 import type { AppConfig, BotProfileConfig, GraphDriveClient } from "../types.js";
@@ -58,6 +60,18 @@ function config(): AppConfig {
     }
   };
 }
+
+const weeklyAudioSource: CatalogSourceInput = {
+  profileName: "helper",
+  sourceKey: "weekly_report_audio",
+  adapterType: "onedrive",
+  domain: "audio",
+  defaultItemKind: "weekly_report_audio",
+  rootLocation: { driveId: "drive-id", folderItemId: "weekly-folder" },
+  enabled: false,
+  syncPolicy: { mode: "scheduled", intervalMinutes: 15 },
+  capabilities: { read: ["helper"], write: [] }
+};
 
 describe("function registry", () => {
   it("registers sheet music handlers and admin cache refresh when Graph is configured", async () => {
@@ -172,5 +186,79 @@ describe("function registry", () => {
     expect(llmStatusResult.replyText).toContain("chat: ok");
     expect(clearResult.replyText).toBe("已清除 session（1 筆）。");
     expect(sessionsAfterClear.replyText).toContain("total: 0");
+  });
+
+  it("registers catalog source admin handlers that list, enable, disable, sync, and audit", async () => {
+    const catalog = new InMemoryCatalogStore();
+    await catalog.upsertSource(weeklyAudioSource);
+    const accessStore = new InMemoryAccessStore();
+    const graph: GraphDriveClient = {
+      listFolderChildren: vi.fn(),
+      listFolderFilesRecursive: vi.fn().mockResolvedValue([
+        {
+          id: "audio-1",
+          driveId: "drive-id",
+          name: "weekly-report.mp3"
+        }
+      ]),
+      createSharingLink: vi.fn()
+    };
+    const registries = createFunctionRegistries(config(), {
+      catalog,
+      accessStore,
+      graph
+    });
+    const adminContext = {
+      profile: profile(),
+      event: {
+        type: "message",
+        source: { type: "user", userId: "Uadmin" },
+        message: { type: "text", text: "/catalog-sources" }
+      },
+      command: "catalog-sources",
+      args: []
+    };
+
+    const listBefore = await registries.adminHandlers["catalog-sources"](adminContext);
+    const enable = await registries.adminHandlers["catalog-source-enable"]({
+      ...adminContext,
+      command: "catalog-source-enable",
+      args: ["weekly_report_audio"]
+    });
+    const status = await registries.adminHandlers["catalog-source-status"]({
+      ...adminContext,
+      command: "catalog-source-status",
+      args: ["weekly_report_audio"]
+    });
+    const sync = await registries.adminHandlers["catalog-sync-now"]({
+      ...adminContext,
+      command: "catalog-sync-now",
+      args: ["weekly_report_audio"]
+    });
+    expect(listBefore.replyText).toContain("Catalog sources");
+    expect(listBefore.replyText).toContain("weekly_report_audio");
+    expect(listBefore.replyText).toContain("enabled=false");
+    expect(enable.replyText).toContain("enabled weekly_report_audio");
+    expect(status.replyText).toContain("enabled=true");
+    expect(sync.replyText).toContain("synced: 1");
+    await expect(
+      catalog.searchItems({
+        profileName: "helper",
+        itemKinds: ["weekly_report_audio"],
+        allowedSourceKeys: ["weekly_report_audio"]
+      })
+    ).resolves.toHaveLength(1);
+    const disable = await registries.adminHandlers["catalog-source-disable"]({
+      ...adminContext,
+      command: "catalog-source-disable",
+      args: ["weekly_report_audio"]
+    });
+
+    expect(disable.replyText).toContain("disabled weekly_report_audio");
+    expect(accessStore.audit.map((event) => event.action)).toEqual([
+      "catalog.source.disable",
+      "catalog.source.sync",
+      "catalog.source.enable"
+    ]);
   });
 });

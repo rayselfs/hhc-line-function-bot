@@ -10,6 +10,8 @@ export interface SyncCatalogSourcesOptions {
   notion?: NotionDatabaseClient;
   notionProperties?: NotionConfig["properties"];
   schedules?: ScheduleStore;
+  profileName?: string;
+  sourceKeys?: string[];
   now?: () => Date;
 }
 
@@ -28,7 +30,10 @@ export interface SyncCatalogSourcesResult {
 export async function syncCatalogSources(
   options: SyncCatalogSourcesOptions
 ): Promise<SyncCatalogSourcesResult> {
-  const sources = await options.catalog.listSources();
+  const sources = await options.catalog.listSources({
+    profileName: options.profileName,
+    sourceKeys: options.sourceKeys
+  });
   const result: SyncCatalogSourcesResult = {
     sources: sources.length,
     synced: 0,

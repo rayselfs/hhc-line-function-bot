@@ -1817,6 +1817,66 @@ describe("LINE entrance", () => {
     expect(replyText).toHaveBeenCalledWith("reply-token", "已重新整理流行歌譜 cache。", undefined);
   });
 
+  it("keeps catalog admin handlers admin-direct only", async () => {
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const catalogSources = vi.fn().mockResolvedValue({
+      ok: true,
+      replyText: "Catalog sources"
+    });
+    const app = createTestApp(testConfig(), {
+      router: { route },
+      adminHandlers: {
+        "catalog-sources": catalogSources
+      },
+      createLineReplyClient: () => ({ replyText })
+    });
+
+    const nonAdminBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-1",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "text", text: "/catalog-sources" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(nonAdminBody, "main-secret"),
+      payload: nonAdminBody
+    });
+
+    const groupAdminBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-2",
+      source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
+      message: { type: "text", text: "小哈 /catalog-sources" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(groupAdminBody, "main-secret"),
+      payload: groupAdminBody
+    });
+
+    const directAdminBody = lineBody({
+      type: "message",
+      replyToken: "reply-token-3",
+      source: { type: "user", userId: "Uadmin" },
+      message: { type: "text", text: "/catalog-sources" }
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(directAdminBody, "main-secret"),
+      payload: directAdminBody
+    });
+
+    expect(catalogSources).toHaveBeenCalledTimes(1);
+    expect(replyText.mock.calls[0]?.[1]).not.toBe("Catalog sources");
+    expect(replyText.mock.calls[1]?.[1]).not.toBe("Catalog sources");
+    expect(replyText.mock.calls[2]?.[1]).toBe("Catalog sources");
+  });
+
   it("reports profile diagnostics through slash admin profile", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);

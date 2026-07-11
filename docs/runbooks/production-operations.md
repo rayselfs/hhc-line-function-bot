@@ -94,6 +94,16 @@ node dist/tools/sync-catalog.js
 
 Use [`aca.catalog-sync-job.yaml`](../../aca.catalog-sync-job.yaml) as the placeholder manifest. The job is configured as `Microsoft.App/jobs` with `triggerType: Schedule` and `cronExpression: "*/15 * * * *"`.
 
+Admins can inspect and operate the same DB-owned registry from direct chat:
+
+- `/catalog-sources`
+- `/catalog-source-status <sourceKey>`
+- `/catalog-source-enable <sourceKey>`
+- `/catalog-source-disable <sourceKey>`
+- `/catalog-sync-now [sourceKey]`
+
+Enable/disable/manual-sync operations write access audit events.
+
 Required job settings:
 
 - `PROFILE_CONFIG_PATH=/app/config/profiles.json`

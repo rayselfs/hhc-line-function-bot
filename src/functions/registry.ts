@@ -2,6 +2,8 @@ import { createGraphDriveClient } from "../clients/graph.js";
 import { createLineSdkContentClient } from "../clients/line.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
 import { createWikipediaClient, type WikipediaClient } from "../wikipedia/client.js";
+import type { AccessStore } from "../access/types.js";
+import { createCatalogAdminHandlers } from "../catalog/admin-handlers.js";
 import type { WikipediaSummarizer } from "../wikipedia/lookup.js";
 import type { SheetMusicExternalSearchSummarizer } from "../search/sheet-music-external-summarizer.js";
 import { InMemoryAgentMemoryStore, type AgentMemoryStore } from "../agent/memory-store.js";
@@ -39,6 +41,7 @@ export interface RegistryClients {
   wikipediaSummarizer?: WikipediaSummarizer;
   webSearch?: WebSearchClient;
   sheetMusicExternalSearchSummarizer?: SheetMusicExternalSearchSummarizer;
+  accessStore?: AccessStore;
   now?: () => Date;
   requestIdFactory?: () => string;
   fetchImpl?: typeof fetch;
@@ -149,6 +152,18 @@ export function createFunctionRegistries(
   adminHandlers["llm-status"] = createLlmStatusAdminHandler(config.llm, {
     fetchImpl: clients.fetchImpl
   });
+
+  Object.assign(
+    adminHandlers,
+    createCatalogAdminHandlers({
+      config,
+      catalog,
+      accessStore: clients.accessStore,
+      graph: moduleContext.clients.graph,
+      notion: moduleContext.clients.notion,
+      schedules: scheduleStore
+    })
+  );
 
   return { functions, postbacks, textMessages, adminHandlers };
 }

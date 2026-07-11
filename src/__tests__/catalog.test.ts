@@ -109,6 +109,34 @@ describe("catalog store", () => {
     expect(results.map((item) => item.id)).toEqual([active.id]);
   });
 
+  it("updates source enabled state without changing source metadata", async () => {
+    const store = new InMemoryCatalogStore();
+    await store.upsertSource(helperSource);
+
+    const disabled = await store.updateSourceEnabled({
+      profileName: "helper",
+      sourceKey: "weekly_report_audio",
+      enabled: false
+    });
+    const missing = await store.updateSourceEnabled({
+      profileName: "helper",
+      sourceKey: "missing_source",
+      enabled: true
+    });
+
+    expect(disabled).toMatchObject({
+      profileName: "helper",
+      sourceKey: "weekly_report_audio",
+      enabled: false,
+      rootLocation: { driveId: "drive-1", folderItemId: "folder-1" },
+      capabilities: { read: ["helper"], write: [] }
+    });
+    expect(missing).toBeUndefined();
+    await expect(
+      store.listSources({ profileName: "helper", enabled: false })
+    ).resolves.toHaveLength(1);
+  });
+
   it("normalizes catalog text for fuzzy Chinese and filename lookup", () => {
     expect(normalizeCatalogText("  週報音檔-2026/07.MP3  ")).toBe("週報音檔202607mp3");
   });
