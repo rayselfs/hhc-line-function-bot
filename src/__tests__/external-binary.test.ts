@@ -1,0 +1,35 @@
+import { describe, expect, it } from "vitest";
+
+import { validateExternalBinaryUrl } from "../clients/external-binary.js";
+
+describe("external binary URL policy", () => {
+  it.each([
+    "http://example.org/file.pdf",
+    "https://user:pass@example.org/file.pdf",
+    "https://127.0.0.1/file.pdf",
+    "https://169.254.169.254/latest/meta-data",
+    "https://[::1]/file.pdf",
+    "https://[fc00::1]/file.pdf"
+  ])("rejects unsafe URL %s", async (url) => {
+    await expect(
+      validateExternalBinaryUrl(url, async () => [{ address: "93.184.216.34", family: 4 }])
+    ).rejects.toThrow(/external_binary_/u);
+  });
+
+  it("rejects a public hostname when any DNS answer is private", async () => {
+    await expect(
+      validateExternalBinaryUrl("https://example.org/file.pdf", async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.1", family: 4 }
+      ])
+    ).rejects.toThrow("external_binary_unsafe_address");
+  });
+
+  it("returns a validated public address for HTTPS", async () => {
+    await expect(
+      validateExternalBinaryUrl("https://example.org/file.pdf", async () => [
+        { address: "93.184.216.34", family: 4 }
+      ])
+    ).resolves.toMatchObject({ hostname: "example.org", address: "93.184.216.34", family: 4 });
+  });
+});

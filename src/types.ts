@@ -209,6 +209,7 @@ export interface AppConfig {
   readyPath?: string;
   maxBodyBytes: number;
   attachments: AttachmentConfig;
+  externalResources: ExternalResourceConfig;
   profiles: BotProfileConfig[];
   llm: LlmConfig;
   graph?: GraphConfig;
@@ -227,6 +228,11 @@ export interface AppConfig {
 export interface AttachmentConfig {
   maxBytes: number;
   lineDownloadTimeoutMs: number;
+}
+
+export interface ExternalResourceConfig {
+  downloadTimeoutMs: number;
+  maxRedirects: number;
 }
 
 export interface RedisConfig {

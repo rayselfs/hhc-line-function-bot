@@ -82,6 +82,13 @@ describe("config", () => {
     ).toEqual({ maxBytes: 1_048_576, lineDownloadTimeoutMs: 5_000 });
   });
 
+  it("loads safe external resource download defaults", () => {
+    expect(loadConfigFromEnv(baseEnv()).externalResources).toEqual({
+      downloadTimeoutMs: 15_000,
+      maxRedirects: 3
+    });
+  });
+
   it("configures an identifiable Wikimedia API client without a secret", () => {
     const config = loadConfigFromEnv({
       ...baseEnv(),
