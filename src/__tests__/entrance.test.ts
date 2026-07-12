@@ -3011,6 +3011,61 @@ describe("LINE entrance", () => {
     expect(router.route).not.toHaveBeenCalled();
   });
 
+  it("allows a non-admin attachment when save_resource is granted through a role", async () => {
+    const config = testConfig();
+    config.profiles[0] = {
+      ...config.profiles[0],
+      allowedMessageTypes: ["text", "image", "file"],
+      enabledFunctions: ["save_resource"]
+    };
+    const accessStore = defaultAccessStore();
+    const role = await accessStore.upsertRole({
+      profileName: "main",
+      roleKey: "media_writer",
+      displayName: "Media writer"
+    });
+    await accessStore.bindRoleCapability(role.id, "function:save_resource:execute");
+    await accessStore.bindRoleToPrincipal({
+      profileName: "main",
+      principalType: "user",
+      principalId: "Uallowed",
+      roleId: role.id
+    });
+    const sessionStore = new InMemorySessionStore();
+    const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+    const app = createApp(config, {
+      router: { route: vi.fn() },
+      accessStore,
+      sessionStore,
+      createLineReplyClient: () => ({ replyText })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "reply-token",
+      source: { type: "user", userId: "Uallowed" },
+      message: { type: "image", id: "image-role-1" }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(response.statusCode).toBe(200);
+    await expect(
+      sessionStore.findPendingAttachment({
+        profileName: "main",
+        source: { type: "user", userId: "Uallowed" },
+        requesterUserId: "Uallowed"
+      })
+    ).resolves.toMatchObject({
+      action: "save_resource",
+      attachment: { messageId: "image-role-1" }
+    });
+  });
+
   it("does not let another group requester continue a pending attachment", async () => {
     const config = testConfig();
     config.profiles[0] = {

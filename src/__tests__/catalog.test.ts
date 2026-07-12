@@ -137,6 +137,19 @@ describe("catalog store", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("persists and clears a source delta cursor", async () => {
+    const store = new InMemoryCatalogStore();
+    const source = await store.upsertSource(helperSource);
+
+    await store.updateSourceSyncCursor(source.id, "https://graph.microsoft.com/delta/token-1");
+    expect((await store.listSources({ profileName: "helper" }))[0].syncCursor).toBe(
+      "https://graph.microsoft.com/delta/token-1"
+    );
+
+    await store.updateSourceSyncCursor(source.id, undefined);
+    expect((await store.listSources({ profileName: "helper" }))[0].syncCursor).toBeUndefined();
+  });
+
   it("normalizes catalog text for fuzzy Chinese and filename lookup", () => {
     expect(normalizeCatalogText("  週報音檔-2026/07.MP3  ")).toBe("週報音檔202607mp3");
   });
@@ -204,6 +217,113 @@ describe("catalog store", () => {
     await expect(
       store.searchItems({ profileName: "helper", itemKinds: ["pop_sheet"] })
     ).resolves.toMatchObject([{ title: "A TIME FOR US.pdf" }]);
+  });
+
+  it("applies incremental delta upserts and deletions before advancing the cursor", async () => {
+    const store = new InMemoryCatalogStore();
+    const source = await store.upsertSource({
+      ...helperSource,
+      defaultItemKind: "pop_sheet",
+      domain: "sheet_music",
+      syncPolicy: { mode: "scheduled", allowedExtensions: [".pdf"] }
+    });
+    await store.upsertItem({
+      sourceId: source.id,
+      itemKind: "pop_sheet",
+      domain: "sheet_music",
+      title: "Deleted.pdf",
+      extension: ".pdf",
+      storageRef: { provider: "graph", driveId: "drive-1", itemId: "deleted-1" }
+    });
+    await store.updateSourceSyncCursor(source.id, "cursor-1");
+    const current = (await store.listSources({ sourceKeys: [source.sourceKey] }))[0];
+    const graph: GraphDriveClient = {
+      listFolderChildren: async () => [],
+      listFolderDelta: async (_driveId, _folderItemId, cursor) => {
+        expect(cursor).toBe("cursor-1");
+        return {
+          items: [
+            { id: "added-1", driveId: "drive-1", name: "Added.pdf" },
+            { id: "deleted-1", driveId: "drive-1", name: "", deleted: true }
+          ],
+          deltaLink: "cursor-2"
+        };
+      },
+      createSharingLink: async () => "unused"
+    };
+
+    const result = await syncOneDriveCatalogSource({ catalog: store, graph, source: current });
+
+    expect(result).toEqual({ upserted: 1, skipped: 0, tombstoned: 1 });
+    await expect(
+      store.searchItems({ profileName: "helper", itemKinds: ["pop_sheet"] })
+    ).resolves.toMatchObject([{ title: "Added.pdf" }]);
+    expect((await store.listSources({ sourceKeys: [source.sourceKey] }))[0].syncCursor).toBe(
+      "cursor-2"
+    );
+  });
+
+  it("clears a stale delta cursor and re-enumerates after Graph returns 410", async () => {
+    const store = new InMemoryCatalogStore();
+    const source = await store.upsertSource({
+      ...helperSource,
+      defaultItemKind: "pop_sheet",
+      domain: "sheet_music",
+      syncPolicy: { mode: "scheduled", allowedExtensions: [".pdf"] }
+    });
+    await store.updateSourceSyncCursor(source.id, "stale-cursor");
+    const current = (await store.listSources({ sourceKeys: [source.sourceKey] }))[0];
+    const cursors: Array<string | undefined> = [];
+    const graph: GraphDriveClient = {
+      listFolderChildren: async () => [],
+      listFolderDelta: async (_driveId, _folderItemId, cursor) => {
+        cursors.push(cursor);
+        if (cursor) {
+          throw Object.assign(new Error("resync required"), { statusCode: 410 });
+        }
+        return {
+          items: [{ id: "fresh-1", driveId: "drive-1", name: "Fresh.pdf" }],
+          deltaLink: "fresh-cursor"
+        };
+      },
+      createSharingLink: async () => "unused"
+    };
+
+    await expect(
+      syncOneDriveCatalogSource({ catalog: store, graph, source: current })
+    ).resolves.toEqual({ upserted: 1, skipped: 0, tombstoned: 0 });
+    expect(cursors).toEqual(["stale-cursor", undefined]);
+    expect((await store.listSources({ sourceKeys: [source.sourceKey] }))[0].syncCursor).toBe(
+      "fresh-cursor"
+    );
+  });
+
+  it("falls back to a full crawl when a source does not support delta", async () => {
+    const store = new InMemoryCatalogStore();
+    const source = await store.upsertSource({
+      ...helperSource,
+      defaultItemKind: "pop_sheet",
+      domain: "sheet_music",
+      syncPolicy: { mode: "scheduled", allowedExtensions: [".pdf"] }
+    });
+    const graph: GraphDriveClient = {
+      listFolderChildren: async () => [
+        { id: "fallback-1", driveId: "drive-1", name: "Fallback.pdf" }
+      ],
+      listFolderDelta: async () => {
+        throw Object.assign(new Error("not supported"), { statusCode: 400 });
+      },
+      createSharingLink: async () => "unused"
+    };
+
+    await expect(syncOneDriveCatalogSource({ catalog: store, graph, source })).resolves.toEqual({
+      upserted: 1,
+      skipped: 0,
+      tombstoned: 0
+    });
+    await expect(
+      store.searchItems({ profileName: "helper", itemKinds: ["pop_sheet"] })
+    ).resolves.toMatchObject([{ title: "Fallback.pdf" }]);
   });
 
   it("tombstones catalog items missing from a later OneDrive full crawl", async () => {

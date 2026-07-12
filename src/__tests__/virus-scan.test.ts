@@ -1,5 +1,8 @@
+import { createServer } from "node:net";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createClamAvScanner } from "../clients/clamav.js";
 import { createHttpVirusScanner } from "../clients/virus-scan.js";
 
 describe("HTTP virus scanner client", () => {
@@ -61,5 +64,42 @@ describe("HTTP virus scanner client", () => {
         sha256: "sha"
       })
     ).resolves.toEqual({ status: "unavailable", detail: "http_503" });
+  });
+});
+
+describe("ClamAV scanner client", () => {
+  it.each([
+    ["stream: OK\0", { status: "clean" }],
+    ["stream: Eicar-Signature FOUND\0", { status: "infected", detail: "Eicar-Signature" }]
+  ] as const)("maps clamd response %s", async (response, expected) => {
+    const server = createServer((socket) => {
+      let received = Buffer.alloc(0);
+      socket.on("data", (chunk) => {
+        received = Buffer.concat([received, chunk]);
+        if (received.subarray(-4).equals(Buffer.alloc(4))) {
+          socket.end(response);
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_address_missing");
+    const scanner = createClamAvScanner({
+      host: "127.0.0.1",
+      port: address.port,
+      timeoutMs: 1000
+    });
+
+    await expect(
+      scanner.scan({
+        data: new Uint8Array([1, 2, 3]),
+        fileName: "file.pdf",
+        contentType: "application/pdf",
+        sha256: "sha"
+      })
+    ).resolves.toEqual(expected);
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
   });
 });

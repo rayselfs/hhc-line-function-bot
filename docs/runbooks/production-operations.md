@@ -122,7 +122,6 @@ Required job settings:
 - `GRAPH_XIAOHA_DOCUMENT_FOLDER_ITEM_ID`
 - `GRAPH_XIAOHA_IMAGE_FOLDER_ITEM_ID`
 - `GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID`
-- `GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID` when the weekly report source is enabled
 - `NOTION_TOKEN`
 - `NOTION_SERVICE_DATABASE_ID`
 
@@ -143,7 +142,7 @@ az containerapp job execution list `
   --output table
 ```
 
-The sync output is JSON and includes `sources`, `synced`, `skipped`, `upserted`, `itemSkipped`, `tombstoned`, `scheduleUpserted`, `scheduleSkipped`, and `scheduleTombstoned`. If a source is removed from OneDrive, the next full crawl tombstones missing catalog items so normal lookups stop returning deleted files. If a Notion schedule page disappears from the source query, the next sync tombstones that schedule row so `query_schedule` stops returning it from the read model.
+The sync output is JSON and includes `sources`, `synced`, `skipped`, `upserted`, `itemSkipped`, `tombstoned`, `scheduleUpserted`, `scheduleSkipped`, and `scheduleTombstoned`. OneDrive sources persist the final Graph delta link after successful writes; later runs apply only changes and tombstone deleted items. A `410 Gone` clears the stale cursor and re-enumerates the source, while sources that cannot use delta fall back to the full crawl. If a Notion schedule page disappears from the source query, the next sync tombstones that schedule row so `query_schedule` stops returning it from the read model.
 
 ## Rollback
 
@@ -189,9 +188,32 @@ Do not add `image` or `file` to a production profile's `allowedMessageTypes` unt
 
 - `save_resource` is granted only to the intended helper users/groups.
 - The target catalog sources have write capabilities and real OneDrive folder IDs.
-- `VIRUS_SCAN_ENDPOINT` points to a reachable scanner service; optional `VIRUS_SCAN_API_KEY` is stored as a secret if needed.
+- `CLAMAV_HOST` and `CLAMAV_PORT` point to a private reachable `clamd` service. The HTTP scanner settings are only a compatibility fallback.
 - Redis is configured so pending attachment sessions are not lost across restarts or replicas.
 
 The webhook entrance still only creates a short-lived pending attachment session and asks for purpose. The later pending-attachment handler downloads the LINE content only after the requester provides a supported purpose, then validates size, MIME/magic bytes, extension, safe filename, hash, and virus scan. It previews the resolved name/type and requires the requester to reply `保存` before uploading to OneDrive and upserting catalog metadata.
 
 If the scanner is missing, times out, returns a non-2xx response, or returns any status other than `clean`, publishing fails closed. The bot should not bypass this for production.
+
+## Office Local Services
+
+SearXNG and ClamAV run on the office Windows workstation from
+[`infra/local-services/docker-compose.yml`](../../infra/local-services/docker-compose.yml).
+Both containers use `restart: unless-stopped`, persistent volumes, bounded logs,
+and health checks. Run the reconciler manually with:
+
+```powershell
+.\scripts\start-local-services.ps1
+```
+
+Install the logon startup entry with:
+
+```powershell
+.\scripts\install-local-services-autostart.ps1
+```
+
+The installer prefers an ONLOGON Scheduled Task and falls back to the current
+user Startup folder when Task Scheduler registration is not permitted. The
+startup script launches Docker Desktop when needed, waits for the engine, and
+runs `docker compose up -d`. The bastion relays ports 8888 and 3310 only across
+the private VNet/Tailscale path; do not expose either service publicly.

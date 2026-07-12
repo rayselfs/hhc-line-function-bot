@@ -31,6 +31,7 @@ type CatalogSourceRow = {
   enabled: boolean;
   sync_policy: CatalogSourceRecord["syncPolicy"];
   capabilities: CatalogSourceRecord["capabilities"];
+  sync_cursor: string | null;
 };
 
 type CatalogItemRow = {
@@ -188,6 +189,18 @@ export class PostgresCatalogStore implements CatalogStore {
     return result.rows[0] ? mapSource(result.rows[0]) : undefined;
   }
 
+  async updateSourceSyncCursor(sourceId: string, syncCursor: string | undefined): Promise<void> {
+    await this.db.query(
+      `
+      update catalog_sources
+      set sync_cursor = $2,
+          updated_at = now()
+      where id = $1
+      `,
+      [sourceId, syncCursor ?? null]
+    );
+  }
+
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {
     const normalizedTitle = input.normalizedTitle ?? normalizeCatalogText(input.title);
     const result = await this.db.query<{ id: string }>(
@@ -252,6 +265,29 @@ export class PostgresCatalogStore implements CatalogStore {
       returning id
       `,
       [input.sourceId, input.liveStorageIdentities, input.deletedAt]
+    );
+    return result.rows.length;
+  }
+
+  async tombstoneItemsByStorageIdentities(input: {
+    sourceId: string;
+    storageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number> {
+    if (input.storageIdentities.length === 0) {
+      return 0;
+    }
+    const result = await this.db.query<{ id: string }>(
+      `
+      update catalog_items
+      set deleted_at = $3,
+          updated_at = now()
+      where source_id = $1
+        and deleted_at is null
+        and storage_identity = any($2::text[])
+      returning id
+      `,
+      [input.sourceId, input.storageIdentities, input.deletedAt]
     );
     return result.rows.length;
   }
@@ -351,7 +387,8 @@ function mapSource(row: CatalogSourceRow): CatalogSourceRecord {
     rootLocation: row.root_location,
     enabled: row.enabled,
     syncPolicy: row.sync_policy,
-    capabilities: row.capabilities
+    capabilities: row.capabilities,
+    syncCursor: row.sync_cursor ?? undefined
   };
 }
 

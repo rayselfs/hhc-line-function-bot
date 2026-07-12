@@ -44,6 +44,10 @@ const migrations = [
   )
   `,
   `
+  alter table catalog_sources
+  add column if not exists sync_cursor text
+  `,
+  `
   alter table catalog_items
   add column if not exists expires_at timestamptz
   `,

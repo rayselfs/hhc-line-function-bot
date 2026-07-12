@@ -45,10 +45,12 @@ The first-class functions are:
 
 - `find_ppt_slides`: search configured `.pptx`, `.ppt`, `.key`, or `.odp` presentation files and return temporary sharing links.
 - `query_schedule`: query configured service schedule sources and return a focused service list without exposing the source.
-- `find_pop_sheet_music`: search Microsoft Graph/OneDrive sheet music folders, including shortcut folders, and return temporary sharing links.
+- `find_sheet_music`: search the catalog-backed pop and hymn sheet-music sources and return temporary sharing links. `find_pop_sheet_music` is only a thin internal legacy alias.
+- `find_resource`: search authorized general church catalog sources without competing with explicit schedule, slide, or sheet-music intent.
 - `query_wikipedia`: query Wikipedia for supported factual lookups.
 - `save_schedule`: preview and manage profile-shared structured service schedules with one-year retention.
-- Generic `save_memory`, `save_resource`, and `retrieve_memory` modules are not enabled on the helper production profile.
+- `save_resource`: controlled LINE image/file attachment intake with purpose, validation, ClamAV scanning, confirmation, OneDrive publication, catalog upsert, and audit. It is enabled on `helper`, but write-function policy keeps it admin/explicit-grant only.
+- Generic `save_memory` and `retrieve_memory` modules are not enabled on the helper production profile.
 - Intro/help behavior is not a normal function execution path; keep it friendly and do not expose implementation details such as OneDrive or Notion to ordinary users.
 - User functions, admin actions, and system actions are separate action kinds. Do not add management behavior to `enabledFunctions`.
 - Admin natural language is direct-chat only. It may route to selected admin actions, currently invite-code creation, after admin identity and source policy checks.

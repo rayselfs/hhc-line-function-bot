@@ -73,4 +73,34 @@ describe("access store", () => {
     ).resolves.toBe(true);
     await expect(store.listUserFunctionGrants("helper", "U1")).resolves.toEqual([]);
   });
+
+  it("resolves profile-scoped role capabilities for user and group principals", async () => {
+    const store = new InMemoryAccessStore();
+    const role = await store.upsertRole({
+      profileName: "helper",
+      roleKey: "media_reader",
+      displayName: "Media reader"
+    });
+    await store.bindRoleCapability(role.id, "function:find_resource:execute");
+    await store.bindRoleToPrincipal({
+      profileName: "helper",
+      principalType: "user",
+      principalId: "U1",
+      roleId: role.id
+    });
+    await store.bindRoleToPrincipal({
+      profileName: "helper",
+      principalType: "group",
+      principalId: "C1",
+      roleId: role.id
+    });
+
+    await expect(store.listPrincipalCapabilities("helper", "user", "U1")).resolves.toEqual([
+      "function:find_resource:execute"
+    ]);
+    await expect(store.listPrincipalCapabilities("helper", "group", "C1")).resolves.toEqual([
+      "function:find_resource:execute"
+    ]);
+    await expect(store.listPrincipalCapabilities("main", "user", "U1")).resolves.toEqual([]);
+  });
 });

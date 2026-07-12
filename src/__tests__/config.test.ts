@@ -261,6 +261,17 @@ describe("config", () => {
     });
   });
 
+  it("loads native ClamAV configuration when a host is set", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      CLAMAV_HOST: "172.16.65.5",
+      CLAMAV_PORT: "3310",
+      CLAMAV_TIMEOUT_MS: "15000"
+    });
+
+    expect(config.clamAv).toEqual({ host: "172.16.65.5", port: 3310, timeoutMs: 15000 });
+  });
+
   it("loads optional SearXNG web search configuration only when a base URL is set", () => {
     expect(loadConfigFromEnv(baseEnv()).webSearch).toBeUndefined();
 

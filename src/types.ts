@@ -189,6 +189,12 @@ export interface VirusScanConfig {
   timeoutMs: number;
 }
 
+export interface ClamAvConfig {
+  host: string;
+  port: number;
+  timeoutMs: number;
+}
+
 export interface WebSearchConfig {
   searxngBaseUrl?: string;
   timeoutMs: number;
@@ -208,6 +214,7 @@ export interface AppConfig {
   notion?: NotionConfig;
   wikipedia?: WikipediaConfig;
   virusScan?: VirusScanConfig;
+  clamAv?: ClamAvConfig;
   webSearch?: WebSearchConfig;
   redis?: RedisConfig;
   database?: DatabaseConfig;
@@ -588,6 +595,7 @@ export interface DriveItem {
   webUrl?: string;
   path?: string;
   isFolder?: boolean;
+  deleted?: boolean;
   remoteItem?: {
     id?: string;
     name?: string;
@@ -601,6 +609,11 @@ export interface DriveItem {
 export interface GraphDriveClient {
   listFolderChildren(driveId: string, folderItemId: string): Promise<DriveItem[]>;
   listFolderFilesRecursive?(driveId: string, folderItemId: string): Promise<DriveItem[]>;
+  listFolderDelta?(
+    driveId: string,
+    folderItemId: string,
+    deltaLink?: string
+  ): Promise<{ items: DriveItem[]; deltaLink: string }>;
   getItemByPath?(driveId: string, path: string): Promise<DriveItem | undefined>;
   createSharingLink(driveId: string, itemId: string, expirationDateTime: string): Promise<string>;
   uploadFile?(

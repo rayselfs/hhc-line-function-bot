@@ -54,6 +54,37 @@ const migrations = [
     disabled_by text,
     unique (profile_name, user_id, function_name)
   )
+  `,
+  `
+  create table if not exists access_roles (
+    id uuid primary key,
+    profile_name text not null,
+    role_key text not null,
+    display_name text not null,
+    created_at timestamptz not null default now(),
+    unique (profile_name, role_key),
+    unique (id, profile_name)
+  )
+  `,
+  `
+  create table if not exists access_role_capability_bindings (
+    role_id uuid not null references access_roles(id) on delete cascade,
+    capability text not null,
+    created_at timestamptz not null default now(),
+    primary key (role_id, capability)
+  )
+  `,
+  `
+  create table if not exists access_principal_role_bindings (
+    id uuid primary key,
+    profile_name text not null,
+    principal_type text not null check (principal_type in ('user', 'group')),
+    principal_id text not null,
+    role_id uuid not null,
+    created_at timestamptz not null default now(),
+    unique (profile_name, principal_type, principal_id, role_id),
+    foreign key (role_id, profile_name) references access_roles(id, profile_name) on delete cascade
+  )
   `
 ];
 

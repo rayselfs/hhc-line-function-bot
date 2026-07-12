@@ -137,6 +137,16 @@ properties:
             value: view
           - name: SHEET_MUSIC_ALLOWED_EXTENSIONS
             value: pdf,jpg,jpeg
+          - name: SEARXNG_BASE_URL
+            value: http://172.16.65.5:8888
+          - name: SEARXNG_TIMEOUT_MS
+            value: "8000"
+          - name: CLAMAV_HOST
+            value: 172.16.65.5
+          - name: CLAMAV_PORT
+            value: "3310"
+          - name: CLAMAV_TIMEOUT_MS
+            value: "15000"
           - name: NOTION_TOKEN
             secretRef: notion-token
           - name: NOTION_SERVICE_DATABASE_ID

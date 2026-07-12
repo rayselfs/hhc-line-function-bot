@@ -776,13 +776,33 @@ async function resolveEffectiveFunctions(
         await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
       )
     : [];
+  const userRoleFunctions = event.source.userId
+    ? capabilitiesToFunctionNames(
+        await accessStore.listPrincipalCapabilities(profile.name, "user", event.source.userId)
+      )
+    : [];
   if (event.source.type !== "group" || !event.source.groupId) {
-    return mergeFunctionNames(profileFunctions, userGrants);
+    return mergeFunctionNames(mergeFunctionNames(profileFunctions, userGrants), userRoleFunctions);
   }
   const groupGrants = mapLegacyFunctionNames(
     await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId)
   );
-  return mergeFunctionNames(mergeFunctionNames(profileFunctions, groupGrants), userGrants);
+  const groupRoleFunctions = capabilitiesToFunctionNames(
+    await accessStore.listPrincipalCapabilities(profile.name, "group", event.source.groupId)
+  );
+  return mergeFunctionNames(
+    mergeFunctionNames(mergeFunctionNames(profileFunctions, groupGrants), groupRoleFunctions),
+    mergeFunctionNames(userGrants, userRoleFunctions)
+  );
+}
+
+function capabilitiesToFunctionNames(capabilities: string[]): FunctionName[] {
+  return capabilities
+    .map((capability) => capability.match(/^function:([^:]+):execute$/u)?.[1])
+    .filter(
+      (name): name is FunctionName =>
+        typeof name === "string" && isGrantableFunctionName(name as FunctionName)
+    );
 }
 
 function isDefaultUserFunctionAvailable(functionName: FunctionName): boolean {

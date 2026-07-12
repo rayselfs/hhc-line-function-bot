@@ -1,8 +1,8 @@
 # RBAC Capability Model
 
-This is the target access model for the helper profile after the catalog-driven
-function surface stabilizes. It is a design contract, not an active migration in
-v1.
+This is the role/capability model for the catalog-driven helper profile. Its
+persistence and additive function-capability resolution are active; production
+role definitions and role bindings are intentionally not seeded.
 
 ## Goal
 
@@ -17,9 +17,13 @@ bundle those capabilities.
 - Write functions are not default user capabilities; they require admin or
   explicit user/group function grants.
 - Existing user/group function grants remain the override mechanism.
+- Profile-scoped role, role-capability, and principal-role tables are available.
+- Role-derived `function:<functionName>:execute` capabilities are additive to
+  profile defaults and explicit user/group grants.
 - Catalog source `capabilities.read` and `capabilities.write` describe source
-  intent, but v1 only enforces source write presence in the attachment publish
-  path. They are not yet full RBAC bindings.
+  intent. The attachment publish path enforces source write presence; mapping
+  role-derived source/item-kind capabilities into every handler is reserved for
+  the role administration phase.
 
 ## Target model
 
@@ -58,7 +62,7 @@ Roles are deployment-owned or admin-managed bundles, for example:
 
 ## Resolution order
 
-When implemented, effective capabilities should be resolved in this order:
+Effective function capabilities are resolved in this order:
 
 1. Bootstrap superadmin bypass for admin-only actions.
 2. Profile-global defaults.
@@ -89,21 +93,21 @@ returning results. Catalog writes should check both:
 - the target write capability, such as `source:ppt_slides:write` or
   `itemKind:ppt_slide:write`.
 
-## Non-goals for v1
+## Current non-goals
 
-- No schema migration for role tables yet.
 - No LINE admin wizard to create roles yet.
 - No change to existing `/function-grant` and `/function-user-grant` commands.
 - No role inheritance.
 - No LLM-visible role or grant details.
 
-## Implementation gate
+## Role-administration gate
 
-Before enabling roles in production:
+Before creating production role data or exposing role administration:
 
-1. Add role tables and access-store methods behind tests.
-2. Add effective-capability resolver tests for direct, group, admin, and mixed
+1. Add effective-capability resolver tests for direct, group, admin, and mixed
    user/group contexts.
+2. Map source/item-kind read and write capabilities into catalog handler
+   contexts without making the LLM a policy decision-maker.
 3. Keep existing function grants as additive overrides until the operator has a
    clean replacement path.
 4. Update `/function-scopes` or add role-specific admin actions only after the

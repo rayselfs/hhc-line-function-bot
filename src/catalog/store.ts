@@ -27,6 +27,7 @@ export interface CatalogSourceInput {
 
 export interface CatalogSourceRecord extends CatalogSourceInput {
   id: string;
+  syncCursor?: string;
 }
 
 export interface CatalogItemInput {
@@ -79,10 +80,16 @@ export interface CatalogStore {
     enabled: boolean;
   }): Promise<CatalogSourceRecord | undefined>;
   listSources(input?: CatalogSourceListInput): Promise<CatalogSourceRecord[]>;
+  updateSourceSyncCursor(sourceId: string, syncCursor: string | undefined): Promise<void>;
   upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord>;
   tombstoneMissingItems(input: {
     sourceId: string;
     liveStorageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number>;
+  tombstoneItemsByStorageIdentities(input: {
+    sourceId: string;
+    storageIdentities: string[];
     deletedAt: string;
   }): Promise<number>;
   searchItems(input: CatalogSearchInput): Promise<CatalogItemRecord[]>;
@@ -146,6 +153,14 @@ export class InMemoryCatalogStore implements CatalogStore {
     return updated;
   }
 
+  async updateSourceSyncCursor(sourceId: string, syncCursor: string | undefined): Promise<void> {
+    const source = this.sources.get(sourceId);
+    if (!source) {
+      throw new Error(`catalog_source_not_found:${sourceId}`);
+    }
+    this.sources.set(sourceId, { ...source, syncCursor });
+  }
+
   async upsertItem(input: CatalogItemInput): Promise<CatalogItemRecord> {
     const existing = Array.from(this.items.values()).find(
       (item) =>
@@ -174,6 +189,26 @@ export class InMemoryCatalogStore implements CatalogStore {
         item.sourceId === input.sourceId &&
         !item.deletedAt &&
         !live.has(catalogStorageIdentity(item.storageRef))
+      ) {
+        this.items.set(item.id, { ...item, deletedAt: input.deletedAt });
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async tombstoneItemsByStorageIdentities(input: {
+    sourceId: string;
+    storageIdentities: string[];
+    deletedAt: string;
+  }): Promise<number> {
+    const identities = new Set(input.storageIdentities);
+    let count = 0;
+    for (const item of Array.from(this.items.values())) {
+      if (
+        item.sourceId === input.sourceId &&
+        !item.deletedAt &&
+        identities.has(catalogStorageIdentity(item.storageRef))
       ) {
         this.items.set(item.id, { ...item, deletedAt: input.deletedAt });
         count += 1;

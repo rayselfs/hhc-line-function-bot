@@ -13,7 +13,11 @@ import type {
   AccessPrincipalType,
   AccessStore,
   AddPrincipalInput,
-  DisablePrincipalInput
+  DisablePrincipalInput,
+  AccessRole,
+  BindRoleInput,
+  UpsertRoleInput,
+  RolePrincipalType
 } from "./types.js";
 import type { FunctionName } from "../types.js";
 
@@ -259,6 +263,76 @@ export class PostgresAccessStore implements AccessStore {
     );
     return result.rows.length > 0;
   }
+
+  async upsertRole(input: UpsertRoleInput): Promise<AccessRole> {
+    const result = await this.db.query(
+      `
+      insert into access_roles (id, profile_name, role_key, display_name)
+      values ($1, $2, $3, $4)
+      on conflict (profile_name, role_key)
+      do update set display_name = excluded.display_name
+      returning *
+      `,
+      [randomUUID(), input.profileName, input.roleKey, input.displayName]
+    );
+    return mapRole(result.rows[0]);
+  }
+
+  async bindRoleCapability(roleId: string, capability: string): Promise<void> {
+    await this.db.query(
+      `
+      insert into access_role_capability_bindings (role_id, capability)
+      values ($1, $2)
+      on conflict do nothing
+      `,
+      [roleId, capability]
+    );
+  }
+
+  async bindRoleToPrincipal(input: BindRoleInput): Promise<void> {
+    await this.db.query(
+      `
+      insert into access_principal_role_bindings
+        (id, profile_name, principal_type, principal_id, role_id)
+      values ($1, $2, $3, $4, $5)
+      on conflict do nothing
+      `,
+      [randomUUID(), input.profileName, input.principalType, input.principalId, input.roleId]
+    );
+  }
+
+  async listPrincipalCapabilities(
+    profileName: string,
+    principalType: RolePrincipalType,
+    principalId: string
+  ): Promise<string[]> {
+    const result = await this.db.query(
+      `
+      select distinct capability
+      from access_principal_role_bindings bindings
+      join access_roles roles
+        on roles.id = bindings.role_id
+       and roles.profile_name = bindings.profile_name
+      join access_role_capability_bindings capabilities
+        on capabilities.role_id = roles.id
+      where bindings.profile_name = $1
+        and bindings.principal_type = $2
+        and bindings.principal_id = $3
+      order by capability
+      `,
+      [profileName, principalType, principalId]
+    );
+    return result.rows.map((row) => String(row.capability));
+  }
+}
+
+function mapRole(row: Record<string, unknown>): AccessRole {
+  return {
+    id: String(row.id),
+    profileName: String(row.profile_name),
+    roleKey: String(row.role_key),
+    displayName: String(row.display_name)
+  };
 }
 
 function mapPrincipal(row: Record<string, unknown>): AccessPrincipal {

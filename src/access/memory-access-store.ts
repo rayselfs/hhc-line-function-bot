@@ -13,7 +13,11 @@ import type {
   AccessPrincipalType,
   AccessStore,
   AddPrincipalInput,
-  DisablePrincipalInput
+  DisablePrincipalInput,
+  AccessRole,
+  BindRoleInput,
+  UpsertRoleInput,
+  RolePrincipalType
 } from "./types.js";
 
 export interface InMemoryAccessStoreOptions {
@@ -26,6 +30,9 @@ export class InMemoryAccessStore implements AccessStore {
   private readonly principals = new Map<string, AccessPrincipal>();
   private readonly groupFunctionGrants = new Map<string, GroupFunctionGrant>();
   private readonly userFunctionGrants = new Map<string, UserFunctionGrant>();
+  private readonly roles = new Map<string, AccessRole>();
+  private readonly roleCapabilities = new Map<string, Set<string>>();
+  private readonly roleBindings: BindRoleInput[] = [];
   readonly audit: AccessAuditEvent[] = [];
 
   constructor(options: InMemoryAccessStoreOptions = {}) {
@@ -262,5 +269,66 @@ export class InMemoryAccessStore implements AccessStore {
       disabledBy: input.disabledBy
     });
     return true;
+  }
+
+  async upsertRole(input: UpsertRoleInput): Promise<AccessRole> {
+    const existing = Array.from(this.roles.values()).find(
+      (role) => role.profileName === input.profileName && role.roleKey === input.roleKey
+    );
+    const role = {
+      id: existing?.id ?? randomUUID(),
+      profileName: input.profileName,
+      roleKey: input.roleKey,
+      displayName: input.displayName
+    };
+    this.roles.set(role.id, role);
+    return { ...role };
+  }
+
+  async bindRoleCapability(roleId: string, capability: string): Promise<void> {
+    if (!this.roles.has(roleId)) {
+      throw new Error(`access_role_not_found:${roleId}`);
+    }
+    const capabilities = this.roleCapabilities.get(roleId) ?? new Set<string>();
+    capabilities.add(capability);
+    this.roleCapabilities.set(roleId, capabilities);
+  }
+
+  async bindRoleToPrincipal(input: BindRoleInput): Promise<void> {
+    const role = this.roles.get(input.roleId);
+    if (!role || role.profileName !== input.profileName) {
+      throw new Error(`access_role_profile_mismatch:${input.roleId}`);
+    }
+    if (
+      !this.roleBindings.some(
+        (binding) =>
+          binding.profileName === input.profileName &&
+          binding.principalType === input.principalType &&
+          binding.principalId === input.principalId &&
+          binding.roleId === input.roleId
+      )
+    ) {
+      this.roleBindings.push({ ...input });
+    }
+  }
+
+  async listPrincipalCapabilities(
+    profileName: string,
+    principalType: RolePrincipalType,
+    principalId: string
+  ): Promise<string[]> {
+    const capabilities = new Set<string>();
+    for (const binding of this.roleBindings) {
+      if (
+        binding.profileName === profileName &&
+        binding.principalType === principalType &&
+        binding.principalId === principalId
+      ) {
+        for (const capability of this.roleCapabilities.get(binding.roleId) ?? []) {
+          capabilities.add(capability);
+        }
+      }
+    }
+    return Array.from(capabilities).sort();
   }
 }

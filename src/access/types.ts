@@ -1,6 +1,27 @@
 import type { FunctionName } from "../types.js";
 
 export type AccessPrincipalType = "admin" | "user" | "group";
+export type RolePrincipalType = "user" | "group";
+
+export interface AccessRole {
+  id: string;
+  profileName: string;
+  roleKey: string;
+  displayName: string;
+}
+
+export interface UpsertRoleInput {
+  profileName: string;
+  roleKey: string;
+  displayName: string;
+}
+
+export interface BindRoleInput {
+  profileName: string;
+  principalType: RolePrincipalType;
+  principalId: string;
+  roleId: string;
+}
 
 export interface AccessPrincipal {
   id: string;
@@ -118,4 +139,12 @@ export interface AccessStore {
   listAllUserFunctionGrants(profileName: string): Promise<UserFunctionGrant[]>;
   addUserFunctionGrant(input: AddUserFunctionGrantInput): Promise<UserFunctionGrant>;
   disableUserFunctionGrant(input: DisableUserFunctionGrantInput): Promise<boolean>;
+  upsertRole(input: UpsertRoleInput): Promise<AccessRole>;
+  bindRoleCapability(roleId: string, capability: string): Promise<void>;
+  bindRoleToPrincipal(input: BindRoleInput): Promise<void>;
+  listPrincipalCapabilities(
+    profileName: string,
+    principalType: RolePrincipalType,
+    principalId: string
+  ): Promise<string[]>;
 }

@@ -14,6 +14,12 @@ describe("production profile configuration deployment contract", () => {
     const dockerfile = readProjectFile("Dockerfile");
     const manifest = readProjectFile("aca.containerapp.yaml");
     const pipeline = readProjectFile("azure-pipelines.yml");
+    const profiles = JSON.parse(readProjectFile("config/profiles.json")) as Array<{
+      name: string;
+      allowedMessageTypes: string[];
+      enabledFunctions: string[];
+    }>;
+    const helper = profiles.find((profile) => profile.name === "helper");
 
     expect(dockerfile).toContain("COPY config ./config");
     expect(manifest).toContain("name: PROFILE_CONFIG_PATH");
@@ -29,6 +35,9 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
     expect(manifest).not.toContain("name: GRAPH_SHEET_MUSIC_FOLDER_PATH");
     expect(manifest).not.toContain("name: SHEET_MUSIC_DEFAULT_RECURSIVE");
+    expect(manifest).toContain("name: SEARXNG_BASE_URL");
+    expect(manifest).toContain("name: CLAMAV_HOST");
+    expect(manifest).toContain("name: CLAMAV_PORT");
     expect(manifest).not.toContain("BOT_PROFILES_BASE64_JSON");
     expect(manifest).not.toContain("bot-profiles-base64-json");
     expect(pipeline).toContain("- config/**");
@@ -36,6 +45,12 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("PROFILE_CONFIG_PATH=/app/config/profiles.json");
     expect(pipeline).toContain("--remove-env-vars");
     expect(pipeline).toContain("az containerapp dapr disable");
+    expect(pipeline).toContain("SEARXNG_BASE_URL=http://172.16.65.5:8888");
+    expect(pipeline).toContain("CLAMAV_HOST=172.16.65.5");
+    expect(helper?.enabledFunctions).toEqual(
+      expect.arrayContaining(["find_resource", "save_resource"])
+    );
+    expect(helper?.allowedMessageTypes).toEqual(expect.arrayContaining(["text", "image", "file"]));
     expect(pipeline).toContain("--secret-names bot-profiles-base64-json");
     expect(pipeline).not.toContain("--secret-name bot-profiles-base64-json");
     expect(readProjectFile("README.md")).toContain("sole complete");

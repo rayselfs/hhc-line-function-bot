@@ -30,6 +30,25 @@ export async function syncOneDriveCatalogSource(
     throw new Error(`catalog_source_missing_onedrive_root:${source.sourceKey}`);
   }
 
+  if (graph.listFolderDelta) {
+    try {
+      return await syncOneDriveDelta({ ...options, driveId, folderItemId });
+    } catch (error) {
+      if (isDeltaResetError(error) && source.syncCursor) {
+        await catalog.updateSourceSyncCursor(source.id, undefined);
+        return syncOneDriveDelta({
+          ...options,
+          source: { ...source, syncCursor: undefined },
+          driveId,
+          folderItemId
+        });
+      }
+      if (!isDeltaUnsupportedError(error)) {
+        throw error;
+      }
+    }
+  }
+
   const items = graph.listFolderFilesRecursive
     ? await graph.listFolderFilesRecursive(driveId, folderItemId)
     : await graph.listFolderChildren(driveId, folderItemId);
@@ -77,6 +96,78 @@ export async function syncOneDriveCatalogSource(
   });
 
   return { upserted, skipped, tombstoned };
+}
+
+async function syncOneDriveDelta(
+  options: OneDriveCatalogSyncOptions & { driveId: string; folderItemId: string }
+): Promise<OneDriveCatalogSyncResult> {
+  const { catalog, graph, source, driveId, folderItemId } = options;
+  if (!graph.listFolderDelta) {
+    throw new Error("graph_delta_unavailable");
+  }
+  const delta = await graph.listFolderDelta(driveId, folderItemId, source.syncCursor);
+  const allowedExtensions = new Set(
+    source.syncPolicy.allowedExtensions?.map((extension) => extension.toLowerCase()) ?? []
+  );
+  const liveStorageIdentities: string[] = [];
+  const deletedStorageIdentities: string[] = [];
+  let upserted = 0;
+  let skipped = 0;
+  for (const item of delta.items) {
+    const storageRef = {
+      provider: "graph" as const,
+      driveId: item.driveId ?? driveId,
+      itemId: item.id
+    };
+    const storageIdentity = catalogStorageIdentity(storageRef);
+    if (item.deleted) {
+      deletedStorageIdentities.push(storageIdentity);
+      continue;
+    }
+    if (item.isFolder || !item.id || !item.name) {
+      skipped += 1;
+      continue;
+    }
+    const extension = extname(item.name).toLowerCase();
+    if (allowedExtensions.size > 0 && !allowedExtensions.has(extension)) {
+      skipped += 1;
+      continue;
+    }
+    liveStorageIdentities.push(storageIdentity);
+    await catalog.upsertItem({
+      sourceId: source.id,
+      itemKind: source.defaultItemKind,
+      domain: source.domain,
+      title: item.name,
+      path: item.path,
+      extension,
+      mimeType: guessMimeType(item.name),
+      storageRef
+    });
+    upserted += 1;
+  }
+  const deletedAt = (options.now ?? (() => new Date()))().toISOString();
+  const tombstoned = source.syncCursor
+    ? await catalog.tombstoneItemsByStorageIdentities({
+        sourceId: source.id,
+        storageIdentities: deletedStorageIdentities,
+        deletedAt
+      })
+    : await catalog.tombstoneMissingItems({
+        sourceId: source.id,
+        liveStorageIdentities,
+        deletedAt
+      });
+  await catalog.updateSourceSyncCursor(source.id, delta.deltaLink);
+  return { upserted, skipped, tombstoned };
+}
+
+function isDeltaResetError(error: unknown): boolean {
+  return Number((error as { statusCode?: unknown })?.statusCode) === 410;
+}
+
+function isDeltaUnsupportedError(error: unknown): boolean {
+  return [400, 404, 405, 422].includes(Number((error as { statusCode?: unknown })?.statusCode));
 }
 
 function guessMimeType(filename: string): string | undefined {

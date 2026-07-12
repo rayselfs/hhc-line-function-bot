@@ -6,7 +6,7 @@
     "channelAccessTokenEnv": "LINE_HELPER_CHANNEL_ACCESS_TOKEN",
     "allowDirectUser": true,
     "allowRooms": false,
-    "allowedMessageTypes": ["text"],
+    "allowedMessageTypes": ["text", "image", "file"],
     "groupRequireWakeWord": true,
     "wakeKeywords": ["小哈"],
     "acceptMention": true,
@@ -14,8 +14,10 @@
       "find_ppt_slides",
       "query_schedule",
       "find_sheet_music",
+      "find_resource",
       "query_wikipedia",
-      "save_schedule"
+      "save_schedule",
+      "save_resource"
     ],
     "adminUserIdEnv": "LINE_HELPER_ADMIN_USER_ID",
     "adminDirectOnly": true,

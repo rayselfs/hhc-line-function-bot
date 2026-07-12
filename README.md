@@ -280,7 +280,7 @@ Admins can also use natural language for selected admin actions: invite-code cre
 
 Destructive admin actions must be confirmed with `/confirm <code>`. Invite-code creation is a `security_change` action and remains admin direct-chat only plus audited, but does not require confirmation.
 
-The target role/capability model is documented in [`docs/rbac-capability-model.md`](docs/rbac-capability-model.md). v1 keeps the existing function grant mechanism; roles are a design contract for future binding work, not active runtime behavior yet.
+The role/capability model is documented in [`docs/rbac-capability-model.md`](docs/rbac-capability-model.md). Role tables and additive `function:<name>:execute` resolution are active, but no production roles are seeded. Existing user/group function grants remain supported; source and item-kind capability enforcement remains an extension point for future role administration.
 
 Common commands:
 
@@ -371,7 +371,7 @@ Supported attachment targets in this flow:
 - `詩歌歌譜`: writes to the `hymn_sheet_music` OneDrive root and indexes `hymn_sheet`.
 - `小哈資料庫` / `教會資料`: writes to `xiaoha_database` subfolders and indexes `church_document`, `church_image`, or `church_other` with 90-day retention.
 
-Set `VIRUS_SCAN_ENDPOINT` to enable attachment publishing. The endpoint receives a JSON payload with file metadata plus `dataBase64` and must reply with `{"status":"clean"}` or `{"status":"infected"}`. If `VIRUS_SCAN_ENDPOINT` is unset, attachment publishing is intentionally unavailable.
+Set `CLAMAV_HOST` to use a native ClamAV `clamd` scanner for attachment publishing. The app streams bytes with ClamAV's `INSTREAM` protocol and publishes only a `clean` result. `VIRUS_SCAN_ENDPOINT` remains an optional HTTP-compatible fallback when native ClamAV is not configured. If neither scanner is configured, attachment publishing is intentionally unavailable.
 
 ## Runtime Secrets
 
@@ -384,6 +384,7 @@ Do not commit real `.env` files. In Azure Container Apps, store only real creden
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
 - `VIRUS_SCAN_API_KEY` if the configured scanner endpoint requires one
+- `CLAMAV_HOST`, `CLAMAV_PORT`, and `CLAMAV_TIMEOUT_MS` for the preferred native scanner
 
 `config/profiles.json` is intentionally non-sensitive and is packaged in the image. Do not set `BOT_PROFILES_JSON` or `BOT_PROFILES_BASE64_JSON`; the runtime rejects both.
 
