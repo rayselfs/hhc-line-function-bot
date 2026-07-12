@@ -75,8 +75,6 @@ properties:
             value: PLACEHOLDER_GRAPH_XIAOHA_IMAGE_FOLDER_ITEM_ID
           - name: GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID
             value: PLACEHOLDER_GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID
-          - name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
-            value: PLACEHOLDER_GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID
           - name: GRAPH_LINK_SCOPE
             value: anonymous
           - name: GRAPH_LINK_TYPE

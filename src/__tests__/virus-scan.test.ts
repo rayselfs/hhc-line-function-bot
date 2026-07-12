@@ -1,4 +1,4 @@
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -98,6 +98,55 @@ describe("ClamAV scanner client", () => {
         sha256: "sha"
       })
     ).resolves.toEqual(expected);
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  it("fails closed on a malformed clamd response", async () => {
+    let peer: Socket | undefined;
+    const server = createServer((socket) => {
+      peer = socket;
+      socket.end("unexpected response\0");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_address_missing");
+    const scanner = createClamAvScanner({ host: "127.0.0.1", port: address.port, timeoutMs: 1000 });
+
+    await expect(
+      scanner.scan({
+        data: new Uint8Array([1]),
+        fileName: "file.pdf",
+        contentType: "application/pdf",
+        sha256: "sha"
+      })
+    ).resolves.toEqual({ status: "unavailable", detail: "unexpected response" });
+    peer?.destroy();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  });
+
+  it("fails closed when clamd times out", async () => {
+    let peer: Socket | undefined;
+    const server = createServer((socket) => {
+      peer = socket;
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test_server_address_missing");
+    const scanner = createClamAvScanner({ host: "127.0.0.1", port: address.port, timeoutMs: 20 });
+
+    await expect(
+      scanner.scan({
+        data: new Uint8Array([1]),
+        fileName: "file.pdf",
+        contentType: "application/pdf",
+        sha256: "sha"
+      })
+    ).resolves.toEqual({ status: "unavailable", detail: "clamav_timeout" });
+    peer?.destroy();
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     );

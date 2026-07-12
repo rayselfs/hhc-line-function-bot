@@ -32,7 +32,7 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).toContain("name: GRAPH_XIAOHA_DOCUMENT_FOLDER_ITEM_ID");
     expect(manifest).toContain("name: GRAPH_XIAOHA_IMAGE_FOLDER_ITEM_ID");
     expect(manifest).toContain("name: GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID");
-    expect(manifest).toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
+    expect(manifest).not.toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
     expect(manifest).not.toContain("name: GRAPH_SHEET_MUSIC_FOLDER_PATH");
     expect(manifest).not.toContain("name: SHEET_MUSIC_DEFAULT_RECURSIVE");
     expect(manifest).toContain("name: SEARXNG_BASE_URL");
@@ -82,7 +82,7 @@ describe("production profile configuration deployment contract", () => {
     expect(job).toContain("name: GRAPH_XIAOHA_DOCUMENT_FOLDER_ITEM_ID");
     expect(job).toContain("name: GRAPH_XIAOHA_IMAGE_FOLDER_ITEM_ID");
     expect(job).toContain("name: GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID");
-    expect(job).toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
+    expect(job).not.toContain("name: GRAPH_WEEKLY_REPORT_AUDIO_FOLDER_ITEM_ID");
     expect(job).not.toContain("name: GRAPH_SHEET_MUSIC_FOLDER_PATH");
     expect(job).not.toContain("name: SHEET_MUSIC_DEFAULT_RECURSIVE");
     expect(job).toContain("name: PROFILE_CONFIG_PATH");
@@ -98,5 +98,22 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("- aca.catalog-sync-job.yaml");
     expect(readme).toContain("aca.catalog-sync-job.yaml");
     expect(readme).toContain("node dist/tools/sync-catalog.js");
+  });
+
+  it("defines private restartable workstation search and scanner services", () => {
+    const compose = readProjectFile("infra/local-services/docker-compose.yml");
+    const startup = readProjectFile("scripts/start-local-services.ps1");
+    const installer = readProjectFile("scripts/install-local-services-autostart.ps1");
+
+    expect(compose).toContain("searxng/searxng@sha256:");
+    expect(compose).toContain("clamav/clamav@sha256:");
+    expect(compose.match(/restart: unless-stopped/g)).toHaveLength(2);
+    expect(compose.match(/healthcheck:/g)).toHaveLength(2);
+    expect(compose).toContain('"8888:8080"');
+    expect(compose).toContain('"3310:3310"');
+    expect(startup).toContain("Docker Desktop.exe");
+    expect(startup).toContain("docker compose --project-directory");
+    expect(installer).toContain("/SC ONLOGON");
+    expect(installer).toContain('GetFolderPath("Startup")');
   });
 });
