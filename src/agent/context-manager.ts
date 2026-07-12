@@ -82,7 +82,8 @@ export class InMemoryConversationWindowStore implements ConversationWindowStore 
     ].slice(-8);
     this.records.set(conversationScopeKey(input.scope), {
       expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
-      turns
+      turns,
+      functionContext: existing?.functionContext
     });
   }
 
@@ -170,7 +171,8 @@ export class RedisConversationWindowStore implements ConversationWindowStore {
           text: compactText(input.text),
           createdAt: now.toISOString()
         }
-      ].slice(-8)
+      ].slice(-8),
+      functionContext: existing?.functionContext
     };
     await this.options.client.setEx(
       this.key(input.scope),

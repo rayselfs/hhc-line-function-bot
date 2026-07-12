@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createAgentRuntime } from "../agent/agent-runtime.js";
+import { InMemoryConversationWindowStore } from "../agent/context-manager.js";
 import { createAgentTurnRuntime } from "../agent/turn-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
@@ -55,6 +56,7 @@ function createRuntime(options: {
   memoryStore?: InMemoryAgentMemoryStore;
   textGenerator?: TextGenerationProvider;
   textFallbackGenerator?: TextGenerationProvider;
+  conversationWindowStore?: InMemoryConversationWindowStore;
 }) {
   const now = () => new Date("2026-07-08T00:00:00.000Z");
   const memoryStore = options.memoryStore ?? new InMemoryAgentMemoryStore({ now });
@@ -83,11 +85,63 @@ function createRuntime(options: {
     lastRouteStore: new InMemoryLastRouteStore(10),
     textGenerator: options.textGenerator,
     textFallbackGenerator: options.textFallbackGenerator,
+    conversationWindowStore: options.conversationWindowStore,
     now
   });
 }
 
 describe("AgentTurnRuntime", () => {
+  it("carries declared schedule context into a same-function follow-up", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    await conversationWindowStore.recordFunctionContext({
+      scope: {
+        profileName: "helper",
+        sourceKey: "group:C1",
+        requesterUserId: "U1"
+      },
+      functionName: "query_schedule",
+      arguments: {
+        query: "下一場影視團隊服事表",
+        dateIntent: "next_meeting",
+        meeting: "影視團隊服事"
+      },
+      ttlMs: 60_000
+    });
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "execute",
+      action: "query_schedule",
+      arguments: { query: "音控是誰？", role: "音控" },
+      provider: "ollama"
+    });
+    const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "音控：資恆"
+    });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: { query_schedule: handler },
+      conversationWindowStore
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_schedule"]),
+      event: textEvent("音控是誰？"),
+      requestId: "req-schedule-follow-up"
+    });
+
+    expect(result?.replyText).toBe("音控：資恆");
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "音控是誰？",
+        dateIntent: "next_meeting",
+        meeting: "影視團隊服事",
+        role: "音控"
+      }),
+      expect.anything()
+    );
+  });
+
   it("clarifies a generic query before invoking the router", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",

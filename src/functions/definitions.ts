@@ -77,6 +77,12 @@ export interface FunctionDefinition {
   helpText: string;
   deprecated?: boolean;
   keywordFallback?: FunctionKeywordFallback;
+  continuation?: FunctionContinuationPolicy;
+}
+
+export interface FunctionContinuationPolicy {
+  carryArguments: string[];
+  exclusiveGroups?: string[][];
 }
 
 const commonStripWords = ["小哈", "請", "幫我", "幫忙", "查詢", "查", "找", "搜尋"];
@@ -178,6 +184,10 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     keywordFallback: {
       keywords: ["服事表", "服事"],
       stripWords: [...commonStripWords]
+    },
+    continuation: {
+      carryArguments: ["date", "dateIntent", "specificDate", "meeting", "role", "scheduleType"],
+      exclusiveGroups: [["date", "dateIntent", "specificDate"]]
     }
   },
   {
@@ -209,6 +219,9 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     keywordFallback: {
       keywords: ["查知識", "知識查詢", "SOP", "計畫"],
       stripWords: [...commonStripWords, "查知識", "知識查詢", "知識", "SOP"]
+    },
+    continuation: {
+      carryArguments: ["sourceKey", "documentId"]
     }
   },
   {

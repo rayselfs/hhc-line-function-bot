@@ -6,6 +6,7 @@ import {
   matchesNaturalLanguageAdminActionHint
 } from "../actions/catalog.js";
 import { guardSystemRouteWithFunctionIntent } from "./function-intent-guard.js";
+import { mergeFunctionContinuationArguments } from "./function-continuation.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
 import { messages } from "../messages.js";
 import { createControlledSmallTalkReply, smallTalkCategoryFromArguments } from "../small-talk.js";
@@ -336,7 +337,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, { ok: true, replyText: messages.unsupported });
       }
 
-      const normalizedArguments = normalizeFunctionArguments(route.action, route.arguments, {
+      const continuation = await readFunctionContinuation(options, input);
+      const mergedArguments = mergeFunctionContinuationArguments({
+        action: route.action,
+        currentArguments: route.arguments,
+        continuation
+      });
+      const normalizedArguments = normalizeFunctionArguments(route.action, mergedArguments, {
         text
       });
       const handler = options.functionRegistry[route.action];
@@ -719,6 +726,20 @@ async function buildRuntimeContext(
     currentMessage: text,
     recentTurns,
     functionContinuation
+  });
+}
+
+async function readFunctionContinuation(
+  options: AgentTurnRuntimeOptions,
+  input: AgentTextTurnInput
+) {
+  const source = sourceKey(input.event.source);
+  const requesterUserId = input.event.source.userId;
+  if (!options.conversationWindowStore || !source || !requesterUserId) return undefined;
+  return options.conversationWindowStore.functionContext({
+    profileName: input.profile.name,
+    sourceKey: source,
+    requesterUserId
   });
 }
 
