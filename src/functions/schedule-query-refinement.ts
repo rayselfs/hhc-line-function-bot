@@ -5,6 +5,8 @@ import { extractKnownScheduleRole } from "./query-service-schedule.js";
 
 export type ScheduleCategory = "media_team" | "saved_schedule";
 
+export const MEDIA_TEAM_SCHEDULE_SOURCE_KEYS = ["media_team_service_schedule"] as const;
+
 export type QueryScheduleStructuredArguments = JsonRecord & {
   date?: string;
   dateIntent?: QueryScheduleArguments["dateIntent"];
@@ -64,12 +66,21 @@ const MEDIA_TERMS = ["影視團隊", "影音團隊", "媒體團隊", "影視"];
 
 export function refineScheduleQuery(
   args: QueryScheduleArguments,
-  _now: Date,
-  _timeZone: string
+  now: Date,
+  timeZone: string
 ): QueryRefinement<QueryScheduleStructuredArguments> {
   const originalQuery = args.query.normalize("NFKC").trim();
   const consumedTerms: string[] = [];
   const structuredArguments: QueryScheduleStructuredArguments = copyStructuredArguments(args);
+
+  if (!structuredArguments.date && !structuredArguments.specificDate) {
+    const specificDate = inferSpecificDate(originalQuery, now, timeZone);
+    if (specificDate) {
+      structuredArguments.dateIntent = "specific_date";
+      structuredArguments.specificDate = specificDate.date;
+      consumedTerms.push(specificDate.term);
+    }
+  }
 
   if (!structuredArguments.dateIntent) {
     const dateIntent = DATE_INTENT_TERMS.find(({ terms }) =>
@@ -117,6 +128,51 @@ export function refineScheduleQuery(
       consumedTerms,
       genericTerms: GENERIC_SCHEDULE_TERMS
     })
+  };
+}
+
+function inferSpecificDate(
+  query: string,
+  now: Date,
+  timeZone: string
+): { date: string; term: string } | undefined {
+  const dateKey = query.match(/\b\d{4}-\d{2}-\d{2}\b/u)?.[0];
+  if (dateKey) {
+    return { date: dateKey, term: dateKey };
+  }
+
+  const match = query.match(/(?<month>\d{1,2})\s*[/／月]\s*(?<day>\d{1,2})\s*日?/u);
+  if (!match?.groups) {
+    return undefined;
+  }
+  const month = Number(match.groups.month);
+  const day = Number(match.groups.day);
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return undefined;
+  }
+
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone,
+    year: "numeric",
+    month: "numeric"
+  })
+    .formatToParts(now)
+    .reduce<Record<string, number>>((result, part) => {
+      if (part.type === "year" || part.type === "month") {
+        result[part.type] = Number(part.value);
+      }
+      return result;
+    }, {});
+  const currentYear = parts.year ?? now.getUTCFullYear();
+  const currentMonth = parts.month ?? now.getUTCMonth() + 1;
+  const year = month < currentMonth - 6 ? currentYear + 1 : currentYear;
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) {
+    return undefined;
+  }
+  return {
+    date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    term: match[0]
   };
 }
 

@@ -160,6 +160,7 @@ export interface SearchAgentScheduleEntriesInput {
   scheduleType?: AgentScheduleType;
   date?: string;
   meetingName?: string;
+  role?: string;
   query?: string;
   limit?: number;
 }
@@ -479,6 +480,7 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
   ): Promise<AgentScheduleEntryRecord[]> {
     const query = normalizeLookupText(input.query ?? "");
     const meetingName = normalizeLookupText(input.meetingName ?? "");
+    const role = normalizeLookupText(input.role ?? "");
     return Array.from(this.scheduleEntries.values())
       .filter(
         (record) =>
@@ -487,7 +489,8 @@ export class InMemoryAgentMemoryStore implements AgentMemoryStore {
           this.active(record) &&
           (!input.scheduleType || record.scheduleType === input.scheduleType) &&
           (!input.date || record.serviceDate === input.date) &&
-          (!meetingName || normalizeLookupText(record.meetingName).includes(meetingName))
+          (!meetingName || normalizeLookupText(record.meetingName).includes(meetingName)) &&
+          (!role || normalizeLookupText(record.role ?? "").includes(role))
       )
       .filter(
         (record) => !query || normalizeLookupText(scheduleEntrySearchText(record)).includes(query)

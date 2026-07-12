@@ -353,6 +353,7 @@ export function createQueryScheduleMemoryHandler(
       scheduleType: inferredType,
       date,
       meetingName: args.meeting,
+      role: args.role,
       query: cleanedQuery,
       limit: 50
     });

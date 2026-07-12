@@ -39,6 +39,62 @@ function context(
 }
 
 describe("query_schedule", () => {
+  it("answers media-team and role questions without full-text matching the whole sentence", async () => {
+    const schedules = new InMemoryScheduleStore();
+    await schedules.upsertItem({
+      profileName: "helper",
+      sourceKey: "media_team_service_schedule",
+      origin: "notion",
+      externalId: "page-media-1",
+      serviceDate: "2026-07-18",
+      meeting: "主日",
+      role: "音控",
+      assignee: "Ray"
+    });
+    const query = createQueryScheduleHandler({
+      memoryStore: new InMemoryAgentMemoryStore(),
+      scheduleStore: schedules,
+      now: () => new Date("2026-07-12T00:00:00.000Z"),
+      timeZone: "Asia/Taipei"
+    });
+
+    const mediaResult = await query(
+      { query: "給我下一場影視團隊的服事表" },
+      context("給我下一場影視團隊的服事表")
+    );
+    const roleResult = await query(
+      { query: "下一場服事表的音控是誰" },
+      context("下一場服事表的音控是誰")
+    );
+
+    expect(mediaResult.replyText).toContain("音控：Ray");
+    expect(roleResult.replyText).toContain("音控：Ray");
+  });
+
+  it("keeps a meaningful residual query for a custom saved schedule title", async () => {
+    const now = () => new Date("2026-07-12T00:00:00.000Z");
+    const store = new InMemoryAgentMemoryStore({ now });
+    const save = createSaveScheduleHandler({ memoryStore: store, now });
+    const query = createQueryScheduleHandler({ memoryStore: store, now });
+    await save(
+      {
+        title: "青年出隊服事表",
+        content: "7/19青年出隊：Ray",
+        scheduleType: "custom_service_schedule",
+        confirm: true
+      },
+      context("保存青年出隊服事表")
+    );
+
+    const result = await query(
+      { query: "下一場青年出隊服事表" },
+      context("下一場青年出隊服事表")
+    );
+
+    expect(result.replyText).toContain("青年出隊");
+    expect(result.replyText).toContain("Ray");
+  });
+
   it("uses one user-facing function for a saved schedule without exposing its storage", async () => {
     const store = new InMemoryAgentMemoryStore({
       now: () => new Date("2026-07-09T00:00:00.000Z")

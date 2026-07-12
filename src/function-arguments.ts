@@ -200,6 +200,7 @@ export const queryScheduleMemoryArgumentsSchema = z
       .optional(),
     specificDate: dateKeySchema.optional(),
     meeting: z.string().optional(),
+    role: z.string().optional(),
     limit: numericLimitSchema.optional()
   })
   .strip();

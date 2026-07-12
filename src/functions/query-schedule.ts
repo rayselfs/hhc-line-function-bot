@@ -15,6 +15,10 @@ import {
   type ServiceRow
 } from "./query-service-schedule.js";
 import { readTimeZone } from "../time-zone.js";
+import {
+  MEDIA_TEAM_SCHEDULE_SOURCE_KEYS,
+  refineScheduleQuery
+} from "./schedule-query-refinement.js";
 
 export interface QueryScheduleFunctionOptions {
   memoryStore: AgentMemoryStore;
@@ -70,27 +74,40 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
               )
       };
     }
-    const memorySpecific = Boolean(args.scheduleType) || isMemorySpecificRequest(args.query);
+    const refinement = refineScheduleQuery(args, now(), timeZone);
+    const refinedArgs = queryScheduleArgumentsSchema.parse({
+      ...args,
+      ...refinement.structuredArguments,
+      query: refinement.residualQuery
+    });
+    const memorySpecific =
+      Boolean(refinedArgs.scheduleType) || isMemorySpecificRequest(args.query);
     const results = [];
 
     if (memorySpecific || (!serviceHandler && !options.scheduleStore)) {
-      results.push(await memoryHandler(args, context));
+      results.push(await memoryHandler(refinedArgs, context));
     } else {
-      const memory = await memoryHandler(args, context);
-      results.push(memory);
+      if (refinement.structuredArguments.scheduleCategory !== "media_team") {
+        const memory = await memoryHandler(refinedArgs, context);
+        results.push(memory);
+      }
       const readModel = options.scheduleStore
         ? await queryScheduleReadModel({
             scheduleStore: options.scheduleStore,
-            args,
+            args: refinedArgs,
             profileName: context.profile.name,
             now: now(),
-            timeZone
+            timeZone,
+            sourceKeys:
+              refinement.structuredArguments.scheduleCategory === "media_team"
+                ? [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS]
+                : undefined
           })
         : undefined;
       if (readModel && !isNoScheduleResult(readModel.replyText)) {
         results.push(readModel);
       } else if (serviceHandler) {
-        results.push(await serviceHandler(args, context));
+        results.push(await serviceHandler(refinedArgs, context));
       } else if (readModel) {
         results.push(readModel);
       }
@@ -136,12 +153,14 @@ async function queryScheduleReadModel(input: {
   profileName: string;
   now: Date;
   timeZone: string;
+  sourceKeys?: string[];
 }): Promise<Awaited<ReturnType<FunctionHandler>>> {
   const serviceArgs = input.args as QueryServiceScheduleArguments;
   const filters = deriveFilters(serviceArgs, input.now, input.timeZone);
   const rows = await input.scheduleStore.searchItems({
     profileName: input.profileName,
-    query: input.args.query,
+    sourceKeys: input.sourceKeys,
+    query: input.args.query || undefined,
     serviceDate: filters.date,
     meeting: filters.meeting,
     role: filters.role,

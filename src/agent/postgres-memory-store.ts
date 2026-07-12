@@ -396,6 +396,10 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
       values.push(input.date);
       filters.push(`and e.service_date = $${values.length}::date`);
     }
+    if (input.role?.trim()) {
+      values.push(`%${input.role.trim().toLowerCase()}%`);
+      filters.push(`and lower(coalesce(e.role, '')) like $${values.length}`);
+    }
     const limitParam = values.length + 1;
     values.push(Math.max(input.limit ?? 10, 50));
     const result = await this.db.query(
@@ -429,11 +433,13 @@ export class PostgresAgentMemoryStore implements AgentMemoryStore {
     );
     const query = normalizeLookupText(input.query ?? "");
     const meetingName = normalizeLookupText(input.meetingName ?? "");
+    const role = normalizeLookupText(input.role ?? "");
     return result.rows
       .map(mapScheduleEntry)
       .filter(
         (entry) =>
           (!meetingName || normalizeLookupText(entry.meetingName).includes(meetingName)) &&
+          (!role || normalizeLookupText(entry.role ?? "").includes(role)) &&
           (!query || normalizeLookupText(scheduleEntrySearchText(entry)).includes(query))
       )
       .slice(0, input.limit ?? 10);
