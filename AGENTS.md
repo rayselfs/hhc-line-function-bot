@@ -203,3 +203,5 @@ Testing map:
 - CI/CD is defined in `azure-pipelines.yml`.
 - Images are built for `alive.azurecr.io`.
 - Runtime configuration and secrets belong in Azure Container Apps/Azure secrets, not in the repository.
+- Production LINE callback traffic enters through the public `api-gateway`, whose Nginx route invokes Dapr app id `hhc-line-function-bot` at `/v1.0/invoke/hhc-line-function-bot/method/api/line/webhook/{profileName}`. The bot Container App must keep Dapr enabled with `appId=hhc-line-function-bot`, `appPort=3000`, and `appProtocol=http`; do not disable Dapr while this gateway route exists.
+- Keep the bot's own ingress internal. After any Dapr or ingress change, POST an unsigned JSON body through the public API Gateway webhook path and verify the response comes from the bot as `400 {"ok":false,"error":"missing_line_signature"}`.

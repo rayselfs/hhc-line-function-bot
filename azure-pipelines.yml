@@ -188,9 +188,13 @@ stages:
                   --only-show-errors \
                   --output none
 
-                az containerapp dapr disable \
+                az containerapp dapr enable \
                   --resource-group "$(resourceGroup)" \
                   --name "$(containerAppName)" \
+                  --dapr-app-id "hhc-line-function-bot" \
+                  --dapr-app-port 3000 \
+                  --dapr-app-protocol http \
+                  --dapr-log-level warn \
                   --only-show-errors \
                   --output none
 

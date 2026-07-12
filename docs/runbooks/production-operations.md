@@ -35,6 +35,7 @@ Remote API providers are profile-scoped. Configure the internal `helper` profile
 - Store remote provider API keys in ACA secrets, not PostgreSQL.
 - DeepSeek requires `DEEPSEEK_API_KEY`; `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, and `DEEPSEEK_TIMEOUT_MS` are normal runtime config.
 - The public API gateway should expose only `/api/line/webhook/{profileName}` for this service; do not expose `/api/line/llm-auth/*`.
+- The gateway forwards LINE callbacks through Dapr service invocation using app id `hhc-line-function-bot`. Keep the bot Container App Dapr configuration enabled with app port `3000` and HTTP protocol; the bot ingress remains internal.
 
 ## Profile Config Safety
 
@@ -64,6 +65,20 @@ pnpm smoke:webhook -- --url http://localhost:3000/api/line/webhook/helper --secr
 The tool prints status, request id when present, and response body. It must not print the channel secret or access token.
 
 For an unsigned public gateway check, `POST /api/line/webhook/{profileName}` should reach the app and return a missing-signature style `400`. The Container App itself should keep external ingress disabled; public access should go through the gateway.
+
+This smoke check also verifies the Dapr route. If the gateway returns a Dapr
+app-id resolution or upstream error instead of the bot's
+`{"ok":false,"error":"missing_line_signature"}`, verify:
+
+```powershell
+az containerapp show `
+  --resource-group alive `
+  --name hhc-line-function-bot `
+  --query properties.configuration.dapr
+```
+
+Expected values are `enabled=true`, `appId=hhc-line-function-bot`,
+`appPort=3000`, and `appProtocol=http`.
 
 The line bot does not expose LLM auth callback routes. Public gateway routing should forward only the canonical webhook path for each profile.
 

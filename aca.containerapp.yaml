@@ -6,7 +6,11 @@ properties:
   configuration:
     activeRevisionsMode: Single
     dapr:
-      enabled: false
+      enabled: true
+      appId: hhc-line-function-bot
+      appPort: 3000
+      appProtocol: http
+      logLevel: warn
     ingress:
       external: false
       targetPort: 3000

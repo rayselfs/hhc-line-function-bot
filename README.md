@@ -56,6 +56,8 @@ Set the LINE webhook URL per bot profile, for example:
 
 Provider auth callbacks are not exposed by this service. LINE webhook traffic should only use the canonical profile paths above.
 
+In production, the public API Gateway forwards those webhook paths through Dapr service invocation to app id `hhc-line-function-bot`. The bot Container App therefore keeps Dapr enabled on HTTP app port 3000 while its own ingress remains internal.
+
 Health and readiness:
 
 ```text

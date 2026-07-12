@@ -25,7 +25,10 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).toContain("name: PROFILE_CONFIG_PATH");
     expect(manifest).toContain("value: /app/config/profiles.json");
     expect(manifest).not.toContain("name: CATALOG_SOURCES_PATH");
-    expect(manifest).toContain("dapr:\n      enabled: false");
+    expect(manifest).toContain("dapr:\n      enabled: true");
+    expect(manifest).toContain("appId: hhc-line-function-bot");
+    expect(manifest).toContain("appPort: 3000");
+    expect(manifest).toContain("appProtocol: http");
     expect(manifest).toContain("name: GRAPH_POP_SHEET_FOLDER_ITEM_ID");
     expect(manifest).toContain("name: GRAPH_POP_SHEET_DRIVE_ID");
     expect(manifest).toContain("name: GRAPH_HYMN_SHEET_FOLDER_ITEM_ID");
@@ -44,7 +47,10 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("pnpm config:validate");
     expect(pipeline).toContain("PROFILE_CONFIG_PATH=/app/config/profiles.json");
     expect(pipeline).toContain("--remove-env-vars");
-    expect(pipeline).toContain("az containerapp dapr disable");
+    expect(pipeline).toContain("az containerapp dapr enable");
+    expect(pipeline).toContain('--dapr-app-id "hhc-line-function-bot"');
+    expect(pipeline).toContain("--dapr-app-port 3000");
+    expect(pipeline).not.toContain("az containerapp dapr disable");
     expect(pipeline).toContain("SEARXNG_BASE_URL=http://172.16.65.5:8888");
     expect(pipeline).toContain("CLAMAV_HOST=172.16.65.5");
     expect(helper?.enabledFunctions).toEqual(
