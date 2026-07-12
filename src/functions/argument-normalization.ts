@@ -51,9 +51,28 @@ export function normalizeFunctionArguments(
     case "query_schedule":
     case "query_service_schedule":
       return normalizeServiceScheduleArguments(args, input);
+    case "query_knowledge":
+      return normalizeKnowledgeArguments(args, input);
     default:
       return args;
   }
+}
+
+function normalizeKnowledgeArguments(
+  args: JsonRecord,
+  input: FunctionArgumentNormalizationInput
+): JsonRecord {
+  if (typeof args.ordinal === "number") return args;
+  const text = `${stringArg(args, "query") ?? ""} ${input.text}`.normalize("NFKC");
+  const digit = text.match(/第\s*(\d+)\s*(?:個|項|站|天|步|地點)/u)?.[1];
+  if (digit && Number(digit) > 0) return { ...args, ordinal: Number(digit) - 1 };
+  const chinese: Array<[RegExp, number]> = [
+    [/第?一(?:個|項|站|天|步|地點)/u, 0],
+    [/第?二(?:個|項|站|天|步|地點)/u, 1],
+    [/第?三(?:個|項|站|天|步|地點)/u, 2]
+  ];
+  const match = chinese.find(([pattern]) => pattern.test(text));
+  return match ? { ...args, ordinal: match[1] } : args;
 }
 
 function normalizePptSlideArguments(

@@ -15,6 +15,15 @@ const ADMIN_ACTION_EVAL_CASES: AdminActionEvalCase[] = [
   { text: "enable function find_ppt_slides for this group", action: "function_scope_grant" },
   { text: "disable function find_ppt_slides for this group", action: "function_scope_revoke" },
   { text: "這個群組能用哪些功能", action: "function_scope_list" },
+  {
+    text: "加入知識來源 https://www.notion.so/example 名稱聚會SOP",
+    action: "knowledge_source_add"
+  },
+  { text: "列出知識來源", action: "knowledge_source_list" },
+  { text: "同步知識來源 meeting-sop", action: "knowledge_source_sync" },
+  { text: "啟用知識來源 meeting-sop", action: "knowledge_source_enable" },
+  { text: "停用知識來源 meeting-sop", action: "knowledge_source_disable" },
+  { text: "刪除知識來源 meeting-sop", action: "knowledge_source_remove" },
   { text: "請刪掉所有使用者", action: "deny" },
   { text: "把系統全部重設", action: "deny" }
 ];

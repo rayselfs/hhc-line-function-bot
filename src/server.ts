@@ -1358,7 +1358,11 @@ function buildConversationWindowScope(
   profile: BotProfileConfig,
   event: LineEvent
 ): ConversationWindowScope | undefined {
-  if (event.source.type !== "group" || !event.source.groupId || !event.source.userId) {
+  if (
+    !event.source.userId ||
+    (event.source.type === "group" && !event.source.groupId) ||
+    (event.source.type !== "group" && event.source.type !== "user")
+  ) {
     return undefined;
   }
   const key = sourceKey(event.source);

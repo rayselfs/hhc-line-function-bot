@@ -180,6 +180,9 @@ function buildAdminRouterPrompt(enabledActions: string[]): string {
     "Known argument fields:",
     "- function_scope_grant/function_scope_revoke: functionName, optional targetType ('group' or 'user'), optional groupId, optional userId. If the source is a group and the user says this group/current group, omit groupId and use targetType='group'. If the text names a user id, use targetType='user' and userId.",
     "- function_scope_list: optional targetType ('group' or 'user'), optional groupId, optional userId. If the source is a group and the user asks about this group/current group, omit groupId and use targetType='group'.",
+    "- knowledge_source_add: url, displayName, optional expiresAt in YYYY-MM-DD. Never infer a URL or expiry.",
+    "- knowledge_source_sync/enable/disable/remove: sourceKey.",
+    "- knowledge_source_list: no arguments.",
     "Available admin actions:",
     available || "(none)"
   ].join("\n");

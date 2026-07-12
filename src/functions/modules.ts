@@ -14,6 +14,7 @@ import type {
   PostbackHandlerRegistry,
   TextMessageHandlerRegistry,
   AdminHandlerRegistry,
+  TextGenerationProvider,
   VirusScanner,
   WebSearchClient
 } from "../types.js";
@@ -38,8 +39,11 @@ import { createFindResourceHandler } from "./find-resource.js";
 import type { CatalogStore } from "../catalog/store.js";
 import type { ScheduleStore } from "../schedules/store.js";
 import type { ExternalBinaryClient } from "../clients/external-binary.js";
+import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import type { KnowledgeStore } from "../knowledge/store.js";
 import { createResourceBinaryPublisher } from "./resource-binary-publisher.js";
 import { createSaveResourceHandler } from "./save-resource.js";
+import { createQueryKnowledgeHandler } from "./query-knowledge.js";
 import {
   createQueryScheduleMemoryHandler,
   createSaveScheduleHandler,
@@ -63,6 +67,9 @@ export interface FunctionModuleContext {
     wikipediaSummarizer?: WikipediaSummarizer;
     webSearch?: WebSearchClient;
     sheetMusicExternalSearchSummarizer?: SheetMusicExternalSearchSummarizer;
+    knowledgeStore?: KnowledgeStore;
+    embedding?: EmbeddingClient;
+    knowledgeTextGenerator?: TextGenerationProvider;
     now?: () => Date;
     requestIdFactory?: () => string;
   };
@@ -304,6 +311,72 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         }
       };
     }
+  },
+  {
+    name: "query_knowledge",
+    definition: requiredDefinition("query_knowledge"),
+    routerEvalCases: [
+      {
+        kind: "positive",
+        text: "小哈 查知識 這次出遊第一個地點是哪裡",
+        expected: {
+          type: "execute",
+          action: "query_knowledge",
+          arguments: { query: "這次出遊第一個地點是哪裡", ordinal: 0 }
+        }
+      },
+      {
+        kind: "positive",
+        text: "小哈 查知識 聚會結束後場地怎麼復原",
+        expected: {
+          type: "execute",
+          action: "query_knowledge",
+          arguments: { query: "聚會結束後場地怎麼復原" }
+        }
+      },
+      {
+        kind: "missing_slot",
+        text: "小哈 查知識",
+        expected: { type: "execute", action: "query_knowledge", arguments: { query: "" } }
+      },
+      {
+        kind: "typo",
+        text: "小哈 知識查詢 聚會場復 SOP",
+        expected: { type: "execute", action: "query_knowledge", arguments: { query: "聚會場復" } }
+      },
+      {
+        kind: "negative",
+        text: "小哈 幫我訂餐廳",
+        expected: { type: "deny", reason: "keyword_no_match" }
+      },
+      {
+        kind: "cross_function",
+        text: "小哈 下一場服事表",
+        expected: {
+          type: "execute",
+          action: "query_schedule",
+          arguments: { query: "下一場服事表", dateIntent: "next_meeting" }
+        }
+      },
+      {
+        kind: "disabled",
+        text: "小哈 聚會 SOP 是什麼",
+        enabledFunctions: withoutFunction("query_knowledge"),
+        expected: { type: "deny", reason: "function_disabled" }
+      }
+    ],
+    register: ({ clients }) =>
+      clients.knowledgeStore
+        ? {
+            functions: {
+              query_knowledge: createQueryKnowledgeHandler({
+                store: clients.knowledgeStore,
+                embedding: clients.embedding,
+                textGenerator: clients.knowledgeTextGenerator
+              })
+            }
+          }
+        : {}
   },
   {
     name: "save_schedule",

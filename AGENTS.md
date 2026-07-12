@@ -48,6 +48,7 @@ The first-class functions are:
 - `find_sheet_music`: search the catalog-backed pop and hymn sheet-music sources and return temporary sharing links. `find_pop_sheet_music` is only a thin internal legacy alias.
 - `find_resource`: search authorized general church catalog sources without competing with explicit schedule, slide, or sheet-music intent.
 - `query_wikipedia`: query Wikipedia for supported factual lookups.
+- `query_knowledge`: query admin-registered, profile-shared Notion knowledge through PostgreSQL full-text plus pgvector retrieval and a grounded LLM answer; do not create travel/SOP-specific variants.
 - `save_schedule`: preview and manage profile-shared structured service schedules with one-year retention.
 - `save_resource`: controlled LINE image/file attachment intake with purpose, validation, ClamAV scanning, confirmation, OneDrive publication, catalog upsert, and audit. It is enabled on `helper`, but write-function policy keeps it admin/explicit-grant only.
 - Generic `save_memory` and `retrieve_memory` modules are not enabled on the helper production profile.
@@ -155,6 +156,7 @@ When adding or changing an admin action:
 - External resource memories may store user-provided URLs, but only when the user explicitly asks the bot to remember/save/store that resource.
 - Recent resource recall is requester-scoped. Resource aliases and explicit text memories are scoped to the current profile and LINE source.
 - Structured schedules are profile-shared, not requester/source-scoped. The same helper schedule can be queried from managed direct chats and groups.
+- Dynamic knowledge sources are profile-shared. They default to permanent; an explicit expiry disables search immediately and schedules purge after 30 days. The private Ollama host owns `bge-m3`; PostgreSQL stores embeddings, not model files.
 - Structured schedule replacement and entry add/update/delete require preview and confirmation. The same schedule type and month has one active canonical record.
 - Do not add automatic group-chat recording. Text memory must be explicit user intent.
 - LINE attachment download/storage is allowed only through the controlled `save_resource` pending-attachment flow. If a profile explicitly allows `image` or `file` and the requester has effective `save_resource`, the webhook may store a short-lived requester/source-scoped pending attachment session and ask for purpose. The later text handler may download only after a supported purpose, must check target source write capability, size, MIME/magic bytes, extension, safe filename, hash, and virus scan, must fail closed when scanning is unavailable or not clean, and must require explicit confirmation before uploading to OneDrive and upserting catalog metadata. Do not add another binary publish path.

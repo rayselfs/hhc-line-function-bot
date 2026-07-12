@@ -6,6 +6,7 @@ import {
   findPptSlidesArgumentsSchema,
   queryWikipediaArgumentsSchema,
   queryScheduleArgumentsSchema,
+  queryKnowledgeArgumentsSchema,
   queryScheduleMemoryArgumentsSchema,
   queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
@@ -59,7 +60,7 @@ export interface FunctionDefinition {
   displayName: string;
   shortDescription: string;
   examples: string[];
-  requires: Array<"graph" | "notion" | "session" | "cache" | "memory" | "wikipedia">;
+  requires: Array<"graph" | "notion" | "session" | "cache" | "memory" | "wikipedia" | "knowledge">;
   scope: "profile" | "group_capable";
   sideEffectLevel: FunctionSideEffectLevel;
   allowedSources: FunctionAllowedSource[];
@@ -177,6 +178,37 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     keywordFallback: {
       keywords: ["服事表", "服事"],
       stripWords: [...commonStripWords]
+    }
+  },
+  {
+    name: "query_knowledge",
+    displayName: "查已加入知識",
+    shortDescription: "查詢管理員已加入的計畫、SOP與其他內部知識。",
+    examples: ["小哈 這次出遊第一個地點是哪裡", "小哈 聚會結束後場地怎麼復原"],
+    requires: ["knowledge"],
+    scope: "group_capable",
+    sideEffectLevel: "read",
+    allowedSources: ["user", "group"],
+    requiredSlots: [
+      {
+        name: "query",
+        argument: "query",
+        missingWhen: "blank",
+        genericRequest: { phrases: ["查知識", "知識查詢"] },
+        prompt: "想查已加入知識中的哪一項資訊？"
+      }
+    ],
+    resourcePolicy: { kind: "none", remember: false, alias: false },
+    memoryPolicy: { kind: "none" },
+    clarificationPrompt: "想查已加入知識中的哪一項資訊？",
+    description:
+      '- query_knowledge: answer from administrator-registered internal knowledge sources. Arguments: {"query":"full user question","sourceKey":"known source optional","documentId":"continuation document optional","ordinal":"zero-based requested item optional","limit":number optional}. Never use it for service schedules when query_schedule applies.',
+    argumentSchema: queryKnowledgeArgumentsSchema,
+    quickReply: { label: "查知識", command: "小哈 查知識" },
+    helpText: "查詢管理員已加入的計畫、SOP與其他內部資訊。",
+    keywordFallback: {
+      keywords: ["查知識", "知識查詢", "SOP", "計畫"],
+      stripWords: [...commonStripWords, "查知識", "知識查詢", "知識", "SOP"]
     }
   },
   {

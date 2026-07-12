@@ -139,6 +139,8 @@ Required job settings:
 - `GRAPH_XIAOHA_OTHER_FOLDER_ITEM_ID`
 - `NOTION_TOKEN`
 - `NOTION_SERVICE_DATABASE_ID`
+- `OLLAMA_EMBEDDING_MODEL=bge-m3`
+- `EMBEDDING_BATCH_SIZE=16`, `EMBEDDING_TIMEOUT_MS=30000`, `EMBEDDING_KEEP_ALIVE=1m`
 
 Manual run after deployment:
 
@@ -157,7 +159,9 @@ az containerapp job execution list `
   --output table
 ```
 
-The sync output is JSON and includes `sources`, `synced`, `skipped`, `upserted`, `itemSkipped`, `tombstoned`, `scheduleUpserted`, `scheduleSkipped`, and `scheduleTombstoned`. OneDrive sources persist the final Graph delta link after successful writes; later runs apply only changes and tombstone deleted items. A `410 Gone` clears the stale cursor and re-enumerates the source, while sources that cannot use delta fall back to the full crawl. If a Notion schedule page disappears from the source query, the next sync tombstones that schedule row so `query_schedule` stops returning it from the read model.
+The sync output is JSON and includes catalog/schedule counters plus a `knowledge` summary with source, document, chunk, embedding, and failure counts. Knowledge sources use content hashes so unchanged chunks retain their embeddings. An embedding outage leaves lexical content searchable and marks the source pending for the next run. OneDrive sources persist the final Graph delta link after successful writes; later runs apply only changes and tombstone deleted items. A `410 Gone` clears the stale cursor and re-enumerates the source, while sources that cannot use delta fall back to the full crawl. If a source page disappears, the next successful sync tombstones its read-model rows.
+
+Before enabling `query_knowledge`, confirm `select extversion from pg_extension where extname='vector'`, pull `bge-m3` on the private Ollama host, and verify `/diag` reports `embedding: ok`. Use `ollama ps` on that host to inspect RAM/VRAM residency. Bulk knowledge synchronization is single-threaded in batches of 16 and should be scheduled off peak.
 
 ## Rollback
 

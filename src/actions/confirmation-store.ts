@@ -174,6 +174,14 @@ function sanitizeArgs(args: JsonRecord | undefined): JsonRecord | undefined {
   }
   const sanitized: JsonRecord = {};
   for (const [key, value] of Object.entries(args)) {
+    if (
+      key === "sourceKey" &&
+      typeof value === "string" &&
+      /^[a-z0-9][a-z0-9_-]{0,63}$/u.test(value)
+    ) {
+      sanitized[key] = value;
+      continue;
+    }
     if (typeof value === "string") {
       sanitized[key] = value ? "present" : "empty";
     } else if (typeof value === "number" || typeof value === "boolean") {

@@ -16,6 +16,10 @@ import {
   type LineEvent
 } from "../types.js";
 import { evaluateActionPolicy } from "./policy.js";
+import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import { parseNotionRootId, type NotionKnowledgeClient } from "../clients/notion-knowledge.js";
+import type { KnowledgeStore } from "../knowledge/store.js";
+import { syncKnowledgeSource } from "../knowledge/sync-service.js";
 
 export interface AdminActionRegistryOptions {
   accessStore: AccessStore;
@@ -23,6 +27,10 @@ export interface AdminActionRegistryOptions {
   registrationInviteCodeTtlMinutes: number;
   confirmationStore?: ConfirmationStore;
   confirmationTtlMinutes?: number;
+  knowledgeStore?: KnowledgeStore;
+  notionKnowledge?: NotionKnowledgeClient;
+  knowledgeEmbedding?: EmbeddingClient;
+  knowledgeEmbeddingBatchSize?: number;
 }
 
 export interface AdminActionExecutionInput {
@@ -87,6 +95,18 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         return this.revokeFunctionScope(input);
       case "function_scope_list":
         return this.listFunctionScope(input);
+      case "knowledge_source_add":
+        return this.addKnowledgeSource(input);
+      case "knowledge_source_list":
+        return this.listKnowledgeSources(input);
+      case "knowledge_source_sync":
+        return this.syncKnowledgeSource(input);
+      case "knowledge_source_enable":
+        return this.setKnowledgeSourceEnabled(input, true);
+      case "knowledge_source_disable":
+        return this.setKnowledgeSourceEnabled(input, false);
+      case "knowledge_source_remove":
+        return this.removeKnowledgeSource(input);
     }
   }
 
@@ -111,6 +131,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       action: request.action,
       profile: input.profile,
       event: input.event,
+      arguments: request.args,
       confirmed: true
     });
   }
@@ -126,6 +147,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       profileName: input.profile.name,
       actorUserId,
       action: input.action,
+      args: input.arguments,
       ttlMinutes: this.confirmationTtlMinutes
     });
     return {
@@ -343,6 +365,193 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       ].join("\n")
     };
   }
+
+  private knowledgeDependencies():
+    { store: KnowledgeStore; notion: NotionKnowledgeClient } | undefined {
+    return this.options.knowledgeStore && this.options.notionKnowledge
+      ? { store: this.options.knowledgeStore, notion: this.options.notionKnowledge }
+      : undefined;
+  }
+
+  private async addKnowledgeSource(
+    input: AdminActionExecutionInput
+  ): Promise<FunctionExecutionResult> {
+    const dependencies = this.knowledgeDependencies();
+    if (!dependencies) return { ok: true, replyText: "知識來源服務尚未設定完成。" };
+    const url = readStringArg(input.arguments, ["url", "notionUrl", "pageUrl"]);
+    const displayName = readStringArg(input.arguments, ["displayName", "name", "title"]);
+    if (!url || !displayName) return { ok: true, replyText: "請提供頁面網址與顯示名稱。" };
+    let externalRootId: string;
+    try {
+      externalRootId = parseNotionRootId(url);
+    } catch {
+      return { ok: true, replyText: "頁面網址格式不正確。" };
+    }
+    const expiresAt = readStringArg(input.arguments, ["expiresAt", "expiry", "expiration"]);
+    if (expiresAt && !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/u.test(expiresAt))
+      return { ok: true, replyText: "到期日請使用 YYYY-MM-DD。" };
+    const sourceKey = sourceKeyFor(displayName, externalRootId);
+    const source = await dependencies.store.upsertSource({
+      profileName: input.profile.name,
+      sourceKey,
+      displayName,
+      adapterType: "notion",
+      externalRootId,
+      rootUrl: url,
+      enabled: true,
+      expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined
+    });
+    try {
+      const synced = await syncKnowledgeSource({
+        source,
+        store: dependencies.store,
+        notion: dependencies.notion,
+        embedding: this.options.knowledgeEmbedding,
+        batchSize: this.options.knowledgeEmbeddingBatchSize
+      });
+      await this.auditKnowledge(input, "knowledge.source.add", sourceKey);
+      return {
+        ok: true,
+        replyText: [
+          `已加入知識來源：${displayName}`,
+          `識別碼：${sourceKey}`,
+          `文件：${synced.documents}，片段：${synced.chunks}`,
+          synced.status === "embedding_pending" ? "語意索引待補，文字查詢已可使用。" : "同步完成。"
+        ].join("\n")
+      };
+    } catch {
+      await dependencies.store.updateSource({
+        profileName: input.profile.name,
+        sourceKey,
+        syncStatus: "failed",
+        syncErrorCode: "source_unavailable"
+      });
+      return { ok: true, replyText: "無法讀取該頁面，請確認已分享給系統使用的整合服務。" };
+    }
+  }
+
+  private async listKnowledgeSources(
+    input: AdminActionExecutionInput
+  ): Promise<FunctionExecutionResult> {
+    const store = this.options.knowledgeStore;
+    if (!store) return { ok: true, replyText: "知識來源服務尚未設定完成。" };
+    const sources = await store.listSources({
+      profileName: input.profile.name,
+      includeDisabled: true
+    });
+    return {
+      ok: true,
+      replyText: sources.length
+        ? [
+            "知識來源：",
+            ...sources.map(
+              (source) =>
+                `- ${source.sourceKey}｜${source.displayName}｜${source.enabled ? "啟用" : "停用"}｜${source.syncStatus ?? "pending"}${source.expiresAt ? `｜到期 ${source.expiresAt.slice(0, 10)}` : "｜永久"}`
+            )
+          ].join("\n")
+        : "目前沒有知識來源。"
+    };
+  }
+
+  private async syncKnowledgeSource(
+    input: AdminActionExecutionInput
+  ): Promise<FunctionExecutionResult> {
+    const dependencies = this.knowledgeDependencies();
+    const sourceKey = knowledgeSourceKey(input.arguments);
+    if (!dependencies) return { ok: true, replyText: "知識來源服務尚未設定完成。" };
+    if (!sourceKey) return { ok: true, replyText: "請提供知識來源識別碼。" };
+    const source = (
+      await dependencies.store.listSources({
+        profileName: input.profile.name,
+        includeDisabled: true
+      })
+    ).find((item) => item.sourceKey === sourceKey);
+    if (!source) return { ok: true, replyText: "找不到這個知識來源。" };
+    try {
+      const synced = await syncKnowledgeSource({
+        source,
+        store: dependencies.store,
+        notion: dependencies.notion,
+        embedding: this.options.knowledgeEmbedding,
+        batchSize: this.options.knowledgeEmbeddingBatchSize
+      });
+      await this.auditKnowledge(input, "knowledge.source.sync", sourceKey);
+      return {
+        ok: true,
+        replyText: `同步完成：${synced.documents} 份文件、${synced.chunks} 個片段。`
+      };
+    } catch {
+      return { ok: true, replyText: "同步失敗，舊版有效內容仍會保留。" };
+    }
+  }
+
+  private async setKnowledgeSourceEnabled(
+    input: AdminActionExecutionInput,
+    enabled: boolean
+  ): Promise<FunctionExecutionResult> {
+    const sourceKey = knowledgeSourceKey(input.arguments);
+    if (!this.options.knowledgeStore) return { ok: true, replyText: "知識來源服務尚未設定完成。" };
+    if (!sourceKey) return { ok: true, replyText: "請提供知識來源識別碼。" };
+    const source = await this.options.knowledgeStore.updateSource({
+      profileName: input.profile.name,
+      sourceKey,
+      enabled
+    });
+    if (!source) return { ok: true, replyText: "找不到這個知識來源。" };
+    await this.auditKnowledge(
+      input,
+      enabled ? "knowledge.source.enable" : "knowledge.source.disable",
+      sourceKey
+    );
+    return { ok: true, replyText: `已${enabled ? "啟用" : "停用"}知識來源：${source.displayName}` };
+  }
+
+  private async removeKnowledgeSource(
+    input: AdminActionExecutionInput
+  ): Promise<FunctionExecutionResult> {
+    const sourceKey = knowledgeSourceKey(input.arguments);
+    if (!this.options.knowledgeStore) return { ok: true, replyText: "知識來源服務尚未設定完成。" };
+    if (!sourceKey) return { ok: true, replyText: "請提供知識來源識別碼。" };
+    const removed = await this.options.knowledgeStore.removeSource({
+      profileName: input.profile.name,
+      sourceKey
+    });
+    if (removed) await this.auditKnowledge(input, "knowledge.source.remove", sourceKey);
+    return {
+      ok: true,
+      replyText: removed ? `已永久移除知識來源：${sourceKey}` : "找不到這個知識來源。"
+    };
+  }
+
+  private async auditKnowledge(
+    input: AdminActionExecutionInput,
+    action: string,
+    sourceKey: string
+  ): Promise<void> {
+    const actorUserId = input.event.source.userId;
+    if (!actorUserId) return;
+    await this.options.accessStore.recordAudit({
+      profileName: input.profile.name,
+      actorUserId,
+      action,
+      targetType: "knowledge_source",
+      targetId: sourceKey,
+      metadata: {}
+    });
+  }
+}
+
+function knowledgeSourceKey(args: JsonRecord | undefined): string | undefined {
+  return readStringArg(args, ["sourceKey", "source", "key"]);
+}
+function sourceKeyFor(name: string, externalId: string): string {
+  const slug = name
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "")
+    .slice(0, 40);
+  return `${slug || "knowledge"}-${externalId.replaceAll("-", "").slice(-8)}`;
 }
 
 function parseFunctionScopeArgs(input: AdminActionExecutionInput):

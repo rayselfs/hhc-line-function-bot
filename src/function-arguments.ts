@@ -107,6 +107,21 @@ export const findResourceArgumentsSchema = z
   })
   .strip();
 
+export const queryKnowledgeArgumentsSchema = z
+  .object({
+    query: z.string().optional().default(""),
+    sourceKey: z.string().trim().min(1).optional(),
+    documentId: z.string().trim().min(1).optional(),
+    ordinal: z
+      .preprocess(
+        (value) => (typeof value === "string" ? Number(value) : value),
+        z.number().int().min(0)
+      )
+      .optional(),
+    limit: numericLimitSchema.optional()
+  })
+  .strip();
+
 export const saveMemoryArgumentsSchema = z
   .object({
     title: z.string().optional(),
@@ -210,6 +225,7 @@ export type QueryServiceScheduleArguments = z.infer<typeof queryServiceScheduleA
 export type QueryScheduleArguments = z.infer<typeof queryScheduleArgumentsSchema>;
 export type FindPopSheetMusicArguments = z.infer<typeof findPopSheetMusicArgumentsSchema>;
 export type FindResourceArguments = z.infer<typeof findResourceArgumentsSchema>;
+export type QueryKnowledgeArguments = z.infer<typeof queryKnowledgeArgumentsSchema>;
 export type SaveMemoryArguments = z.infer<typeof saveMemoryArgumentsSchema>;
 export type SaveResourceArguments = z.infer<typeof saveResourceArgumentsSchema>;
 export type RetrieveMemoryArguments = z.infer<typeof retrieveMemoryArgumentsSchema>;
@@ -225,6 +241,7 @@ export function parseFunctionArguments(
   const schema = {
     find_ppt_slides: findPptSlidesArgumentsSchema,
     query_schedule: queryScheduleArgumentsSchema,
+    query_knowledge: queryKnowledgeArgumentsSchema,
     save_schedule: saveScheduleArgumentsSchema,
     query_service_schedule: queryServiceScheduleArgumentsSchema,
     find_sheet_music: findPopSheetMusicArgumentsSchema,

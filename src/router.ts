@@ -415,6 +415,8 @@ function buildRouterPrompt(enabledFunctions: FunctionName[], runtimeContext?: st
     'If the message only mentions the bot in third person, return {"action":"deny","reason":"not_addressed_to_bot"}.',
     "If the user both greets and requests an enabled function, choose the function instead of introduce_bot.",
     "Never invent a function name.",
+    "When Runtime context contains Continuation context and the current message is a short follow-up, continue that function only if it is still enabled. Reuse its structured arguments, override fields explicitly changed by the current message, and keep query as the current full question. If the reference is ambiguous, deny with reason clarification_required.",
+    "Never continue an admin action, disabled function, another requester's context, or content outside the supplied continuation context.",
     "System actions:",
     "- introduce_bot: controlled introduction/help response. Do not write the final reply text.",
     "- small_talk: controlled short chat response. Do not write the final reply text.",

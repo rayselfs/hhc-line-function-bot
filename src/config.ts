@@ -110,6 +110,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile, env));
   validateProviderPolicy(normalizedProfiles, llmProvider, llmFallbackProvider);
   validateAccessConfig(normalizedProfiles, env);
+  const ollamaBaseUrl = env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
   return {
     serviceName: env.SERVICE_NAME || "hhc-line-function-bot",
     host: env.HOST || "0.0.0.0",
@@ -133,7 +134,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
     llm: {
       provider: llmProvider,
       fallbackProvider: llmFallbackProvider,
-      ollamaBaseUrl: env.OLLAMA_BASE_URL || "http://127.0.0.1:11434",
+      ollamaBaseUrl,
       ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
       ollamaKeepAlive: readOllamaKeepAlive(env.OLLAMA_KEEP_ALIVE),
       deepseekApiKey: env.DEEPSEEK_API_KEY || undefined,
@@ -151,6 +152,20 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000),
       keywordFallbackEnabled: readBool(env.KEYWORD_FALLBACK_ENABLED, true)
     },
+    knowledge: env.NOTION_TOKEN
+      ? {
+          notionToken: env.NOTION_TOKEN,
+          embedding: {
+            provider: "ollama",
+            baseUrl: env.EMBEDDING_OLLAMA_BASE_URL || ollamaBaseUrl,
+            model: env.OLLAMA_EMBEDDING_MODEL || "bge-m3",
+            dimensions: 1024,
+            batchSize: readInt(env.EMBEDDING_BATCH_SIZE, 16),
+            timeoutMs: readInt(env.EMBEDDING_TIMEOUT_MS, 30_000),
+            keepAlive: readOllamaKeepAlive(env.EMBEDDING_KEEP_ALIVE) ?? "1m"
+          }
+        }
+      : undefined,
     graph:
       env.GRAPH_TENANT_ID &&
       env.GRAPH_CLIENT_ID &&

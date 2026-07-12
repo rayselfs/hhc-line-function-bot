@@ -13,6 +13,7 @@
     "enabledFunctions": [
       "find_ppt_slides",
       "query_schedule",
+      "query_knowledge",
       "find_sheet_music",
       "find_resource",
       "query_wikipedia",

@@ -1,6 +1,7 @@
 export const FUNCTION_NAMES = [
   "find_ppt_slides",
   "query_schedule",
+  "query_knowledge",
   "save_schedule",
   "query_service_schedule",
   "find_sheet_music",
@@ -36,7 +37,13 @@ export const ADMIN_ACTION_NAMES = [
   "invite_code_create",
   "function_scope_grant",
   "function_scope_revoke",
-  "function_scope_list"
+  "function_scope_list",
+  "knowledge_source_add",
+  "knowledge_source_list",
+  "knowledge_source_sync",
+  "knowledge_source_enable",
+  "knowledge_source_disable",
+  "knowledge_source_remove"
 ] as const;
 
 export type AdminActionName = (typeof ADMIN_ACTION_NAMES)[number];
@@ -212,6 +219,7 @@ export interface AppConfig {
   externalResources: ExternalResourceConfig;
   profiles: BotProfileConfig[];
   llm: LlmConfig;
+  knowledge?: KnowledgeConfig;
   graph?: GraphConfig;
   notion?: NotionConfig;
   wikipedia?: WikipediaConfig;
@@ -223,6 +231,19 @@ export interface AppConfig {
   access?: AccessConfig;
   rateLimit?: RateLimitConfig;
   lastErrors?: LastErrorsConfig;
+}
+
+export interface KnowledgeConfig {
+  notionToken: string;
+  embedding: {
+    provider: "ollama";
+    baseUrl: string;
+    model: string;
+    dimensions: 1024;
+    batchSize: number;
+    timeoutMs: number;
+    keepAlive: string | number;
+  };
 }
 
 export interface AttachmentConfig {
@@ -260,7 +281,7 @@ export interface LastErrorsConfig {
   maxEntries: number;
 }
 
-export type DependencyName = "postgres" | "redis" | "ollama" | "graph" | "notion";
+export type DependencyName = "postgres" | "redis" | "ollama" | "embedding" | "graph" | "notion";
 
 export type DependencyStatusValue = "ok" | "degraded" | "missing" | "error";
 
@@ -504,6 +525,7 @@ export interface FunctionExecutionResult {
   executedAction?: FunctionName;
   quickReplies?: QuickReplyItem[];
   agentResource?: AgentResourceReference;
+  continuation?: { arguments?: JsonRecord; resultReferences?: JsonRecord };
   smallTalkTrace?: {
     lane: "smart_talk";
     outcome: "generated" | "fallback" | "template";

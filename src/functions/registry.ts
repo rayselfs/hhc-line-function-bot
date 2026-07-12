@@ -13,6 +13,8 @@ import type { SheetMusicExternalSearchSummarizer } from "../search/sheet-music-e
 import { InMemoryAgentMemoryStore, type AgentMemoryStore } from "../agent/memory-store.js";
 import { MemoryCacheStore, type CacheStore } from "../cache/cache-store.js";
 import { InMemoryCatalogStore, type CatalogStore } from "../catalog/store.js";
+import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import { InMemoryKnowledgeStore, type KnowledgeStore } from "../knowledge/store.js";
 import { createLlmStatusAdminHandler } from "../llm-diagnostics.js";
 import { InMemoryScheduleStore, type ScheduleStore } from "../schedules/store.js";
 import { InMemorySessionStore, type SessionStore } from "../state/session-store.js";
@@ -24,6 +26,7 @@ import type {
   LineContentClient,
   NotionDatabaseClient,
   PostbackHandlerRegistry,
+  TextGenerationProvider,
   TextMessageHandlerRegistry,
   VirusScanner,
   WebSearchClient
@@ -46,6 +49,9 @@ export interface RegistryClients {
   wikipediaSummarizer?: WikipediaSummarizer;
   webSearch?: WebSearchClient;
   sheetMusicExternalSearchSummarizer?: SheetMusicExternalSearchSummarizer;
+  knowledgeStore?: KnowledgeStore;
+  embedding?: EmbeddingClient;
+  knowledgeTextGenerator?: TextGenerationProvider;
   accessStore?: AccessStore;
   now?: () => Date;
   requestIdFactory?: () => string;
@@ -71,6 +77,7 @@ export function createFunctionRegistries(
   const cache = clients.cache ?? new MemoryCacheStore();
   const memoryStore = clients.memoryStore ?? new InMemoryAgentMemoryStore({ now: clients.now });
   const catalog = clients.catalog ?? new InMemoryCatalogStore();
+  const knowledgeStore = clients.knowledgeStore ?? new InMemoryKnowledgeStore(clients.now);
   const scheduleStore = clients.scheduleStore ?? new InMemoryScheduleStore();
   const lineContent = clients.lineContent ?? createLineSdkContentClient();
 
@@ -91,6 +98,9 @@ export function createFunctionRegistries(
       cache,
       memoryStore,
       catalog,
+      knowledgeStore,
+      embedding: clients.embedding,
+      knowledgeTextGenerator: clients.knowledgeTextGenerator,
       scheduleStore,
       lineContent,
       externalBinary: clients.externalBinary ?? createExternalBinaryClient(),

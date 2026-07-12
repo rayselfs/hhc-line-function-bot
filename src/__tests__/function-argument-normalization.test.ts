@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
 
 describe("function argument normalization", () => {
+  it("normalizes generic knowledge ordinals without a travel-specific rule", () => {
+    expect(
+      normalizeFunctionArguments(
+        "query_knowledge",
+        { query: "第一個地點是哪裡" },
+        { text: "小哈 第一個地點是哪裡" }
+      )
+    ).toEqual({ query: "第一個地點是哪裡", ordinal: 0 });
+    expect(
+      normalizeFunctionArguments(
+        "query_knowledge",
+        { query: "第二步是什麼" },
+        { text: "第二步是什麼" }
+      )
+    ).toEqual({ query: "第二步是什麼", ordinal: 1 });
+  });
   it("clears a model-inferred Wikipedia topic when the user only selects Wikipedia lookup", () => {
     expect(
       normalizeFunctionArguments(

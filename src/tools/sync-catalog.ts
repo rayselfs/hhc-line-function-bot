@@ -3,9 +3,13 @@ import { buildCatalogSourceSeedsForProfiles, seedCatalogSources } from "../catal
 import { syncCatalogSources } from "../catalog/sync-service.js";
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
+import { createNotionKnowledgeClient } from "../clients/notion-knowledge.js";
+import { createOllamaEmbeddingClient } from "../clients/ollama-embedding.js";
 import { loadConfigFromEnv } from "../config.js";
 import { createPostgresRuntime } from "../db/postgres.js";
 import { createScheduleStore } from "../schedules/create-schedule-store.js";
+import { createKnowledgeStore } from "../knowledge/create-store.js";
+import { syncKnowledgeSource } from "../knowledge/sync-service.js";
 
 const config = loadConfigFromEnv(process.env);
 const postgres = await createPostgresRuntime(config.database);
@@ -15,6 +19,7 @@ await seedCatalogSources({
   sources: buildCatalogSourceSeedsForProfiles(process.env, config.profiles)
 });
 const schedules = await createScheduleStore({ db: postgres?.pool });
+const knowledge = await createKnowledgeStore({ db: postgres?.pool });
 
 try {
   const graph = config.graph ? createGraphDriveClient(config.graph) : undefined;
@@ -34,7 +39,65 @@ try {
       console.log(JSON.stringify({ at: new Date().toISOString(), ...event }));
     }
   });
-  console.log(JSON.stringify({ ok: true, result }));
+  const knowledgeResult = {
+    sources: 0,
+    synced: 0,
+    failed: 0,
+    documents: 0,
+    chunks: 0,
+    embedded: 0
+  };
+  if (config.knowledge) {
+    const notionKnowledge = createNotionKnowledgeClient(config.knowledge.notionToken);
+    const embedding = createOllamaEmbeddingClient({
+      baseUrl: config.knowledge.embedding.baseUrl,
+      model: config.knowledge.embedding.model,
+      dimensions: config.knowledge.embedding.dimensions,
+      timeoutMs: config.knowledge.embedding.timeoutMs,
+      keepAlive: config.knowledge.embedding.keepAlive
+    });
+    const requested = new Set(
+      (process.env.KNOWLEDGE_SYNC_SOURCE_KEYS ?? "")
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean)
+    );
+    const sources = (
+      await Promise.all(
+        config.profiles.map((profile) =>
+          knowledge.listSources({ profileName: profile.name, includeDisabled: false })
+        )
+      )
+    )
+      .flat()
+      .filter((source) => requested.size === 0 || requested.has(source.sourceKey));
+    knowledgeResult.sources = sources.length;
+    for (const source of sources) {
+      try {
+        const synced = await syncKnowledgeSource({
+          source,
+          store: knowledge,
+          notion: notionKnowledge,
+          embedding,
+          batchSize: config.knowledge.embedding.batchSize
+        });
+        knowledgeResult.synced += 1;
+        knowledgeResult.documents += synced.documents;
+        knowledgeResult.chunks += synced.chunks;
+        knowledgeResult.embedded += synced.embedded;
+      } catch {
+        knowledgeResult.failed += 1;
+        await knowledge.updateSource({
+          profileName: source.profileName,
+          sourceKey: source.sourceKey,
+          syncStatus: "failed",
+          syncErrorCode: "scheduled_sync_failed"
+        });
+      }
+    }
+  }
+  await knowledge.purgeExpired(new Date());
+  console.log(JSON.stringify({ ok: true, result, knowledge: knowledgeResult }));
 } finally {
   await postgres?.pool.end();
 }

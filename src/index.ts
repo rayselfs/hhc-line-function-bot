@@ -1,9 +1,14 @@
 import { createOllamaProvider } from "./clients/ollama.js";
+import { createOllamaEmbeddingClient } from "./clients/ollama-embedding.js";
 import { createDeepSeekProvider } from "./clients/deepseek.js";
 import { createAdminActionRouter } from "./admin-action-router.js";
 import { RedisConfirmationStore } from "./actions/confirmation-store.js";
+import { createAdminActionRegistry } from "./actions/admin-registry.js";
 import { createAccessStore } from "./access/create-access-store.js";
-import { RedisRegistrationInviteCodeStore } from "./access/registration-invite-code-store.js";
+import {
+  InMemoryRegistrationInviteCodeStore,
+  RedisRegistrationInviteCodeStore
+} from "./access/registration-invite-code-store.js";
 import { createAgentMemoryStore } from "./agent/create-agent-memory-store.js";
 import { createAgentRuntime } from "./agent/agent-runtime.js";
 import { createWikipediaSummarizer } from "./wikipedia/summarizer.js";
@@ -15,6 +20,7 @@ import { buildCatalogSourceSeedsForProfiles, seedCatalogSources } from "./catalo
 import { createGraphDriveClient } from "./clients/graph.js";
 import { createClamAvScanner } from "./clients/clamav.js";
 import { createNotionDatabaseClient } from "./clients/notion.js";
+import { createNotionKnowledgeClient } from "./clients/notion-knowledge.js";
 import { createSearxngClient } from "./clients/searxng.js";
 import { createHttpVirusScanner } from "./clients/virus-scan.js";
 import { loadConfigFromEnv } from "./config.js";
@@ -23,6 +29,7 @@ import { createPostgresRuntime } from "./db/postgres.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createInFlightStore } from "./in-flight/create-in-flight-store.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
+import { createKnowledgeStore } from "./knowledge/create-store.js";
 import { createProfileAwareProvider } from "./llm/provider-runtime.js";
 import { createLastErrorStore } from "./observability/create-last-error-store.js";
 import { createConsoleRouteObserver } from "./observability/route-observer.js";
@@ -153,6 +160,39 @@ await seedCatalogSources({
   sources: buildCatalogSourceSeedsForProfiles(process.env, config.profiles)
 });
 const scheduleStore = await createScheduleStore({ db: postgres?.pool });
+const knowledgeStore = await createKnowledgeStore({ db: postgres?.pool });
+await knowledgeStore.purgeExpired(new Date());
+const knowledgePurgeTimer = setInterval(
+  () => {
+    void knowledgeStore.purgeExpired(new Date()).catch(() => undefined);
+  },
+  6 * 60 * 60 * 1000
+);
+knowledgePurgeTimer.unref();
+const knowledgeEmbedding = config.knowledge
+  ? createOllamaEmbeddingClient({
+      baseUrl: config.knowledge.embedding.baseUrl,
+      model: config.knowledge.embedding.model,
+      dimensions: config.knowledge.embedding.dimensions,
+      timeoutMs: config.knowledge.embedding.timeoutMs,
+      keepAlive: config.knowledge.embedding.keepAlive
+    })
+  : undefined;
+const notionKnowledge = config.knowledge
+  ? createNotionKnowledgeClient(config.knowledge.notionToken)
+  : undefined;
+const knowledgeAdminActionRegistry = createAdminActionRegistry({
+  accessStore,
+  registrationInviteCodeStore:
+    registrationInviteCodeStore ?? new InMemoryRegistrationInviteCodeStore(),
+  registrationInviteCodeTtlMinutes: config.access?.registrationInviteCodeTtlMinutes ?? 60,
+  confirmationStore,
+  confirmationTtlMinutes: config.access?.confirmationTtlMinutes,
+  knowledgeStore,
+  notionKnowledge,
+  knowledgeEmbedding,
+  knowledgeEmbeddingBatchSize: config.knowledge?.embedding.batchSize
+});
 const inFlightStore = createInFlightStore({ redis });
 const agentJobStore = redis
   ? new RedisAgentJobStore({ client: redis.client, keyPrefix: redis.keyPrefix })
@@ -175,6 +215,9 @@ const registries = createFunctionRegistries(config, {
   cache,
   catalog,
   scheduleStore,
+  knowledgeStore,
+  embedding: knowledgeEmbedding,
+  knowledgeTextGenerator: smartTalkPrimary,
   memoryStore,
   accessStore,
   virusScanner,
@@ -191,6 +234,7 @@ const registries = createFunctionRegistries(config, {
 const app = createApp(config, {
   router,
   adminActionRouter,
+  adminActionRegistry: knowledgeAdminActionRegistry,
   functionRegistry: registries.functions,
   postbackHandlers: registries.postbacks,
   textMessageHandlers: registries.textMessages,

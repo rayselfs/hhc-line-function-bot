@@ -48,6 +48,7 @@ export function createDependencyDiagnostics(options: DependencyDiagnosticsOption
         { name: "postgres", ...(await checkPostgres(options.postgres, required, timeoutMs)) },
         { name: "redis", ...(await checkRedis(options.redis, required, timeoutMs)) },
         await checkOllama(options),
+        await checkEmbedding(options),
         {
           name: "graph",
           configured: Boolean(options.config.graph),
@@ -55,8 +56,8 @@ export function createDependencyDiagnostics(options: DependencyDiagnosticsOption
         },
         {
           name: "notion",
-          configured: Boolean(options.config.notion),
-          status: options.config.notion ? "ok" : "missing"
+          configured: Boolean(options.config.notion || options.config.knowledge),
+          status: options.config.notion || options.config.knowledge ? "ok" : "missing"
         }
       ];
       return [
@@ -69,6 +70,57 @@ export function createDependencyDiagnostics(options: DependencyDiagnosticsOption
       ].join("\n");
     }
   };
+}
+
+async function checkEmbedding(
+  options: DependencyDiagnosticsOptions
+): Promise<NamedDependencyStatus> {
+  if (!options.config.knowledge) return { name: "embedding", configured: false, status: "missing" };
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  if (!fetchImpl)
+    return {
+      name: "embedding",
+      configured: true,
+      status: "degraded",
+      message: "fetch_unavailable"
+    };
+  const startedAt = Date.now();
+  try {
+    const response = await withTimeout(
+      fetchImpl(`${options.config.knowledge.embedding.baseUrl.replace(/\/$/u, "")}/api/tags`),
+      options.timeoutMs ?? 1500
+    );
+    if (!response.ok)
+      return {
+        name: "embedding",
+        configured: true,
+        status: "degraded",
+        latencyMs: elapsedMs(startedAt),
+        message: `http_${response.status}`
+      };
+    const payload = (await response.json()) as {
+      models?: Array<{ name?: string; model?: string }>;
+    };
+    const expected = options.config.knowledge.embedding.model.split(":")[0];
+    const available = payload.models?.some(
+      (model) => (model.name ?? model.model ?? "").split(":")[0] === expected
+    );
+    return {
+      name: "embedding",
+      configured: true,
+      status: available ? "ok" : "degraded",
+      latencyMs: elapsedMs(startedAt),
+      message: available ? undefined : "model_missing"
+    };
+  } catch (error) {
+    return {
+      name: "embedding",
+      configured: true,
+      status: "error",
+      latencyMs: elapsedMs(startedAt),
+      message: error instanceof Error ? error.name : "error"
+    };
+  }
 }
 
 export function createStaticAppDiagnostics(config: AppConfig): AppDiagnostics {

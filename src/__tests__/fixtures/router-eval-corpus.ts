@@ -4,6 +4,7 @@ import { getRouterEvalCases, type RouterEvalCase } from "../../functions/modules
 export const routerEvalEnabledFunctions: FunctionName[] = [
   "find_ppt_slides",
   "query_schedule",
+  "query_knowledge",
   "save_schedule",
   "query_service_schedule",
   "find_sheet_music",

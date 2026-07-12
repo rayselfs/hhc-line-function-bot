@@ -147,6 +147,72 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
       "有哪些功能",
       "能用哪些功能"
     ]
+  },
+  {
+    name: "knowledge_source_add",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "state_change",
+    naturalLanguage: true,
+    auditAction: "knowledge.source.add",
+    description:
+      "Register and immediately synchronize an internal knowledge source. Arguments: url, displayName, optional expiresAt (ISO date).",
+    naturalLanguageHints: ["加入知識來源", "新增知識來源", "加入 notion 頁面", "新增 notion 頁面"]
+  },
+  {
+    name: "knowledge_source_list",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "read_only",
+    naturalLanguage: true,
+    description: "List knowledge sources for this profile.",
+    naturalLanguageHints: ["知識來源列表", "列出知識來源", "有哪些知識來源"]
+  },
+  {
+    name: "knowledge_source_sync",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "state_change",
+    naturalLanguage: true,
+    auditAction: "knowledge.source.sync",
+    description: "Synchronize one knowledge source. Arguments: sourceKey.",
+    naturalLanguageHints: ["同步知識來源", "更新知識來源"]
+  },
+  {
+    name: "knowledge_source_enable",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "state_change",
+    naturalLanguage: true,
+    auditAction: "knowledge.source.enable",
+    description: "Enable one knowledge source. Arguments: sourceKey.",
+    naturalLanguageHints: ["啟用知識來源", "恢復知識來源"]
+  },
+  {
+    name: "knowledge_source_disable",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "state_change",
+    naturalLanguage: true,
+    auditAction: "knowledge.source.disable",
+    description: "Disable one knowledge source. Arguments: sourceKey.",
+    naturalLanguageHints: ["停用知識來源", "關閉知識來源"]
+  },
+  {
+    name: "knowledge_source_remove",
+    kind: "admin_action",
+    auth: "admin",
+    sourcePolicy: "direct",
+    sideEffect: "destructive",
+    naturalLanguage: true,
+    auditAction: "knowledge.source.remove",
+    description: "Permanently remove one knowledge source. Arguments: sourceKey.",
+    naturalLanguageHints: ["刪除知識來源", "移除知識來源"]
   }
 ];
 

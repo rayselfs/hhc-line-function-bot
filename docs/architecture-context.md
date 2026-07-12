@@ -189,6 +189,8 @@ handler:
 - in-flight duplicate protection for long-running lookups
 - requester-scoped conversation windows for natural follow-up messages
   (default 60 seconds; each handled reply refreshes the requester window)
+- structured continuation state containing the last enabled function, sanitized
+  arguments, and safe result references; another group requester cannot inherit it
 - bounded runtime context building and compression
 - postback-based long-running job result retrieval
 - recent file recall such as "再給我一次"
@@ -202,6 +204,13 @@ handler:
 - memory commands such as `/memories`, `/forget-memory <id>`, and
   `/memory-status`
 - sanitized turn diagnostics through `/last-agent-turns`
+
+Dynamic knowledge uses a separate `knowledge_*` read model rather than catalog
+items or schedule rows. Admin direct-chat actions register Notion roots, the sync
+service recursively reads blocks and incrementally embeds changed chunks, and
+`query_knowledge` combines lexical and pgvector retrieval before a grounded LLM
+answer. The dedicated `bge-m3` model runs on the private Ollama host; PostgreSQL
+stores only vectors and version metadata.
 
 Do not use it for unrestricted chat logging. Normal group chatter must not be
 saved. Temporary Graph sharing links must not be saved; store drive/item ids and

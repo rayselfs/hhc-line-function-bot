@@ -362,6 +362,16 @@ The production catalog sync job also registers the media team service schedule a
 
 Schedule lookup combines LLM/keyword-router arguments with deterministic query refinement. Recognized date, meeting, role, schedule-type, and media-team terms become structured filters and are removed before residual text search. An empty residual therefore adds no full-text condition. This shared refinement contract can be adopted by future query functions, but each domain must provide its own adapter instead of adding function-specific parsing to the router.
 
+## Dynamic Knowledge Sources
+
+`query_knowledge` answers from profile-shared pages or databases registered by an admin. An admin adds a shared page by saying `加入知識來源 <page URL> 名稱 <display name>` in direct chat; an optional `expiresAt` makes it temporary. Sources default to permanent, can be listed/synchronized/enabled/disabled, and destructive removal requires `/confirm <code>`. The page must first be shared with the configured integration.
+
+Knowledge synchronization preserves page hierarchy, tables, lists, properties, and order in PostgreSQL. It chunks by heading, stores full-text data, and uses pgvector plus a dedicated Ollama `bge-m3` embedding model for hybrid retrieval. Exact title/date/ordinal evidence outranks semantic similarity. Embedding failure degrades to lexical search; answer generation failure returns a controlled source excerpt. Expired temporary sources leave search immediately and are purged after 30 days.
+
+The model is installed on the existing private Ollama host, not in the ACA image or PostgreSQL. Configure `OLLAMA_EMBEDDING_MODEL=bge-m3`, `EMBEDDING_BATCH_SIZE=16`, `EMBEDDING_TIMEOUT_MS=30000`, and `EMBEDDING_KEEP_ALIVE=1m`; `EMBEDDING_OLLAMA_BASE_URL` is optional and otherwise reuses `OLLAMA_BASE_URL`. PostgreSQL must already have the `vector` extension; the app validates it but never installs extensions.
+
+Requester-scoped continuation state records the last function and sanitized structured arguments. This allows follow-ups such as `那攝影呢` or `第二個呢` without adding schedule- or travel-specific router branches. Group state remains isolated by profile, group, and requester.
+
 ## LINE Attachment Save Gate
 
 Production profiles still allow text messages only unless `allowedMessageTypes` is explicitly expanded. When a profile allows `image` or `file`, the webhook does not immediately download, upload, or save the attachment. It first requires effective `save_resource` permission, stores a requester/source-scoped pending attachment session, and asks the user to explain the intended category or purpose.
@@ -385,6 +395,7 @@ Do not commit real `.env` files. In Azure Container Apps, store only real creden
 
 - `LINE_HELPER_CHANNEL_SECRET`, `LINE_HELPER_CHANNEL_ACCESS_TOKEN`, and `LINE_HELPER_ADMIN_USER_ID`
 - `OLLAMA_BASE_URL`
+- `EMBEDDING_OLLAMA_BASE_URL` only when embedding uses a different private Ollama endpoint
 - `DEEPSEEK_API_KEY`
 - `DATABASE_URL` and `REDIS_URL`
 - `NOTION_TOKEN`

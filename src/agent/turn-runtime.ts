@@ -445,6 +445,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           arguments: normalizedArguments,
           result
         });
+        await recordFunctionContinuation(
+          options.conversationWindowStore,
+          input,
+          route.action,
+          normalizedArguments,
+          result
+        );
         const durationMs = elapsedMs(functionStartedAt);
         steps.push({
           phase: "function",
@@ -695,6 +702,7 @@ async function buildRuntimeContext(
     requesterUserId: input.event.source.userId
   };
   const recentTurns = await options.conversationWindowStore?.recentTurns(scope, 6);
+  const functionContinuation = await options.conversationWindowStore?.functionContext(scope);
   const adminAllowed =
     options.accessStore && input.event.source.userId
       ? await isAdminUser(input.profile, input.event.source.userId, options.accessStore)
@@ -709,7 +717,28 @@ async function buildRuntimeContext(
       webAllowlistDecision: "not_requested"
     },
     currentMessage: text,
-    recentTurns
+    recentTurns,
+    functionContinuation
+  });
+}
+
+async function recordFunctionContinuation(
+  store: ConversationWindowStore | undefined,
+  input: AgentTextTurnInput,
+  functionName: FunctionName,
+  args: JsonRecord,
+  result: FunctionExecutionResult
+): Promise<void> {
+  const ttlMs = (input.profile.generalAgent?.conversationWindowSeconds ?? 0) * 1000;
+  const source = sourceKey(input.event.source);
+  const requesterUserId = input.event.source.userId;
+  if (!store || !result.ok || !ttlMs || !source || !requesterUserId) return;
+  await store.recordFunctionContext({
+    scope: { profileName: input.profile.name, sourceKey: source, requesterUserId },
+    functionName,
+    arguments: { ...args, ...(result.continuation?.arguments ?? {}) },
+    resultReferences: result.continuation?.resultReferences,
+    ttlMs
   });
 }
 
