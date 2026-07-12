@@ -37,6 +37,8 @@ import { createPendingAttachmentTextMessageHandler } from "./attachment-save.js"
 import { createFindResourceHandler } from "./find-resource.js";
 import type { CatalogStore } from "../catalog/store.js";
 import type { ScheduleStore } from "../schedules/store.js";
+import type { ExternalBinaryClient } from "../clients/external-binary.js";
+import { createResourceBinaryPublisher } from "./resource-binary-publisher.js";
 import { createSaveResourceHandler } from "./save-resource.js";
 import {
   createQueryScheduleMemoryHandler,
@@ -55,6 +57,7 @@ export interface FunctionModuleContext {
     catalog?: CatalogStore;
     scheduleStore?: ScheduleStore;
     lineContent?: LineContentClient;
+    externalBinary?: ExternalBinaryClient;
     virusScanner?: VirusScanner;
     wikipedia?: WikipediaClient;
     wikipediaSummarizer?: WikipediaSummarizer;
@@ -543,6 +546,21 @@ export const FUNCTION_MODULES: FunctionModule[] = [
                 ? {
                     webSearch: clients.webSearch,
                     summarize: clients.sheetMusicExternalSearchSummarizer
+                  }
+                : undefined,
+            externalImport:
+              clients.externalBinary && clients.catalog && clients.virusScanner
+                ? {
+                    client: clients.externalBinary,
+                    publisher: createResourceBinaryPublisher({
+                      catalog: clients.catalog,
+                      graph: clients.graph,
+                      scanner: clients.virusScanner,
+                      maxBytes: config.attachments?.maxBytes ?? 25 * 1024 * 1024
+                    }),
+                    maxBytes: config.attachments?.maxBytes ?? 25 * 1024 * 1024,
+                    timeoutMs: config.externalResources?.downloadTimeoutMs ?? 15_000,
+                    maxRedirects: config.externalResources?.maxRedirects ?? 3
                   }
                 : undefined,
             now: clients.now

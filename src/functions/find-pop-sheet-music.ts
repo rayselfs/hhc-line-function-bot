@@ -8,6 +8,7 @@ import {
   type CatalogStore
 } from "../catalog/store.js";
 import type { SheetMusicExternalSearchSummarizer } from "../search/sheet-music-external-summarizer.js";
+import type { ExternalBinaryClient } from "../clients/external-binary.js";
 import {
   findPopSheetMusicArgumentsSchema,
   type FindPopSheetMusicArguments
@@ -18,9 +19,11 @@ import { canCreateRequesterScopedSession } from "../state/session-safety.js";
 import {
   InMemorySessionStore,
   type ConversationSession,
+  type ExternalSheetMusicImportSession,
   type SessionStore
 } from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
+import type { ResourceBinaryPublisher } from "./resource-binary-publisher.js";
 import type {
   DriveItem,
   FunctionExecutionResult,
@@ -75,6 +78,13 @@ export interface SheetMusicExternalSearchOptions {
 
 export type FindPopSheetMusicTextMessageOptions = FindPopSheetMusicPostbackOptions & {
   externalSearch?: SheetMusicExternalSearchOptions;
+  externalImport?: {
+    client: ExternalBinaryClient;
+    publisher: ResourceBinaryPublisher;
+    maxBytes: number;
+    timeoutMs: number;
+    maxRedirects: number;
+  };
 };
 
 interface ScoredItem {
@@ -363,9 +373,20 @@ export function createFindPopSheetMusicTextMessageHandler(
         numericSelectionToIndex(request.text) !== undefined &&
         (await findSheetMusicSelection(options.sessionStore, context))
       ) ||
-        Boolean(await findSheetMusicExternalSearchConsent(options.sessionStore, context))),
+        Boolean(await findSheetMusicExternalSearchConsent(options.sessionStore, context)) ||
+        Boolean(await findExternalSheetMusicImport(options.sessionStore, context))),
 
     handle: async (request, context) => {
+      const externalImport = await findExternalSheetMusicImport(options.sessionStore, context);
+      if (externalImport) {
+        return continueExternalSheetMusicImport({
+          options,
+          session: externalImport,
+          text: request.text,
+          context,
+          now: now()
+        });
+      }
       const selectedIndex = numericSelectionToIndex(request.text);
       if (selectedIndex !== undefined) {
         const session = await findSheetMusicSelection(options.sessionStore, context);
@@ -403,7 +424,12 @@ export function createFindPopSheetMusicTextMessageHandler(
       return runExternalSheetMusicSearch({
         externalSearch: options.externalSearch,
         profileName: context.profile.name,
-        query: externalSearchConsent.query
+        query: externalSearchConsent.query,
+        sessionStore: options.sessionStore,
+        context,
+        now: now(),
+        requestId: externalSearchConsent.id,
+        requestedKind: inferRequestedSheetKind(externalSearchConsent.query)
       });
     }
   };
@@ -739,6 +765,11 @@ async function runExternalSheetMusicSearch(input: {
   externalSearch: SheetMusicExternalSearchOptions | undefined;
   profileName: string;
   query: string;
+  sessionStore: SessionStore;
+  context: TextMessageContext;
+  now: Date;
+  requestId: string;
+  requestedKind?: "pop_sheet" | "hymn_sheet";
 }): Promise<FunctionExecutionResult> {
   if (!input.externalSearch) {
     return { ok: true, replyText: "外部搜尋目前沒有設定。" };
@@ -762,13 +793,183 @@ async function runExternalSheetMusicSearch(input: {
       query: input.query,
       results
     });
+    const items = results.slice(0, MAX_CANDIDATES);
+    await input.sessionStore.set({
+      id: input.requestId,
+      type: "external_sheet_music_import",
+      stage: "selecting",
+      profileName: input.profileName,
+      requesterUserId: input.context.event.source.userId,
+      source: input.context.event.source,
+      query: input.query,
+      requestedKind: input.requestedKind,
+      items,
+      expiresAt: new Date(input.now.getTime() + SELECTION_TTL_MS).toISOString()
+    });
     return {
       ok: true,
-      replyText: ["公開搜尋結果（未下載、未保存）：", summary].join("\n")
+      replyText: [
+        "公開搜尋結果（尚未下載或保存）：",
+        summary,
+        "可回覆編號選擇：",
+        ...items.map((item, index) => `${index + 1}. ${item.title}\n${item.url}`)
+      ].join("\n")
     };
   } catch {
     return { ok: true, replyText: "外部搜尋整理目前不可用，請稍後再試。" };
   }
+}
+
+async function findExternalSheetMusicImport(
+  sessionStore: SessionStore,
+  context: TextMessageContext
+) {
+  return sessionStore.findExternalSheetMusicImport({
+    profileName: context.profile.name,
+    source: context.event.source,
+    requesterUserId: context.event.source.userId
+  });
+}
+
+async function continueExternalSheetMusicImport(input: {
+  options: FindPopSheetMusicTextMessageOptions;
+  session: ExternalSheetMusicImportSession;
+  text: string;
+  context: TextMessageContext;
+  now: Date;
+}): Promise<FunctionExecutionResult> {
+  if (isExternalSearchCancel(input.text)) {
+    await input.options.sessionStore.delete(input.session.id);
+    return { ok: true, replyText: "好，我不保存這個搜尋結果。" };
+  }
+  if (
+    input.session.stage !== "selecting" &&
+    !input.context.profile.enabledFunctions.includes("save_resource")
+  ) {
+    await input.options.sessionStore.delete(input.session.id);
+    return { ok: true, replyText: "目前沒有保存檔案的權限。" };
+  }
+
+  if (input.session.stage === "selecting") {
+    const selectedIndex = numericSelectionToIndex(input.text);
+    if (selectedIndex === undefined || !input.session.items[selectedIndex]) {
+      return { ok: true, replyText: INVALID_SELECTION_MESSAGE };
+    }
+    if (!input.context.profile.enabledFunctions.includes("save_resource")) {
+      await input.options.sessionStore.delete(input.session.id);
+      return { ok: true, replyText: "你可以查看這個公開結果，但目前沒有保存檔案的權限。" };
+    }
+    const targetKind = input.session.requestedKind;
+    const updated: ExternalSheetMusicImportSession = {
+      ...input.session,
+      selectedIndex,
+      targetKind,
+      stage: targetKind ? "awaiting_confirmation" : "awaiting_target"
+    };
+    await input.options.sessionStore.set(updated);
+    if (!targetKind) {
+      return { ok: true, replyText: "要存到流行歌譜還是詩歌歌譜？" };
+    }
+    return externalImportConfirmation(updated);
+  }
+
+  if (input.session.stage === "awaiting_target") {
+    const targetKind = inferTargetKindReply(input.text);
+    if (!targetKind) {
+      return { ok: true, replyText: "請回覆「流行歌譜」或「詩歌歌譜」。" };
+    }
+    const updated: ExternalSheetMusicImportSession = {
+      ...input.session,
+      targetKind,
+      stage: "awaiting_confirmation"
+    };
+    await input.options.sessionStore.set(updated);
+    return externalImportConfirmation(updated);
+  }
+
+  if (!/^(保存|確認|確定|好|yes|y)$/iu.test(input.text.trim())) {
+    return { ok: true, replyText: "請回覆「保存」確認，或回覆「取消」。" };
+  }
+  if (
+    !input.context.profile.enabledFunctions.includes("save_resource") ||
+    !input.options.externalImport
+  ) {
+    await input.options.sessionStore.delete(input.session.id);
+    return { ok: true, replyText: "目前沒有開放匯入歌譜檔案。" };
+  }
+  const selected = input.session.items[input.session.selectedIndex ?? -1];
+  const targetKind = input.session.targetKind;
+  if (!selected || !targetKind) {
+    await input.options.sessionStore.delete(input.session.id);
+    return { ok: true, replyText: "這個選擇已失效，請重新搜尋。" };
+  }
+  try {
+    const binary = await input.options.externalImport.client.download({
+      url: selected.url,
+      maxBytes: input.options.externalImport.maxBytes,
+      timeoutMs: input.options.externalImport.timeoutMs,
+      maxRedirects: input.options.externalImport.maxRedirects
+    });
+    return await input.options.externalImport.publisher.publish({
+      binary: {
+        data: binary.data,
+        declaredFileName: binary.fileName,
+        declaredContentType: binary.contentType,
+        sourceKind: "external"
+      },
+      target: {
+        profileName: input.context.profile.name,
+        sourceKey: targetKind === "pop_sheet" ? "pop_sheet_music" : "hymn_sheet_music",
+        itemKind: targetKind,
+        domain: "sheet_music",
+        title: safeExternalTitle(selected.title)
+      },
+      now: input.now
+    });
+  } catch {
+    return { ok: true, replyText: "無法下載安全的直接歌譜檔案，請確認結果是 PDF 或圖片。" };
+  } finally {
+    await input.options.sessionStore.delete(input.session.id);
+  }
+}
+
+function externalImportConfirmation(session: ExternalSheetMusicImportSession) {
+  const item = session.items[session.selectedIndex ?? -1];
+  const host = item ? new URL(item.url).hostname : "未知來源";
+  return {
+    ok: true,
+    replyText: [
+      "請確認匯入公開歌譜：",
+      `名稱：${item?.title ?? "未知"}`,
+      `來源：${host}`,
+      `存到：${session.targetKind === "pop_sheet" ? "流行歌譜" : "詩歌歌譜"}`,
+      "回覆「保存」代表你確認教會可以保存並使用這份檔案。"
+    ].join("\n")
+  };
+}
+
+function inferRequestedSheetKind(query: string): "pop_sheet" | "hymn_sheet" | undefined {
+  if (/詩歌|敬拜/u.test(query)) return "hymn_sheet";
+  if (/流行/u.test(query)) return "pop_sheet";
+  return undefined;
+}
+
+function inferTargetKindReply(text: string): "pop_sheet" | "hymn_sheet" | undefined {
+  if (/詩歌|敬拜/u.test(text)) return "hymn_sheet";
+  if (/流行/u.test(text)) return "pop_sheet";
+  return undefined;
+}
+
+function safeExternalTitle(value: string): string {
+  return (
+    value
+      .normalize("NFKC")
+      .replace(/\.(?:pdf|jpe?g|png)$/iu, "")
+      .replace(/[<>:"/\\|?*]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 100) || "未命名歌譜"
+  );
 }
 
 function isExternalSearchConfirm(text: string): boolean {

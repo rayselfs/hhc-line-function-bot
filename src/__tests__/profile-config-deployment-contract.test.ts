@@ -45,6 +45,8 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).toContain('value: "26214400"');
     expect(manifest).toContain("name: LINE_CONTENT_DOWNLOAD_TIMEOUT_MS");
     expect(manifest).toContain('value: "30000"');
+    expect(manifest).toContain("name: EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS");
+    expect(manifest).toContain("name: EXTERNAL_RESOURCE_MAX_REDIRECTS");
     expect(manifest).not.toContain("BOT_PROFILES_BASE64_JSON");
     expect(manifest).not.toContain("bot-profiles-base64-json");
     expect(pipeline).toContain("- config/**");
@@ -59,6 +61,8 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("CLAMAV_HOST=172.16.65.5");
     expect(pipeline).toContain("MAX_ATTACHMENT_BYTES=26214400");
     expect(pipeline).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
+    expect(pipeline).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
+    expect(pipeline).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
     expect(helper?.enabledFunctions).toEqual(
       expect.arrayContaining(["find_resource", "save_resource"])
     );

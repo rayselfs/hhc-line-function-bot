@@ -498,6 +498,64 @@ describe("find_pop_sheet_music", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("imports a selected direct result only after target selection and confirmation", async () => {
+    const now = new Date("2026-07-04T10:00:00.000Z");
+    const sessionStore = new InMemorySessionStore({ now: () => now });
+    await sessionStore.set({
+      id: "external-import-1",
+      type: "external_sheet_music_import",
+      stage: "selecting",
+      profileName: "main",
+      requesterUserId: "U1",
+      source: handlerContext().event.source,
+      query: "Amazing Grace",
+      items: [{ title: "Amazing Grace.pdf", url: "https://example.org/amazing-grace.pdf" }],
+      expiresAt: "2026-07-04T10:10:00.000Z"
+    });
+    const client = {
+      download: vi.fn().mockResolvedValue({
+        data: new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+        finalUrl: "https://example.org/amazing-grace.pdf",
+        fileName: "amazing-grace.pdf",
+        contentType: "application/pdf"
+      })
+    };
+    const publisher = {
+      publish: vi.fn().mockResolvedValue({
+        ok: true,
+        replyText: "已保存：Amazing Grace",
+        executedAction: "save_resource"
+      })
+    };
+    const textHandler = createFindPopSheetMusicTextMessageHandler({
+      graph: { listFolderChildren: vi.fn(), createSharingLink: vi.fn() },
+      sessionStore,
+      externalImport: { client, publisher, maxBytes: 1024, timeoutMs: 1000, maxRedirects: 3 },
+      now: () => now
+    });
+    const context = handlerContext();
+    context.profile.enabledFunctions = ["find_pop_sheet_music", "save_resource"];
+
+    await expect(textHandler.handle({ text: "1" }, context)).resolves.toMatchObject({
+      replyText: expect.stringContaining("流行歌譜還是詩歌歌譜")
+    });
+    await expect(textHandler.handle({ text: "流行歌譜" }, context)).resolves.toMatchObject({
+      replyText: expect.stringContaining("教會可以保存並使用")
+    });
+    const result = await textHandler.handle({ text: "保存" }, context);
+
+    expect(result).toMatchObject({ executedAction: "save_resource" });
+    expect(client.download).toHaveBeenCalledTimes(1);
+    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    await expect(
+      sessionStore.findExternalSheetMusicImport({
+        profileName: "main",
+        source: context.event.source,
+        requesterUserId: "U1"
+      })
+    ).resolves.toBeUndefined();
+  });
+
   it("stores multiple candidates in a generic selection session", async () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),

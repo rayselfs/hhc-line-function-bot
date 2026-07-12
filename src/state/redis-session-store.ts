@@ -2,6 +2,7 @@ import type {
   ConversationSession,
   ExternalSearchConsentLookup,
   ExternalSearchConsentSession,
+  ExternalSheetMusicImportSession,
   PendingAttachmentSession,
   PendingFunctionLookup,
   PendingFunctionSession,
@@ -125,6 +126,22 @@ export class RedisSessionStore implements SessionStore {
       );
 
     return latestSession(liveSessions);
+  }
+
+  async findExternalSheetMusicImport(
+    lookup: PptSelectionLookup
+  ): Promise<ExternalSheetMusicImportSession | undefined> {
+    const sessions = (await this.liveSessions())
+      .filter(
+        (session): session is ExternalSheetMusicImportSession =>
+          session.type === "external_sheet_music_import"
+      )
+      .filter((session) => session.profileName === lookup.profileName)
+      .filter((session) => sourceMatches(session.source, lookup.source))
+      .filter((session) =>
+        requesterMatchesForSource(lookup.source, session.requesterUserId, lookup.requesterUserId)
+      );
+    return latestSession(sessions);
   }
 
   async summary(): Promise<SessionStoreSummary> {

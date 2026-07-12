@@ -1,5 +1,9 @@
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createLineSdkContentClient } from "../clients/line.js";
+import {
+  createExternalBinaryClient,
+  type ExternalBinaryClient
+} from "../clients/external-binary.js";
 import { createNotionDatabaseClient } from "../clients/notion.js";
 import { createWikipediaClient, type WikipediaClient } from "../wikipedia/client.js";
 import type { AccessStore } from "../access/types.js";
@@ -36,6 +40,7 @@ export interface RegistryClients {
   catalog?: CatalogStore;
   scheduleStore?: ScheduleStore;
   lineContent?: LineContentClient;
+  externalBinary?: ExternalBinaryClient;
   virusScanner?: VirusScanner;
   wikipedia?: WikipediaClient;
   wikipediaSummarizer?: WikipediaSummarizer;
@@ -88,6 +93,7 @@ export function createFunctionRegistries(
       catalog,
       scheduleStore,
       lineContent,
+      externalBinary: clients.externalBinary ?? createExternalBinaryClient(),
       virusScanner: clients.virusScanner,
       now: clients.now,
       requestIdFactory: clients.requestIdFactory

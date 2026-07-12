@@ -57,6 +57,10 @@ properties:
             value: "26214400"
           - name: LINE_CONTENT_DOWNLOAD_TIMEOUT_MS
             value: "30000"
+          - name: EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS
+            value: "15000"
+          - name: EXTERNAL_RESOURCE_MAX_REDIRECTS
+            value: "3"
           - name: PROFILE_CONFIG_PATH
             value: /app/config/profiles.json
           - name: LINE_HELPER_CHANNEL_SECRET

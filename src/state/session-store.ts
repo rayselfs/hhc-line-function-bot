@@ -80,12 +80,28 @@ export interface ExternalSearchConsentSession {
   expiresAt: string;
 }
 
+export interface ExternalSheetMusicImportSession {
+  id: string;
+  type: "external_sheet_music_import";
+  stage: "selecting" | "awaiting_target" | "awaiting_confirmation";
+  profileName: string;
+  requesterUserId?: string;
+  source: LineSource;
+  query: string;
+  requestedKind?: "pop_sheet" | "hymn_sheet";
+  items: Array<{ title: string; url: string; snippet?: string }>;
+  selectedIndex?: number;
+  targetKind?: "pop_sheet" | "hymn_sheet";
+  expiresAt: string;
+}
+
 export type ConversationSession =
   | PptSelectionSession
   | SelectionSession
   | PendingFunctionSession
   | PendingAttachmentSession
-  | ExternalSearchConsentSession;
+  | ExternalSearchConsentSession
+  | ExternalSheetMusicImportSession;
 export type ConversationSessionType = ConversationSession["type"];
 
 export interface SessionStoreSummary {
@@ -122,6 +138,9 @@ export interface SessionStore {
   findExternalSearchConsent(
     lookup: ExternalSearchConsentLookup
   ): Promise<ExternalSearchConsentSession | undefined>;
+  findExternalSheetMusicImport(
+    lookup: PptSelectionLookup
+  ): Promise<ExternalSheetMusicImportSession | undefined>;
   summary(): Promise<SessionStoreSummary>;
   clear(): Promise<number>;
 }
@@ -231,6 +250,25 @@ export class InMemorySessionStore implements SessionStore {
       );
 
     return liveSessions.sort(
+      (left, right) => new Date(right.expiresAt).getTime() - new Date(left.expiresAt).getTime()
+    )[0];
+  }
+
+  async findExternalSheetMusicImport(
+    lookup: PptSelectionLookup
+  ): Promise<ExternalSheetMusicImportSession | undefined> {
+    const sessions = Array.from(this.sessions.values())
+      .map((session) => this.liveSession(session))
+      .filter(
+        (session): session is ExternalSheetMusicImportSession =>
+          session?.type === "external_sheet_music_import"
+      )
+      .filter((session) => session.profileName === lookup.profileName)
+      .filter((session) => sourceMatches(session.source, lookup.source))
+      .filter((session) =>
+        requesterMatchesForSource(lookup.source, session.requesterUserId, lookup.requesterUserId)
+      );
+    return sessions.sort(
       (left, right) => new Date(right.expiresAt).getTime() - new Date(left.expiresAt).getTime()
     )[0];
   }

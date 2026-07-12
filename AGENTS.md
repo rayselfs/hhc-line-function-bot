@@ -163,7 +163,7 @@ When adding or changing an admin action:
 - Group and room clarification/selection sessions are requester-scoped. They require the same `source.userId` to continue, and should not be created or matched when LINE does not provide a requester user id.
 - Long-running job result retrieval follows the same requester/source rule. A group user must not be able to fetch another user's job result.
 - Soft display-name personalization is for task-state replies such as "what title?" or "please choose"; avoid adding names to final data-heavy function results unless the user asks.
-- SearXNG is only a sheet-music not-found fallback after requester consent. It must not become a general web browsing function, must not fetch result pages or download files, and must not save results automatically.
+- SearXNG is only a sheet-music not-found fallback after requester consent. It must not become a general web browsing function and must not save results automatically. An authorized requester with effective `save_resource` permission may explicitly select and confirm a direct HTTPS PDF/JPEG/PNG result; the safe downloader must reject HTML, private/reserved addresses, unsafe redirects, and authenticated downloads, then publish through the sole shared binary publisher.
 
 ## Workflow
 

@@ -186,7 +186,7 @@ Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. P
 
 For sheet music requests, Ollama can extract the song title, optional artist, requested file type, and fuzzy/exact match preference. Keyword fallback stays conservative and only routes requests that explicitly mention sheet music wording.
 
-Sheet music lookup remains catalog/local-first. If no local sheet music matches and `SEARXNG_BASE_URL` is configured, the bot asks the requester whether to search public web results. It calls SearXNG only after explicit consent, sends only the query to SearXNG, passes only returned title/snippet/url fields to the `web_summarization` provider, and does not fetch pages, download files, or save results.
+Sheet music lookup remains catalog/local-first. If no local sheet music matches and `SEARXNG_BASE_URL` is configured, the bot asks the requester whether to search public web results. It calls SearXNG only after explicit consent, sends only the query to SearXNG, and passes only returned title/snippet/url fields to the `web_summarization` provider. Results are never fetched or saved automatically. An authorized requester with effective `save_resource` permission may explicitly select and confirm one direct HTTPS PDF/JPEG/PNG result for import into the shared pop or hymn catalog. HTML pages, authenticated downloads, and crawling remain prohibited.
 
 The shared query-domain resolver runs before keyword fallback and guards model output when the user names an explicit domain. For example, `查維基百科` with no topic asks for the missing topic instead of letting a model invent one, and `查週報音檔` resolves to internal catalog search rather than Wikipedia when `find_resource` is enabled.
 

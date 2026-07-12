@@ -280,7 +280,12 @@ music has a separate not-found fallback: when local catalog/OneDrive lookup
 returns nothing, the bot may ask the requester for consent and then call the
 configured internal SearXNG endpoint. That fallback only uses returned
 title/snippet/url fields, passes them to the `web_summarization` provider for
-ranking/summary, and never downloads, crawls, or saves web results.
+ranking/summary, and never downloads or saves results automatically. A
+requester with effective `save_resource` permission may explicitly select and
+confirm one direct HTTPS PDF/JPEG/PNG result. Each request and redirect is
+DNS-resolved, checked for private/reserved addresses, and pinned to the
+validated address; HTML, credentials, cookies, and page crawling are rejected.
+Confirmed bytes enter the same shared binary publisher as LINE attachments.
 
 Catalog-backed lookups are separated from user-facing function names. The
 canonical functions are `find_ppt_slides`, `find_sheet_music`, and
