@@ -49,3 +49,36 @@ Implemented controlled agent orchestration behind disabled, shadow, and enabled 
 - No public health/readiness, OAuth, access-control, attachment, or deployment behavior was changed.
 - No secrets, raw group history, raw messages, generated sharing links, or provider credentials are added to traces or planner inputs.
 - No push or deployment was performed.
+
+## Lifecycle and Shadow Fault-Isolation Correction
+
+### Status
+
+Addressed the four independent-review blockers in a separate corrective change.
+
+### RED Evidence
+
+- Shadow-focused RED: 3 failures proved the observer was absent and both never-resolving and late-rejecting shadow work delayed the legacy reply.
+- Combined runtime/entrance RED: 8 failures proved missing-envelope results cleared prior tasks, pending completions did not transition tasks, and postback selections did not transition requester-scoped tasks.
+- Continuation-write RED: temporarily removing the enabled-mode gate produced exactly 1 failure, showing `recordFunctionContext` was called once with controlled result data.
+
+### Corrective Design
+
+- Launches shadow resolution as a detached observed promise. It never mutates the authoritative turn's step array or delays legacy routing, execution, trace completion, or reply.
+- Reports sanitized shadow success/failure through `ControlledShadowObserver`; both planner and observer rejection paths terminate with an attached catch, preventing late unhandled rejections.
+- Adds generic `applyActiveTaskTransition()` with explicit structured-success authority. Missing envelopes, failed results, and `not_found`, `ambiguous`, or `unavailable` envelopes preserve state. A contract/result operation intersection is required to record a continuable task; explicit non-continuable success clears state.
+- Reuses the transition for enabled routed execution, pending-function text completion, and requester-scoped postback selection completion. Group/room postbacks without a requester cannot create state.
+- Enabled controlled execution neither reads, merges, passes, nor writes legacy function continuation state. Disabled/shadow legacy execution retains the existing continuation behavior.
+- Task 9 persistence remains untouched.
+
+### Verification
+
+- Focused runtime/entrance suites: 2 files / 120 tests passed.
+- Targeted Prettier check for all five corrective source/test files: passed.
+- `pnpm typecheck`: passed.
+- `pnpm lint`: passed.
+- `pnpm build`: passed.
+- `pnpm eval:router`: passed, 66 cases.
+- `pnpm test`: passed, 74 files / 776 tests.
+- `git diff --check`: passed.
+- Whole-repo `pnpm format:check` reports only the same 12 pre-existing `.superpowers/sdd` control files; corrective product source/tests pass Prettier.

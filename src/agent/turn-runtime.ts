@@ -8,7 +8,8 @@ import {
 import { guardSystemRouteWithFunctionIntent } from "./function-intent-guard.js";
 import { mergeFunctionContinuationArguments } from "./function-continuation.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
-import { activeTaskFromResult, type ActiveTaskContext } from "./active-task.js";
+import type { ActiveTaskContext } from "./active-task.js";
+import { applyActiveTaskTransition } from "./active-task-transition.js";
 import type { ControlledAgentRouter } from "./controlled-agent-router.js";
 import type { ValidatedAgentPlan } from "./plan-validator.js";
 import { messages } from "../messages.js";
@@ -74,9 +75,20 @@ export interface AgentTurnRuntimeOptions {
   contextManager?: ContextManager;
   conversationWindowStore?: ConversationWindowStore;
   controlledAgentRouter?: ControlledAgentRouter;
+  controlledShadowObserver?: ControlledShadowObserver;
   timeZone?: string;
   now?: () => Date;
 }
+
+export interface ControlledShadowObservation {
+  disposition: ValidatedAgentPlan["disposition"];
+  capability?: FunctionName;
+  reasonCode?: string;
+}
+
+export type ControlledShadowObserver = (
+  observation: ControlledShadowObservation
+) => void | Promise<void>;
 
 export interface AgentTextTurnInput {
   profile: BotProfileConfig;
@@ -192,6 +204,16 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         });
         if (result) {
           if (result.executedAction) {
+            if (controlledRoutingMode(input.profile) === "enabled") {
+              await applyActiveTaskTransition({
+                store: options.conversationWindowStore,
+                scope: activeTaskScope(options.conversationWindowStore, input),
+                capability: result.executedAction,
+                result,
+                now: now(),
+                ttlMs: activeTaskTtlMs(input.profile)
+              });
+            }
             await recordFunctionWriteAudit(
               options.accessStore,
               context,
@@ -276,8 +298,15 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         }
         route = controlledPlanToRoute(plan, input);
       } else {
-        const shadowPlan =
-          controlledMode === "shadow" ? resolveShadowPlan(options, input, text) : undefined;
+        if (controlledMode === "shadow") {
+          startShadowObservation(
+            options,
+            input,
+            text,
+            options.controlledShadowObserver ??
+              ((observation) => recordTrace(input, [controlledTraceStep(observation)]))
+          );
+        }
         try {
           route = await options.router.route({
             profileName: input.profile.name,
@@ -299,9 +328,6 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
             errorName: error instanceof Error ? error.name : typeof error
           });
           return finish(input, steps, { ok: false, replyText: messages.requestFailed });
-        }
-        if (shadowPlan) {
-          steps.push(controlledTraceStep(await shadowPlan));
         }
         route = guardSystemRouteWithFunctionIntent(
           route,
@@ -493,6 +519,16 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           ...context,
           continuation: continuation?.functionName === route.action ? continuation : undefined
         });
+        if (controlledMode === "enabled") {
+          await applyActiveTaskTransition({
+            store: options.conversationWindowStore,
+            scope: activeTaskScope(options.conversationWindowStore, input),
+            capability: route.action,
+            result,
+            now: now(),
+            ttlMs: activeTaskTtlMs(input.profile)
+          });
+        }
         await recordFunctionWriteAudit(
           options.accessStore,
           context,
@@ -506,21 +542,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           arguments: normalizedArguments,
           result
         });
-        await recordFunctionContinuation(
-          options.conversationWindowStore,
-          input,
-          route.action,
-          result,
-          continuation
-        );
-        if (controlledMode === "enabled") {
-          await recordActiveTaskAfterResult(
+        if (controlledMode !== "enabled") {
+          await recordFunctionContinuation(
             options.conversationWindowStore,
             input,
             route.action,
             result,
-            activeTask,
-            now()
+            continuation
           );
         }
         const durationMs = elapsedMs(functionStartedAt);
@@ -835,7 +863,28 @@ async function resolveShadowPlan(
   }
 }
 
-function controlledTraceStep(plan: ValidatedAgentPlan): AgentTurnTraceStep {
+function startShadowObservation(
+  options: AgentTurnRuntimeOptions,
+  input: AgentTextTurnInput,
+  text: string,
+  observer: ControlledShadowObserver
+): void {
+  void Promise.resolve()
+    .then(() => resolveShadowPlan(options, input, text))
+    .then((plan) =>
+      observer({
+        disposition: plan.disposition,
+        capability:
+          plan.disposition === "execute" || plan.disposition === "clarify"
+            ? plan.capability
+            : undefined,
+        reasonCode: plan.reasonCode
+      })
+    )
+    .catch(() => undefined);
+}
+
+function controlledTraceStep(plan: ControlledShadowObservation): AgentTurnTraceStep {
   return {
     phase: "controlled_route",
     outcome: plan.disposition,
@@ -932,29 +981,6 @@ async function readActiveTask(
   return undefined;
 }
 
-async function recordActiveTaskAfterResult(
-  store: ConversationWindowStore | undefined,
-  input: AgentTextTurnInput,
-  capability: FunctionName,
-  result: FunctionExecutionResult,
-  previous: ActiveTaskContext | undefined,
-  currentTime: Date
-): Promise<void> {
-  const scope = activeTaskScope(store, input);
-  if (!store || !scope || !result.ok) return;
-  if (result.agentResult && result.agentResult.status !== "success") return;
-
-  const ttlMs = Math.max(1, input.profile.generalAgent?.conversationWindowSeconds ?? 60) * 1000;
-  const next = activeTaskFromResult(capability, result, currentTime, ttlMs);
-  if (next) {
-    await store.recordActiveTask({ scope, task: next, ttlMs });
-    return;
-  }
-  if (previous && previous.capability !== capability && !result.continuation) {
-    await store.clearActiveTask(scope);
-  }
-}
-
 function activeTaskScope(
   store: ConversationWindowStore | undefined,
   input: AgentTextTurnInput
@@ -963,6 +989,10 @@ function activeTaskScope(
   const requesterUserId = input.event.source.userId;
   if (!store || !source || !requesterUserId) return undefined;
   return { profileName: input.profile.name, sourceKey: source, requesterUserId };
+}
+
+function activeTaskTtlMs(profile: BotProfileConfig): number {
+  return Math.max(1, profile.generalAgent?.conversationWindowSeconds ?? 60) * 1000;
 }
 
 async function readFunctionContinuation(

@@ -7,6 +7,7 @@ import { createAgentTurnRuntime } from "../agent/turn-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
 import { createQueryScheduleHandler } from "../functions/query-schedule.js";
+import { createPendingFunctionTextMessageHandler } from "../functions/pending-function.js";
 import { InMemoryLastErrorStore } from "../observability/last-error-store.js";
 import { InMemoryLastRouteStore } from "../observability/last-route-store.js";
 import { MemoryInFlightStore } from "../in-flight/in-flight-store.js";
@@ -19,6 +20,7 @@ import type {
   GraphDriveClient,
   LineEvent,
   NotionDatabaseClient,
+  TextMessageHandlerRegistry,
   TextGenerationProvider
 } from "../types.js";
 
@@ -80,6 +82,11 @@ function createRuntime(options: {
   textFallbackGenerator?: TextGenerationProvider;
   conversationWindowStore?: InMemoryConversationWindowStore;
   controlledAgentRouter?: ControlledAgentRouter;
+  textMessageHandlers?: TextMessageHandlerRegistry;
+  controlledShadowObserver?: (event: {
+    disposition: string;
+    reasonCode?: string;
+  }) => void | Promise<void>;
 }) {
   const now = () => new Date("2026-07-08T00:00:00.000Z");
   const memoryStore = options.memoryStore ?? new InMemoryAgentMemoryStore({ now });
@@ -92,7 +99,7 @@ function createRuntime(options: {
           .mockResolvedValue({ type: "deny", reason: "not_matched", provider: "ollama" })
       } satisfies FunctionRouterPort),
     functionRegistry: options.functionRegistry ?? {},
-    textMessageHandlers: {},
+    textMessageHandlers: options.textMessageHandlers ?? {},
     adminActionRouter: undefined,
     adminActionRegistry: undefined,
     accessStore: undefined,
@@ -110,6 +117,7 @@ function createRuntime(options: {
     textFallbackGenerator: options.textFallbackGenerator,
     conversationWindowStore: options.conversationWindowStore,
     controlledAgentRouter: options.controlledAgentRouter,
+    controlledShadowObserver: options.controlledShadowObserver,
     now
   });
 }
@@ -175,7 +183,7 @@ describe("AgentTurnRuntime", () => {
   });
 
   it("runs shadow routing without changing legacy execution or controlled state", async () => {
-    const traceStore = new InMemoryAgentTraceStore(10);
+    const controlledShadowObserver = vi.fn();
     const controlledResolve = vi.fn<ControlledAgentRouter["resolve"]>().mockResolvedValue({
       disposition: "execute",
       capability: "query_knowledge",
@@ -202,7 +210,7 @@ describe("AgentTurnRuntime", () => {
       controlledAgentRouter: { resolve: controlledResolve },
       functionRegistry: { query_schedule: legacyHandler, query_knowledge: controlledHandler },
       conversationWindowStore: store,
-      traceStore
+      controlledShadowObserver
     });
 
     const result = await runtime.handleTextTurn({
@@ -225,16 +233,91 @@ describe("AgentTurnRuntime", () => {
     await expect(
       store.activeTask({ profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" })
     ).resolves.toBeUndefined();
-    const traces = await traceStore.list();
-    expect(traces[0]?.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          phase: "controlled_route",
-          outcome: "execute",
-          action: "query_knowledge",
-          reason: "explicit_intent"
+    await vi.waitFor(() =>
+      expect(controlledShadowObserver).toHaveBeenCalledWith({
+        disposition: "execute",
+        capability: "query_knowledge",
+        reasonCode: "explicit_intent"
+      })
+    );
+  });
+
+  it("does not wait for a never-resolving shadow dependency", async () => {
+    const legacyRoute = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const runtime = createRuntime({
+      router: { route: legacyRoute },
+      controlledAgentRouter: { resolve: vi.fn(() => new Promise(() => undefined)) }
+    });
+
+    const result = await Promise.race([
+      runtime.handleTextTurn({
+        profile: profile(["query_schedule"], {
+          controlledAgent: {
+            enabled: false,
+            shadow: true,
+            maxCandidates: 3,
+            minPlannerConfidence: 0.65
+          }
+        }),
+        event: textEvent("查主日服事"),
+        requestId: "req-shadow-never"
+      }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 25))
+    ]);
+
+    expect(result).not.toBe("timeout");
+    expect(result).toMatchObject({ replyText: "目前不支援這個請求。" });
+  });
+
+  it("observes a late shadow rejection without delaying or changing the legacy reply", async () => {
+    let rejectShadow!: (reason: Error) => void;
+    const shadow = new Promise<never>((_resolve, reject) => {
+      rejectShadow = reject;
+    });
+    const controlledShadowObserver = vi.fn();
+    const runtime = createRuntime({
+      router: {
+        route: vi.fn().mockResolvedValue({
+          type: "deny",
+          reason: "not_matched",
+          provider: "ollama"
         })
-      ])
+      },
+      controlledAgentRouter: { resolve: vi.fn(() => shadow) },
+      controlledShadowObserver
+    });
+    const turn = runtime.handleTextTurn({
+      profile: profile(["query_schedule"], {
+        controlledAgent: {
+          enabled: false,
+          shadow: true,
+          maxCandidates: 3,
+          minPlannerConfidence: 0.65
+        }
+      }),
+      event: textEvent("查主日服事"),
+      requestId: "req-shadow-late-rejection"
+    });
+
+    const first = await Promise.race([
+      turn,
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 25))
+    ]);
+    rejectShadow(new Error("late planner failure"));
+    await turn;
+
+    expect(first).not.toBe("timeout");
+    expect(first).toMatchObject({ replyText: "目前不支援這個請求。" });
+    await vi.waitFor(() =>
+      expect(controlledShadowObserver).toHaveBeenCalledWith({
+        disposition: "clarify",
+        capability: undefined,
+        reasonCode: "planner_unavailable"
+      })
     );
   });
 
@@ -279,7 +362,18 @@ describe("AgentTurnRuntime", () => {
       arguments: { role: "音控", meeting: "晨更" },
       ttlMs: 60_000
     });
-    const handler = vi.fn<FunctionHandler>().mockResolvedValue({ ok: true, replyText: "主日服事" });
+    const recordFunctionContext = vi.spyOn(store, "recordFunctionContext");
+    const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "主日服事",
+      continuation: { arguments: { meeting: "主日" } },
+      agentResult: {
+        status: "success",
+        replyText: "主日服事",
+        anchors: { meeting: "主日" },
+        supportedOperations: ["continue"]
+      }
+    });
     const runtime = createRuntime({
       controlledAgentRouter: {
         resolve: vi.fn().mockResolvedValue({
@@ -295,6 +389,7 @@ describe("AgentTurnRuntime", () => {
 
     await runtime.handleTextTurn({
       profile: profile(["query_schedule"], {
+        generalAgent: { enabled: true, conversationWindowSeconds: 60 },
         controlledAgent: {
           enabled: true,
           shadow: false,
@@ -309,6 +404,7 @@ describe("AgentTurnRuntime", () => {
     expect(handler.mock.calls[0]?.[0]).toEqual({ query: "主日服事" });
     expect(handler.mock.calls[0]?.[0]).not.toHaveProperty("role");
     expect(handler.mock.calls[0]?.[1]?.continuation).toBeUndefined();
+    expect(recordFunctionContext).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -414,7 +510,7 @@ describe("AgentTurnRuntime", () => {
     expect(resolve).toHaveBeenNthCalledWith(2, expect.objectContaining({ activeTask: undefined }));
   });
 
-  it("stores successful structured state, preserves it on not-found, and clears it after a different unstructured success", async () => {
+  it("stores successful structured state and preserves it on not-found or a missing result envelope", async () => {
     const store = new InMemoryConversationWindowStore({
       now: () => new Date("2026-07-08T00:00:00.000Z")
     });
@@ -496,9 +592,162 @@ describe("AgentTurnRuntime", () => {
     await runtime.handleTextTurn({
       profile: enabledProfile,
       event: textEvent("查 Fastify"),
-      requestId: "req-task-clear"
+      requestId: "req-task-unstructured"
     });
-    await expect(store.activeTask(scope)).resolves.toBeUndefined();
+    await expect(store.activeTask(scope)).resolves.toEqual(successfulTask);
+  });
+
+  it.each(["找不到符合的投影片", "找到多份投影片，請選一份"])(
+    "preserves an active task after an unstructured PPT result: %s",
+    async (replyText) => {
+      const now = new Date("2026-07-08T00:00:00.000Z");
+      const store = new InMemoryConversationWindowStore({ now: () => now });
+      const scope = { profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" };
+      await store.recordActiveTask({
+        scope,
+        task: {
+          version: 1,
+          capability: "query_schedule",
+          anchors: { meeting: "主日" },
+          entities: [{ type: "role", key: "front-camera", label: "前攝影" }],
+          supportedOperations: ["continue"],
+          createdAt: now.toISOString(),
+          expiresAt: new Date(now.getTime() + 60_000).toISOString()
+        },
+        ttlMs: 60_000
+      });
+      const previous = await store.activeTask(scope);
+      const runtime = createRuntime({
+        conversationWindowStore: store,
+        controlledAgentRouter: {
+          resolve: vi.fn().mockResolvedValue({
+            disposition: "execute",
+            capability: "find_ppt_slides",
+            arguments: { query: "奇異恩典" },
+            reasonCode: "explicit_capability_switch"
+          })
+        },
+        functionRegistry: {
+          find_ppt_slides: vi.fn().mockResolvedValue({ ok: true, replyText })
+        }
+      });
+
+      await runtime.handleTextTurn({
+        profile: profile(["query_schedule", "find_ppt_slides"], {
+          generalAgent: { enabled: true, conversationWindowSeconds: 60 },
+          controlledAgent: {
+            enabled: true,
+            shadow: false,
+            maxCandidates: 3,
+            minPlannerConfidence: 0.65
+          }
+        }),
+        event: textEvent("查奇異恩典投影片"),
+        requestId: `req-unstructured-${replyText.length}`
+      });
+
+      await expect(store.activeTask(scope)).resolves.toEqual(previous);
+    }
+  );
+
+  it("applies active-task lifecycle to pending-function completions", async () => {
+    const now = new Date("2026-07-08T00:00:00.000Z");
+    const sessionStore = new InMemorySessionStore({ now: () => now });
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now: () => now });
+    const scheduleHandler = vi
+      .fn<FunctionHandler>()
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "前攝影：姵穎",
+        agentResult: {
+          status: "success",
+          replyText: "前攝影：姵穎",
+          anchors: { meeting: "主日" },
+          entities: [{ type: "role", key: "front-camera", label: "前攝影" }],
+          supportedOperations: ["continue"]
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "請選一筆",
+        agentResult: { status: "ambiguous", replyText: "請選一筆" }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "目前無法查詢",
+        agentResult: { status: "unavailable", replyText: "目前無法查詢" }
+      });
+    const wikipediaHandler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "Fastify",
+      agentResult: { status: "success", replyText: "Fastify", supportedOperations: [] }
+    });
+    const pendingHandler = createPendingFunctionTextMessageHandler({
+      sessionStore,
+      functions: { query_schedule: scheduleHandler, query_wikipedia: wikipediaHandler }
+    });
+    const runtime = createRuntime({
+      sessionStore,
+      conversationWindowStore,
+      textMessageHandlers: { pending_function_answer: pendingHandler }
+    });
+    const enabledProfile = profile(["query_schedule", "query_wikipedia"], {
+      generalAgent: { enabled: true, conversationWindowSeconds: 60 },
+      controlledAgent: {
+        enabled: true,
+        shadow: false,
+        maxCandidates: 3,
+        minPlannerConfidence: 0.65
+      }
+    });
+    const scope = { profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" };
+    const storePending = async (id: string, action: "query_schedule" | "query_wikipedia") =>
+      sessionStore.set({
+        id,
+        type: "pending_function",
+        action,
+        profileName: "helper",
+        requesterUserId: "U1",
+        source: { type: "group", groupId: "C1", userId: "U1" },
+        arguments: { query: "" },
+        expiresAt: new Date(now.getTime() + 60_000).toISOString()
+      });
+
+    await storePending("pending-success", "query_schedule");
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("主日服事"),
+      requestId: "req-pending-success"
+    });
+    const successfulTask = await conversationWindowStore.activeTask(scope);
+    expect(successfulTask).toMatchObject({
+      capability: "query_schedule",
+      anchors: { meeting: "主日" }
+    });
+
+    await storePending("pending-ambiguous", "query_schedule");
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("下一筆"),
+      requestId: "req-pending-ambiguous"
+    });
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toEqual(successfulTask);
+
+    await storePending("pending-unavailable", "query_schedule");
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("再試一次"),
+      requestId: "req-pending-unavailable"
+    });
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toEqual(successfulTask);
+
+    await storePending("pending-noncontinuable", "query_wikipedia");
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("Fastify"),
+      requestId: "req-pending-clear"
+    });
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toBeUndefined();
   });
 
   it("rechecks enabled-function and source policy before executing a controlled plan", async () => {

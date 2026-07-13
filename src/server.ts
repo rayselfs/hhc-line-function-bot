@@ -12,6 +12,7 @@ import {
 } from "./access/registration-invite-code-store.js";
 import type { AgentRuntime } from "./agent/agent-runtime.js";
 import type { ControlledAgentRouter } from "./agent/controlled-agent-router.js";
+import { applyActiveTaskTransition } from "./agent/active-task-transition.js";
 import { createAgentTurnRuntime, type AgentTurnRuntime } from "./agent/turn-runtime.js";
 import { InMemoryAgentJobStore, type AgentJobScope, type AgentJobStore } from "./agent/jobs.js";
 import {
@@ -422,10 +423,22 @@ async function handleWebhook(
         requesterDisplayName,
         agentJobStore
       );
-      const postbackFunctionName = functionNameForAgentResource(
-        result.agentResource?.resourceType,
-        effectiveProfile.enabledFunctions
-      );
+      const postbackFunctionName =
+        result.executedAction ??
+        functionNameForAgentResource(
+          result.agentResource?.resourceType,
+          effectiveProfile.enabledFunctions
+        );
+      if (postbackFunctionName && effectiveProfile.controlledAgent?.enabled) {
+        await applyActiveTaskTransition({
+          store: conversationWindowStore,
+          scope: activeTaskScopeForEvent(conversationWindowStore, effectiveProfile, event),
+          capability: postbackFunctionName,
+          result,
+          now: new Date(),
+          ttlMs: Math.max(1, effectiveProfile.generalAgent?.conversationWindowSeconds ?? 60) * 1000
+        });
+      }
       if (postbackFunctionName) {
         await agentRuntime?.afterFunctionResult({
           context: { profile: effectiveProfile, event, requestId, requesterDisplayName },
@@ -985,6 +998,17 @@ function sourceKey(source: LineEvent["source"]): string | undefined {
     default:
       return undefined;
   }
+}
+
+function activeTaskScopeForEvent(
+  store: ConversationWindowStore,
+  profile: BotProfileConfig,
+  event: LineEvent
+): ConversationWindowScope | undefined {
+  const source = sourceKey(event.source);
+  const requesterUserId = event.source.userId;
+  if (!store || !source || !requesterUserId) return undefined;
+  return { profileName: profile.name, sourceKey: source, requesterUserId };
 }
 
 function parseWebhookPayload(body: Buffer): LineWebhookPayload | null {

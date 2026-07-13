@@ -3260,6 +3260,107 @@ describe("LINE entrance", () => {
     expect(replyText).toHaveBeenCalledWith("reply-token", "已選擇第 1 個投影片", undefined);
   });
 
+  it("applies active-task lifecycle to requester-scoped postback selections", async () => {
+    const config = testConfig();
+    config.profiles[0] = {
+      ...config.profiles[0]!,
+      generalAgent: { enabled: true, conversationWindowSeconds: 60 },
+      controlledAgent: {
+        enabled: true,
+        shadow: false,
+        maxCandidates: 3,
+        minPlannerConfidence: 0.65
+      }
+    };
+    const conversationWindowStore = new InMemoryConversationWindowStore();
+    const recordActiveTask = vi.spyOn(conversationWindowStore, "recordActiveTask");
+    const handleSelect = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "已選擇奇異恩典",
+        agentResource: {
+          resourceType: "ppt_slide",
+          driveId: "drive-1",
+          itemId: "item-1",
+          displayName: "奇異恩典.pptx"
+        },
+        agentResult: {
+          status: "success",
+          replyText: "已選擇奇異恩典",
+          anchors: { query: "奇異恩典" },
+          entities: [{ type: "selection", key: "item-1", label: "奇異恩典.pptx" }],
+          supportedOperations: ["select"]
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "請選一份",
+        agentResource: {
+          resourceType: "ppt_slide",
+          driveId: "drive-1",
+          itemId: "item-1",
+          displayName: "奇異恩典.pptx"
+        },
+        agentResult: { status: "ambiguous", replyText: "請選一份" }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "完成",
+        executedAction: "query_service_schedule",
+        agentResult: { status: "success", replyText: "完成", supportedOperations: [] }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "無 requester 不儲存",
+        agentResource: {
+          resourceType: "ppt_slide",
+          driveId: "drive-1",
+          itemId: "item-2",
+          displayName: "主日.pptx"
+        },
+        agentResult: {
+          status: "success",
+          replyText: "無 requester 不儲存",
+          supportedOperations: ["select"]
+        }
+      });
+    const app = createTestApp(config, {
+      router: { route: vi.fn() },
+      postbackHandlers: { select_ppt: handleSelect },
+      conversationWindowStore,
+      createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
+    });
+    const scope = { profileName: "main", sourceKey: "group:Cmain", requesterUserId: "U1" };
+    const sendSelection = async (requestId: string, userId?: string) => {
+      const body = lineBody({
+        type: "postback",
+        replyToken: `reply-${requestId}`,
+        source: { type: "group", groupId: "Cmain", ...(userId ? { userId } : {}) },
+        postback: { data: `action=select_ppt&requestId=${requestId}&index=0` }
+      });
+      return app.inject({
+        method: "POST",
+        url: "/api/line/webhook/main",
+        headers: signedHeaders(body, "main-secret"),
+        payload: body
+      });
+    };
+
+    expect((await sendSelection("success", "U1")).statusCode).toBe(200);
+    const successfulTask = await conversationWindowStore.activeTask(scope);
+    expect(successfulTask).toMatchObject({ capability: "find_ppt_slides" });
+
+    expect((await sendSelection("ambiguous", "U1")).statusCode).toBe(200);
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toEqual(successfulTask);
+
+    expect((await sendSelection("clear", "U1")).statusCode).toBe(200);
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toBeUndefined();
+
+    expect((await sendSelection("missing-requester")).statusCode).toBe(200);
+    expect(recordActiveTask).toHaveBeenCalledTimes(1);
+  });
+
   it("stores slow agent turns and lets the same requester retrieve the result by postback", async () => {
     const config = testConfig();
     config.profiles[0] = {
