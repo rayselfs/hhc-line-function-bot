@@ -4,6 +4,8 @@ import type { JsonRecord, NotionConfig, NotionDatabaseClient, NotionPage } from 
 
 interface NotionQueryResponse {
   results?: unknown[];
+  has_more?: boolean;
+  next_cursor?: string | null;
 }
 
 interface NotionQueryClient {
@@ -36,12 +38,22 @@ export function createNotionDatabaseClient(config: NotionConfig): NotionDatabase
         ...query
       };
       const dataSourceId = await resolveDataSourceId(notion, dataSourceIds, databaseId);
-      const response = await notion.dataSources?.query?.({
-        data_source_id: dataSourceId,
-        ...commonQuery
-      });
+      const results: unknown[] = [];
+      let startCursor: string | undefined;
+      do {
+        const response = await notion.dataSources?.query?.({
+          data_source_id: dataSourceId,
+          ...commonQuery,
+          ...(startCursor ? { start_cursor: startCursor } : {})
+        });
+        results.push(...(response?.results ?? []));
+        if (response?.has_more && !response.next_cursor) {
+          throw new Error("notion_pagination_cursor_missing");
+        }
+        startCursor = response?.has_more ? (response.next_cursor ?? undefined) : undefined;
+      } while (startCursor);
 
-      return (response?.results ?? []).filter(isNotionPage).map((page) => ({
+      return results.filter(isNotionPage).map((page) => ({
         id: page.id,
         properties: page.properties as Record<string, unknown>
       }));

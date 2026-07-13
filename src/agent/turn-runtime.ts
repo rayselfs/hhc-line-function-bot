@@ -264,7 +264,13 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         });
         return finish(input, steps, { ok: false, replyText: messages.requestFailed });
       }
-      route = guardSystemRouteWithFunctionIntent(route, text, input.profile.enabledFunctions);
+      const continuation = await readFunctionContinuation(options, input);
+      route = guardSystemRouteWithFunctionIntent(
+        route,
+        text,
+        input.profile.enabledFunctions,
+        continuation
+      );
 
       const routeDurationMs = elapsedMs(routeStartedAt);
       steps.push({
@@ -338,7 +344,6 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, { ok: true, replyText: messages.unsupported });
       }
 
-      const continuation = await readFunctionContinuation(options, input);
       const mergedArguments = mergeFunctionContinuationArguments({
         action: route.action,
         currentArguments: route.arguments,

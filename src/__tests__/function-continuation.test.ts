@@ -165,7 +165,34 @@ describe("function continuation context", () => {
           expiresAt: "2026-07-12T00:01:00Z"
         }
       })
-    ).toEqual({ query: "導播呢", date: "2026-07-14" });
+    ).toEqual({ query: "導播呢", date: "2026-07-14", role: "導播" });
+  });
+
+  it("ignores model-invented schedule fields that the current text does not change", () => {
+    expect(
+      mergeFunctionContinuationArguments({
+        action: "query_schedule",
+        currentArguments: {
+          query: "導播是誰",
+          date: "2026-08-01",
+          meeting: "導播"
+        },
+        currentText: "導播是誰",
+        now: new Date("2026-07-12T00:00:00Z"),
+        timeZone: "Asia/Taipei",
+        continuation: {
+          functionName: "query_schedule",
+          arguments: { date: "2026-07-14", meeting: "晨更" },
+          createdAt: "2026-07-12T00:00:00Z",
+          expiresAt: "2026-07-12T00:01:00Z"
+        }
+      })
+    ).toEqual({
+      query: "導播是誰",
+      date: "2026-07-14",
+      meeting: "晨更",
+      role: "導播"
+    });
   });
 
   it("never carries arguments across different functions", () => {

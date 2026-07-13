@@ -158,6 +158,80 @@ describe("AgentTurnRuntime", () => {
     expect(second?.replyText).not.toContain("錯誤同工");
   });
 
+  it("keeps all canonical roles after a focused answer for the next bare follow-up", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const schedules = new InMemoryScheduleStore();
+    for (const [role, assignee] of [
+      ["音控", "資恆"],
+      ["導播", "莘凌"]
+    ]) {
+      await schedules.upsertItem({
+        profileName: "helper",
+        sourceKey: "media_team_service_schedule",
+        origin: "notion",
+        externalId: `media-${role}`,
+        serviceDate: "2026-07-14",
+        meeting: "晨更",
+        role,
+        assignee
+      });
+    }
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    const route = vi
+      .fn<FunctionRouterPort["route"]>()
+      .mockResolvedValueOnce({
+        type: "execute",
+        action: "query_schedule",
+        arguments: { query: "下一場影視團隊服事表", dateIntent: "next_meeting" },
+        provider: "ollama"
+      })
+      .mockResolvedValueOnce({
+        type: "execute",
+        action: "query_schedule",
+        arguments: { query: "音控是誰", role: "音控" },
+        provider: "ollama"
+      })
+      .mockResolvedValueOnce({
+        type: "respond",
+        action: "small_talk",
+        arguments: { category: "persona" },
+        provider: "ollama"
+      });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: {
+        query_schedule: createQueryScheduleHandler({
+          memoryStore: new InMemoryAgentMemoryStore({ now }),
+          scheduleStore: schedules,
+          now,
+          timeZone: "Asia/Taipei"
+        })
+      },
+      conversationWindowStore
+    });
+    const botProfile = profile(["query_schedule"], {
+      generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+    });
+
+    await runtime.handleTextTurn({
+      profile: botProfile,
+      event: textEvent("下一場影視團隊服事表"),
+      requestId: "req-role-chain-1"
+    });
+    await runtime.handleTextTurn({
+      profile: botProfile,
+      event: textEvent("音控是誰"),
+      requestId: "req-role-chain-2"
+    });
+    const third = await runtime.handleTextTurn({
+      profile: botProfile,
+      event: textEvent("導播"),
+      requestId: "req-role-chain-3"
+    });
+
+    expect(third?.replyText).toContain("導播：莘凌");
+  });
+
   it("carries declared schedule context into a same-function follow-up", async () => {
     const now = () => new Date("2026-07-08T00:00:00.000Z");
     const conversationWindowStore = new InMemoryConversationWindowStore({ now });
@@ -218,6 +292,180 @@ describe("AgentTurnRuntime", () => {
           }
         })
       })
+    );
+  });
+
+  it.each(["導播", "導播是誰", "音控是誰"])(
+    "protects an active schedule follow-up when the model routes %s to small talk",
+    async (text) => {
+      const now = () => new Date("2026-07-08T00:00:00.000Z");
+      const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+      await conversationWindowStore.recordFunctionContext({
+        scope: {
+          profileName: "helper",
+          sourceKey: "group:C1",
+          requesterUserId: "U1"
+        },
+        functionName: "query_schedule",
+        arguments: {
+          date: "2026-07-14",
+          meeting: "晨更",
+          availableRoles: ["音控", "導播", "前攝影"]
+        },
+        resultReferences: {
+          kind: "schedule_read_model",
+          sourceKeys: ["media_team_service_schedule"]
+        },
+        ttlMs: 60_000
+      });
+      const handler = vi.fn<FunctionHandler>().mockResolvedValue({
+        ok: true,
+        replyText: `${text.replace(/是誰$/u, "")}：測試同工`
+      });
+      const runtime = createRuntime({
+        router: {
+          route: vi.fn().mockResolvedValue({
+            type: "respond",
+            action: "small_talk",
+            arguments: { category: "wellbeing" },
+            provider: "ollama"
+          })
+        },
+        functionRegistry: { query_schedule: handler },
+        conversationWindowStore
+      });
+
+      await runtime.handleTextTurn({
+        profile: profile(["query_schedule"], {
+          generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+        }),
+        event: textEvent(text),
+        requestId: `req-protected-${text}`
+      });
+
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: text,
+          date: "2026-07-14",
+          meeting: "晨更",
+          role: text.replace(/是誰$/u, "")
+        }),
+        expect.objectContaining({
+          continuation: expect.objectContaining({ functionName: "query_schedule" })
+        })
+      );
+    }
+  );
+
+  it("does not turn a greeting into a schedule follow-up", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    await conversationWindowStore.recordFunctionContext({
+      scope: { profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" },
+      functionName: "query_schedule",
+      arguments: { date: "2026-07-14", meeting: "晨更" },
+      ttlMs: 60_000
+    });
+    const handler = vi.fn<FunctionHandler>();
+    const runtime = createRuntime({
+      router: {
+        route: vi.fn().mockResolvedValue({
+          type: "respond",
+          action: "small_talk",
+          arguments: { category: "greeting" },
+          provider: "ollama"
+        })
+      },
+      functionRegistry: { query_schedule: handler },
+      conversationWindowStore
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_schedule"], {
+        generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+      }),
+      event: textEvent("你好"),
+      requestId: "req-greeting-with-continuation"
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not turn unrelated short small talk into a schedule role", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    await conversationWindowStore.recordFunctionContext({
+      scope: { profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" },
+      functionName: "query_schedule",
+      arguments: {
+        date: "2026-07-14",
+        meeting: "晨更",
+        availableRoles: ["音控", "導播", "前攝影"]
+      },
+      ttlMs: 60_000
+    });
+    const handler = vi.fn<FunctionHandler>();
+    const runtime = createRuntime({
+      router: {
+        route: vi.fn().mockResolvedValue({
+          type: "respond",
+          action: "small_talk",
+          arguments: { category: "wellbeing" },
+          provider: "ollama"
+        })
+      },
+      functionRegistry: { query_schedule: handler },
+      conversationWindowStore
+    });
+
+    await runtime.handleTextTurn({
+      profile: profile(["query_schedule"], {
+        generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+      }),
+      event: textEvent("最近好累"),
+      requestId: "req-unrelated-small-talk"
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("protects an explicit date change inside an active schedule continuation", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    await conversationWindowStore.recordFunctionContext({
+      scope: { profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" },
+      functionName: "query_schedule",
+      arguments: { date: "2026-07-14", meeting: "晨更" },
+      ttlMs: 60_000
+    });
+    const handler = vi
+      .fn<FunctionHandler>()
+      .mockResolvedValue({ ok: true, replyText: "明天的服事表" });
+    const runtime = createRuntime({
+      router: {
+        route: vi.fn().mockResolvedValue({
+          type: "respond",
+          action: "small_talk",
+          arguments: { category: "wellbeing" },
+          provider: "ollama"
+        })
+      },
+      functionRegistry: { query_schedule: handler },
+      conversationWindowStore
+    });
+
+    await runtime.handleTextTurn({
+      profile: profile(["query_schedule"], {
+        generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+      }),
+      event: textEvent("明天呢"),
+      requestId: "req-schedule-date-change"
+    });
+
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "明天呢", dateIntent: "tomorrow", meeting: "晨更" }),
+      expect.anything()
     );
   });
 

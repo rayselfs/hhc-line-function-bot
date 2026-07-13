@@ -133,6 +133,47 @@ export function refineScheduleQuery(
   };
 }
 
+export function extractScheduleRoleFocus(input: {
+  query: string;
+  hasContinuation: boolean;
+  availableRoles?: string[];
+  now?: Date;
+  timeZone?: string;
+}): string | undefined {
+  const refinement = refineScheduleQuery(
+    { query: input.query },
+    input.now ?? new Date(),
+    input.timeZone ?? "Asia/Taipei"
+  );
+  if (refinement.structuredArguments.role) {
+    return refinement.structuredArguments.role;
+  }
+  const focus = refinement.residualQuery.trim();
+  if (!focus || Array.from(focus).length > 12) return undefined;
+  const explicitRoleQuestion = /(?:是誰|誰|哪一位|哪位|呢)[？?]?$/u.test(input.query.trim());
+  if (explicitRoleQuestion) return focus;
+  if (!input.hasContinuation) return undefined;
+  if (/^(?:你好|嗨|哈囉|謝謝|感謝|辛苦了|早安|晚安|在嗎|好嗎)$/u.test(focus)) {
+    return undefined;
+  }
+  return input.availableRoles?.find(
+    (role) => normalizeRoleFocus(role) === normalizeRoleFocus(focus)
+  );
+}
+
+export function isScheduleAdvanceFollowUp(query: string): boolean {
+  return /^(?:那|再)?(?:下一場|下場|下一次|下次)(?:的呢|呢)?[？?]?$/u.test(
+    query.normalize("NFKC").replace(/\s+/gu, "")
+  );
+}
+
+function normalizeRoleFocus(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[\s：:，,。.!！?？]+/gu, "")
+    .toLowerCase();
+}
+
 function inferSpecificDate(
   query: string,
   now: Date,

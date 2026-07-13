@@ -1,10 +1,30 @@
 import type { FunctionName, JsonRecord, RouteResult } from "../types.js";
+import type { QueryScheduleArguments } from "../function-arguments.js";
+import {
+  extractScheduleRoleFocus,
+  refineScheduleQuery
+} from "../functions/schedule-query-refinement.js";
+import type { FunctionContinuationContext } from "./context-manager.js";
 
 export function guardSystemRouteWithFunctionIntent(
   route: RouteResult,
   text: string,
-  enabledFunctions: FunctionName[]
+  enabledFunctions: FunctionName[],
+  continuation?: FunctionContinuationContext
 ): RouteResult {
+  const continuationIntent = detectContinuationIntent(route, text, enabledFunctions, continuation);
+  if (continuationIntent) {
+    return {
+      type: "execute",
+      action: continuationIntent.action,
+      arguments: continuationIntent.arguments,
+      provider: "keyword",
+      fallbackProvider:
+        route.provider === "ollama" || route.provider === "deepseek" ? route.provider : undefined,
+      fallbackReason: "active_function_continuation"
+    };
+  }
+
   if (route.type !== "respond") {
     return route;
   }
@@ -22,6 +42,42 @@ export function guardSystemRouteWithFunctionIntent(
     fallbackProvider: route.provider === "keyword" ? undefined : route.provider,
     fallbackReason: `system_route_${route.action}`
   };
+}
+
+function detectContinuationIntent(
+  route: RouteResult,
+  text: string,
+  enabledFunctions: FunctionName[],
+  continuation: FunctionContinuationContext | undefined
+): { action: FunctionName; arguments: JsonRecord } | undefined {
+  if (!continuation || !enabledFunctions.includes(continuation.functionName)) return undefined;
+  if (route.type === "execute") return undefined;
+  if (route.type === "respond" && route.action !== "small_talk") return undefined;
+  if (continuation.functionName !== "query_schedule") return undefined;
+  const refinement = refineScheduleQuery(
+    { query: text } as QueryScheduleArguments,
+    new Date(),
+    "Asia/Taipei"
+  );
+  const role = extractScheduleRoleFocus({
+    query: text,
+    hasContinuation: true,
+    availableRoles: continuationRoles(continuation.arguments)
+  });
+  const arguments_ = Object.fromEntries(
+    Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
+  );
+  if (role) arguments_.role = role;
+  return Object.keys(arguments_).length > 0
+    ? { action: "query_schedule", arguments: { query: text.trim(), ...arguments_ } }
+    : undefined;
+}
+
+function continuationRoles(arguments_: JsonRecord): string[] | undefined {
+  const roles = arguments_.availableRoles;
+  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
+    ? roles
+    : undefined;
 }
 
 function detectServiceScheduleIntent(

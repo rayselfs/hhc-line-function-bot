@@ -372,7 +372,12 @@ export function createQueryScheduleMemoryHandler(
 
     return {
       ok: true,
-      continuation: scheduleMemoryContinuation(entries, inferredType, args.role),
+      continuation: scheduleMemoryContinuation(
+        entries,
+        inferredType,
+        args.role,
+        continuationRoles(context.continuation?.arguments)
+      ),
       replyText: ["我找到這些服事記憶：", ...entries.map(formatScheduleEntry)].join("\n")
     };
   };
@@ -389,21 +394,32 @@ function scheduleMemoryId(references: unknown): string | undefined {
 function scheduleMemoryContinuation(
   entries: AgentScheduleEntryRecord[],
   scheduleType: AgentScheduleType | undefined,
-  role?: string
+  role?: string,
+  previousRoles: string[] = []
 ): FunctionExecutionResult["continuation"] | undefined {
   const memoryIds = unique(entries.map((entry) => entry.memoryId));
   const dates = unique(entries.map((entry) => entry.serviceDate));
   const meetings = unique(entries.map((entry) => entry.meetingName));
+  const availableRoles = unique([...previousRoles, ...entries.map((entry) => entry.role)]);
   if (memoryIds.length !== 1 || dates.length !== 1 || meetings.length !== 1) return undefined;
   return {
     arguments: {
       date: dates[0],
       meeting: meetings[0],
+      availableRoles,
       scheduleType: scheduleType ?? entries[0]?.scheduleType,
       ...(role ? { role } : {})
     },
     resultReferences: { kind: "schedule_memory", memoryId: memoryIds[0] }
   };
+}
+
+function continuationRoles(arguments_: unknown): string[] | undefined {
+  if (!arguments_ || typeof arguments_ !== "object") return undefined;
+  const roles = (arguments_ as Record<string, unknown>).availableRoles;
+  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
+    ? roles
+    : undefined;
 }
 
 function unique(values: Array<string | undefined>): string[] {

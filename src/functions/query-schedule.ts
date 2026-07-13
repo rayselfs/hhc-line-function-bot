@@ -16,6 +16,8 @@ import {
 } from "./query-service-schedule.js";
 import { readTimeZone } from "../time-zone.js";
 import {
+  extractScheduleRoleFocus,
+  isScheduleAdvanceFollowUp,
   MEDIA_TEAM_SCHEDULE_SOURCE_KEYS,
   refineScheduleQuery
 } from "./schedule-query-refinement.js";
@@ -75,10 +77,18 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
       };
     }
     const refinement = refineScheduleQuery(args, now(), timeZone);
+    const roleFocus = extractScheduleRoleFocus({
+      query: args.query,
+      hasContinuation: context.continuation?.functionName === "query_schedule",
+      availableRoles: continuationRoles(context.continuation?.arguments),
+      now: now(),
+      timeZone
+    });
     const refinedArgs = queryScheduleArgumentsSchema.parse({
       ...args,
       ...refinement.structuredArguments,
-      query: refinement.residualQuery
+      ...(roleFocus ? { role: roleFocus } : {}),
+      query: roleFocus ? "" : refinement.residualQuery
     });
     const memorySpecific = Boolean(refinedArgs.scheduleType) || isMemorySpecificRequest(args.query);
     const continuationSourceKeys = scheduleReadModelSourceKeys(
@@ -102,6 +112,7 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
             now: now(),
             timeZone,
             afterDate,
+            availableRoles: continuationRoles(context.continuation?.arguments),
             sourceKeys:
               refinement.structuredArguments.scheduleCategory === "media_team"
                 ? [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS]
@@ -139,6 +150,14 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
   };
 }
 
+function continuationRoles(arguments_: unknown): string[] | undefined {
+  if (!arguments_ || typeof arguments_ !== "object") return undefined;
+  const roles = (arguments_ as Record<string, unknown>).availableRoles;
+  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
+    ? roles
+    : undefined;
+}
+
 function scheduleReadModelSourceKeys(references: unknown): string[] | undefined {
   if (!references || typeof references !== "object") return undefined;
   const record = references as Record<string, unknown>;
@@ -168,6 +187,7 @@ async function queryScheduleReadModel(input: {
   now: Date;
   timeZone: string;
   afterDate?: string;
+  availableRoles?: string[];
   sourceKeys?: string[];
 }): Promise<Awaited<ReturnType<FunctionHandler>>> {
   const serviceArgs = input.args as QueryServiceScheduleArguments;
@@ -194,7 +214,7 @@ async function queryScheduleReadModel(input: {
   }
   return {
     ok: true,
-    continuation: readModelContinuation(limitedRows, filters.role),
+    continuation: readModelContinuation(limitedRows, filters.role, input.availableRoles),
     replyText: formatServiceScheduleReply(limited, serviceArgs, filters)
   };
 }
@@ -205,7 +225,7 @@ function scheduleAdvanceDate(
 ): string | undefined {
   if (
     args.dateIntent !== "next_meeting" ||
-    !/(?:下一場|下場|下一次|下次)/u.test(args.query) ||
+    !isScheduleAdvanceFollowUp(args.query) ||
     !continuationArguments ||
     typeof continuationArguments !== "object"
   ) {
@@ -223,15 +243,23 @@ function nextDateKey(dateKey: string): string {
 }
 
 function readModelContinuation(
-  rows: Array<{ sourceKey: string; serviceDate: string; meeting: string }>,
-  role?: string
+  rows: Array<{ sourceKey: string; serviceDate: string; meeting: string; role: string }>,
+  role?: string,
+  previousRoles: string[] = []
 ): FunctionExecutionResult["continuation"] | undefined {
   const sourceKeys = Array.from(new Set(rows.map((row) => row.sourceKey)));
   const dates = Array.from(new Set(rows.map((row) => row.serviceDate)));
   const meetings = Array.from(new Set(rows.map((row) => row.meeting)));
   if (sourceKeys.length !== 1 || dates.length !== 1 || meetings.length !== 1) return undefined;
   return {
-    arguments: { date: dates[0], meeting: meetings[0], ...(role ? { role } : {}) },
+    arguments: {
+      date: dates[0],
+      meeting: meetings[0],
+      availableRoles: Array.from(
+        new Set([...previousRoles, ...rows.map((row) => row.role).filter(Boolean)])
+      ),
+      ...(role ? { role } : {})
+    },
     resultReferences: { kind: "schedule_read_model", sourceKeys }
   };
 }

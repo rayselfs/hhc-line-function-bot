@@ -5,7 +5,12 @@ import {
   type QueryServiceScheduleArguments
 } from "../function-arguments.js";
 import { readTimeZone } from "../time-zone.js";
-import type { FunctionHandler, JsonRecord, NotionDatabaseClient } from "../types.js";
+import type {
+  FunctionExecutionResult,
+  FunctionHandler,
+  JsonRecord,
+  NotionDatabaseClient
+} from "../types.js";
 import { withRequesterDisplayName } from "../requester-personalization.js";
 import type { SessionStore } from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
@@ -132,9 +137,43 @@ export function createQueryServiceScheduleHandler(
 
     return {
       ok: true,
+      continuation: liveScheduleContinuation(
+        filtered,
+        derivedFilters.role,
+        continuationRoles(context.continuation?.arguments)
+      ),
       replyText: formatServiceScheduleReply(filtered, args, derivedFilters)
     };
   };
+}
+
+function liveScheduleContinuation(
+  rows: ServiceRow[],
+  role?: string,
+  previousRoles: string[] = []
+): FunctionExecutionResult["continuation"] | undefined {
+  const dates = Array.from(new Set(rows.map((row) => extractDateKey(row.date)).filter(Boolean)));
+  const meetings = Array.from(new Set(rows.map((row) => row.meeting).filter(Boolean)));
+  if (dates.length !== 1 || meetings.length !== 1) return undefined;
+  return {
+    arguments: {
+      date: dates[0],
+      meeting: meetings[0],
+      availableRoles: Array.from(
+        new Set([...previousRoles, ...rows.map((row) => row.role).filter(Boolean)])
+      ),
+      ...(role ? { role } : {})
+    },
+    resultReferences: { kind: "notion_schedule" }
+  };
+}
+
+function continuationRoles(arguments_: unknown): string[] | undefined {
+  if (!arguments_ || typeof arguments_ !== "object") return undefined;
+  const roles = (arguments_ as Record<string, unknown>).availableRoles;
+  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
+    ? roles
+    : undefined;
 }
 
 function needsServiceScheduleClarification(args: QueryServiceScheduleArguments): boolean {
