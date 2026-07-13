@@ -25,6 +25,7 @@ import type {
   FunctionHandler,
   FunctionHandlerContext,
   GraphDriveClient,
+  JsonRecord,
   PostbackHandler,
   TextMessageHandler,
   TextMessageContext
@@ -104,7 +105,12 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
       });
       return {
         ok: true,
-        replyText: withRequesterDisplayName(context, "要查哪一份投影片？請直接回覆名稱。")
+        replyText: withRequesterDisplayName(context, "要查哪一份投影片？請直接回覆名稱。"),
+        agentResult: {
+          status: "ambiguous",
+          replyText: "要查哪一份投影片？請直接回覆名稱。",
+          clarification: { prompt: "要查哪一份投影片？請直接回覆名稱。" }
+        }
       };
     }
 
@@ -143,7 +149,8 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
       if (!canCreateRequesterScopedSession(context.event.source)) {
         return {
           ok: true,
-          replyText: "找到多個相近的詩歌投影片，請提供更完整歌名。"
+          replyText: "找到多個相近的詩歌投影片，請提供更完整歌名。",
+          agentResult: pptAmbiguousEnvelope(candidates)
         };
       }
 
@@ -174,7 +181,8 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
               index: String(index)
             }).toString()
           )
-        )
+        ),
+        agentResult: pptAmbiguousEnvelope(candidates)
       };
     }
 
@@ -199,7 +207,11 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
             label: "重新查投影片",
             action: { type: "message", label: "重新查投影片", text: "小哈 查投影片" }
           }
-        ]
+        ],
+        agentResult: {
+          status: "not_found",
+          replyText: "找不到符合的詩歌投影片，請再提供更完整歌名。"
+        }
       };
     }
 
@@ -210,7 +222,8 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
     if (!canCreateRequesterScopedSession(context.event.source)) {
       return {
         ok: true,
-        replyText: "找到多個相近的詩歌投影片，請提供更完整歌名。"
+        replyText: "找到多個相近的詩歌投影片，請提供更完整歌名。",
+        agentResult: pptAmbiguousEnvelope(candidates)
       };
     }
 
@@ -241,7 +254,8 @@ export function createFindPptSlidesHandler(options: FindPptSlidesOptions): Funct
             index: String(index)
           }).toString()
         )
-      )
+      ),
+      agentResult: pptAmbiguousEnvelope(candidates)
     };
   };
 }
@@ -359,7 +373,7 @@ async function selectPptCandidate(options: {
 
   await sessionStore.delete(session.id);
   if (item.memoryResource) {
-    return createRememberedReferenceReply(graph, item.memoryResource, now);
+    return createRememberedReferenceReply(graph, item.memoryResource, now, item.id);
   }
   return createSharingLinkReply(graph, item.driveId ?? session.driveId, item, now);
 }
@@ -393,7 +407,8 @@ async function createRememberedResourceReply(
       query: resource.query,
       storage: resource.storage
     },
-    now
+    now,
+    resource.id
   );
 }
 
@@ -405,7 +420,8 @@ async function createRememberedReferenceReply(
     query?: string;
     storage: AgentResourceRecord["storage"];
   },
-  now: Date
+  now: Date,
+  resourceId: string
 ): Promise<FunctionExecutionResult> {
   if (resource.storage.provider === "external_link") {
     return {
@@ -416,14 +432,16 @@ async function createRememberedReferenceReply(
         title: resource.title,
         query: resource.query,
         storage: resource.storage
-      }
+      },
+      agentResult: pptSuccessEnvelope(resourceId, { resourceId })
     };
   }
   return createSharingLinkReply(
     graph,
     resource.storage.driveId,
     { id: resource.storage.itemId, name: resource.title },
-    now
+    now,
+    resourceId
   );
 }
 
@@ -508,7 +526,8 @@ async function createSharingLinkReply(
   graph: GraphDriveClient,
   driveId: string,
   item: Pick<DriveItem, "id" | "name">,
-  now: Date
+  now: Date,
+  resourceId = item.id
 ): Promise<FunctionExecutionResult> {
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const link = await graph.createSharingLink(driveId, item.id, expiresAt);
@@ -520,7 +539,35 @@ async function createSharingLinkReply(
       resourceType: "ppt_slide",
       title: item.name,
       storage: { provider: "graph", driveId, itemId: item.id }
-    }
+    },
+    agentResult: pptSuccessEnvelope(resourceId, {
+      resourceId,
+      driveId,
+      itemId: item.id
+    })
+  };
+}
+
+function pptSuccessEnvelope(resourceId: string, reference: JsonRecord) {
+  return {
+    status: "success" as const,
+    replyText: "投影片查詢完成。",
+    entities: [{ type: "resource", key: resourceId, label: "投影片資源" }],
+    evidence: [{ kind: "catalog_item", reference }],
+    supportedOperations: []
+  };
+}
+
+function pptAmbiguousEnvelope(candidates: PptCandidate[]) {
+  return {
+    status: "ambiguous" as const,
+    replyText: "找到多個相近的投影片，請選擇。",
+    entities: candidates.map((candidate) => ({
+      type: "resource",
+      key: candidate.kind === "memory" ? candidate.resource.id : candidate.item.id,
+      label: "投影片資源"
+    })),
+    clarification: { prompt: "找到多個相近的投影片，請選擇。" }
   };
 }
 

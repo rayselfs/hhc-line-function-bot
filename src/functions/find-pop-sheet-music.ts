@@ -34,6 +34,7 @@ import type {
   TextMessageContext,
   TextMessageHandler,
   FunctionName,
+  JsonRecord,
   WebSearchClient,
   WebSearchResult
 } from "../types.js";
@@ -127,7 +128,12 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
       });
       return {
         ok: true,
-        replyText: withRequesterDisplayName(context, "要查哪一首流行歌譜？請直接回覆歌名或歌手。")
+        replyText: withRequesterDisplayName(context, "要查哪一首流行歌譜？請直接回覆歌名或歌手。"),
+        agentResult: {
+          status: "ambiguous",
+          replyText: "要查哪一首歌的歌譜？請直接回覆歌名或歌手。",
+          clarification: { prompt: "要查哪一首歌的歌譜？請直接回覆歌名或歌手。" }
+        }
       };
     }
 
@@ -162,7 +168,8 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
       if (!canCreateRequesterScopedSession(context.event.source)) {
         return {
           ok: true,
-          replyText: "找到多個相近的樂譜，請提供更完整歌名或歌手。"
+          replyText: "找到多個相近的樂譜，請提供更完整歌名或歌手。",
+          agentResult: sheetMusicAmbiguousEnvelope(candidates)
         };
       }
 
@@ -193,7 +200,8 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
               index: String(index)
             }).toString()
           )
-        )
+        ),
+        agentResult: sheetMusicAmbiguousEnvelope(candidates)
       };
     }
 
@@ -242,7 +250,8 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
     if (!canCreateRequesterScopedSession(context.event.source)) {
       return {
         ok: true,
-        replyText: "找到多個相近的樂譜，請提供更完整歌名或歌手。"
+        replyText: "找到多個相近的樂譜，請提供更完整歌名或歌手。",
+        agentResult: sheetMusicAmbiguousEnvelope(candidates)
       };
     }
 
@@ -273,7 +282,8 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
             index: String(index)
           }).toString()
         )
-      )
+      ),
+      agentResult: sheetMusicAmbiguousEnvelope(candidates)
     };
   };
 }
@@ -307,7 +317,8 @@ async function createSheetMusicNotFoundResult(options: {
         "要不要上網找公開搜尋結果？",
         "我只會查看搜尋結果的標題、摘要與網址，不會下載或保存檔案。"
       ].join("\n"),
-      quickReplies: externalSearchConsentQuickReplies()
+      quickReplies: externalSearchConsentQuickReplies(),
+      agentResult: { status: "not_found", replyText: "本地歌譜資料庫找不到符合的結果。" }
     };
   }
   return {
@@ -326,7 +337,11 @@ async function createSheetMusicNotFoundResult(options: {
           text: "小哈 查流行歌譜 圖片"
         }
       }
-    ]
+    ],
+    agentResult: {
+      status: "not_found",
+      replyText: "找不到符合的流行歌曲樂譜，請提供更完整英文歌名或歌手。"
+    }
   };
 }
 
@@ -471,7 +486,8 @@ async function createRememberedResourceReply(
       query: resource.query,
       storage: resource.storage
     },
-    now
+    now,
+    resource.id
   );
 }
 
@@ -483,7 +499,8 @@ async function createRememberedReferenceReply(
     query?: string;
     storage: AgentResourceRecord["storage"];
   },
-  now: Date
+  now: Date,
+  resourceId: string
 ): Promise<FunctionExecutionResult> {
   if (resource.storage.provider === "external_link") {
     return {
@@ -496,13 +513,15 @@ async function createRememberedReferenceReply(
         title: resource.title,
         query: resource.query,
         storage: resource.storage
-      }
+      },
+      agentResult: sheetMusicSuccessEnvelope(resourceId, { resourceId })
     };
   }
   return createSharingLinkReply(
     graph,
     { id: resource.storage.itemId, driveId: resource.storage.driveId, name: resource.title },
-    now
+    now,
+    resourceId
   );
 }
 
@@ -658,7 +677,7 @@ async function selectSheetMusicCandidate(options: {
 
   await sessionStore.delete(session.id);
   if (item.memoryResource) {
-    return createRememberedReferenceReply(graph, item.memoryResource, now);
+    return createRememberedReferenceReply(graph, item.memoryResource, now, item.id);
   }
   return createSharingLinkReply(graph, item, now);
 }
@@ -666,7 +685,8 @@ async function selectSheetMusicCandidate(options: {
 async function createSharingLinkReply(
   graph: GraphDriveClient,
   item: Pick<DriveItem, "id" | "name" | "driveId">,
-  now: Date
+  now: Date,
+  resourceId = item.id
 ): Promise<FunctionExecutionResult> {
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
   const link = await graph.createSharingLink(item.driveId ?? "", item.id, expiresAt);
@@ -678,7 +698,35 @@ async function createSharingLinkReply(
       resourceType: "sheet_music",
       title: item.name,
       storage: { provider: "graph", driveId: item.driveId ?? "", itemId: item.id }
-    }
+    },
+    agentResult: sheetMusicSuccessEnvelope(resourceId, {
+      resourceId,
+      driveId: item.driveId ?? "",
+      itemId: item.id
+    })
+  };
+}
+
+function sheetMusicSuccessEnvelope(resourceId: string, reference: JsonRecord) {
+  return {
+    status: "success" as const,
+    replyText: "歌譜查詢完成。",
+    entities: [{ type: "resource", key: resourceId, label: "歌譜資源" }],
+    evidence: [{ kind: "catalog_item", reference }],
+    supportedOperations: []
+  };
+}
+
+function sheetMusicAmbiguousEnvelope(candidates: SheetMusicCandidate[]) {
+  return {
+    status: "ambiguous" as const,
+    replyText: "找到多個相近的歌譜，請選擇。",
+    entities: candidates.map((candidate) => ({
+      type: "resource",
+      key: candidate.kind === "memory" ? candidate.resource.id : candidate.item.id,
+      label: "歌譜資源"
+    })),
+    clarification: { prompt: "找到多個相近的歌譜，請選擇。" }
   };
 }
 

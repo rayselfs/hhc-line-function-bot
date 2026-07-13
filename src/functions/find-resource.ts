@@ -21,7 +21,12 @@ export function createFindResourceHandler(options: FindResourceOptions): Functio
     if (!query) {
       return {
         ok: true,
-        replyText: "請告訴我要查什麼教會資料，例如：週報音檔、文件名稱或關鍵字。"
+        replyText: "請告訴我要查什麼教會資料，例如：週報音檔、文件名稱或關鍵字。",
+        agentResult: {
+          status: "ambiguous",
+          replyText: "請告訴我要查什麼教會資料。",
+          clarification: { prompt: "請告訴我要查什麼教會資料。" }
+        }
       };
     }
 
@@ -46,7 +51,11 @@ export function createFindResourceHandler(options: FindResourceOptions): Functio
       .slice(0, limit);
 
     if (items.length === 0) {
-      return { ok: true, replyText: "查不到符合的教會資料。" };
+      return {
+        ok: true,
+        replyText: "查不到符合的教會資料。",
+        agentResult: { status: "not_found", replyText: "查不到符合的教會資料。" }
+      };
     }
 
     if (items.length > 1) {
@@ -55,7 +64,17 @@ export function createFindResourceHandler(options: FindResourceOptions): Functio
         replyText: [
           "找到多筆資料，請再縮小關鍵字：",
           ...items.map((item) => `- ${item.title}`)
-        ].join("\n")
+        ].join("\n"),
+        agentResult: {
+          status: "ambiguous",
+          replyText: "找到多筆教會資料，請縮小關鍵字。",
+          entities: items.map((item) => ({
+            type: "resource",
+            key: item.id,
+            label: "教會資料"
+          })),
+          clarification: { prompt: "找到多筆教會資料，請縮小關鍵字。" }
+        }
       };
     }
 
@@ -71,7 +90,8 @@ async function createCatalogItemReply(
   if (item.storageRef.provider === "external_link") {
     return {
       ok: true,
-      replyText: [item.title, item.storageRef.url].join("\n")
+      replyText: [item.title, item.storageRef.url].join("\n"),
+      agentResult: catalogItemEnvelope(item.id, { resourceId: item.id })
     };
   }
 
@@ -83,6 +103,21 @@ async function createCatalogItemReply(
   );
   return {
     ok: true,
-    replyText: [item.title, link].join("\n")
+    replyText: [item.title, link].join("\n"),
+    agentResult: catalogItemEnvelope(item.id, {
+      resourceId: item.id,
+      driveId: item.storageRef.driveId,
+      itemId: item.storageRef.itemId
+    })
+  };
+}
+
+function catalogItemEnvelope(resourceId: string, reference: Record<string, string>) {
+  return {
+    status: "success" as const,
+    replyText: "教會資料查詢完成。",
+    entities: [{ type: "resource", key: resourceId, label: "教會資料" }],
+    evidence: [{ kind: "catalog_item", reference }],
+    supportedOperations: []
   };
 }

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { FunctionHandler } from "../types.js";
 import type { WikipediaArticle, WikipediaClient, WikipediaSearchResult } from "./client.js";
 
@@ -22,29 +24,64 @@ export function createWikipediaLookupHandler(
   return async (rawArgs, context) => {
     const query = typeof rawArgs.query === "string" ? rawArgs.query.trim() : "";
     if (!query) {
-      return { ok: true, replyText: "想查哪個維基百科主題？" };
+      return {
+        ok: true,
+        replyText: "想查哪個維基百科主題？",
+        agentResult: {
+          status: "ambiguous",
+          replyText: "想查哪個維基百科主題？",
+          clarification: { prompt: "想查哪個維基百科主題？" }
+        }
+      };
     }
 
     const zh = await options.client.search("zh", query, 3);
     const matches = zh.length > 0 ? zh : await options.client.search("en", query, 3);
     if (matches.length === 0) {
-      return { ok: true, replyText: "維基百科查不到相關資料。" };
+      return {
+        ok: true,
+        replyText: "維基百科查不到相關資料。",
+        agentResult: { status: "not_found", replyText: "維基百科查不到相關資料。" }
+      };
     }
 
     const selected = selectBestMatch(matches, query);
     const article = await options.client.getIntro(selected.language, selected.title);
     if (!article) {
-      return { ok: true, replyText: "維基百科暫時找不到可整理的條目內容。" };
+      return {
+        ok: true,
+        replyText: "維基百科暫時找不到可整理的條目內容。",
+        agentResult: {
+          status: "unavailable",
+          replyText: "維基百科暫時找不到可整理的條目內容。"
+        }
+      };
     }
 
     const summary = await options.summarize(toSummaryInput(context.profile.name, query, article));
+    const pageId = opaquePageId(article);
     return {
       ok: true,
       replyText: [article.title, summary.trim(), `來源：${article.articleUrl}`]
         .filter(Boolean)
-        .join("\n")
+        .join("\n"),
+      agentResult: {
+        status: "success",
+        replyText: "維基百科查詢完成。",
+        anchors: { language: article.language },
+        entities: [{ type: "topic", key: pageId, label: "維基百科主題" }],
+        evidence: [{ kind: "wikipedia_page", reference: { pageId } }],
+        supportedOperations: []
+      }
     };
   };
+}
+
+function opaquePageId(article: WikipediaArticle): string {
+  return createHash("sha256")
+    .update(`${article.language}:${article.title.normalize("NFKC")}`)
+    .digest("hex")
+    .slice(0, 24);
 }
 
 function selectBestMatch(matches: WikipediaSearchResult[], query: string): WikipediaSearchResult {

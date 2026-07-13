@@ -61,7 +61,7 @@ export interface AgentCapabilityContract {
   retrievalEvidence?: { provider: string };
   entityTypes?: string[];
   refinableFields?: string[];
-  operations?: Array<"continue" | "refine" | "advance" | "select">;
+  operations: Array<"continue" | "refine" | "advance" | "select">;
   ambiguity?: "clarify";
   activeEvidence?: AgentActiveEvidenceContract;
 }
@@ -124,7 +124,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       candidateHints: ["投影片", "簡報", "ppt", "powerpoint", "slides", "keynote", "odp"],
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
-      operations: ["continue", "refine", "select"],
+      operations: [],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: { query: { entityTypes: ["selection"] } }
@@ -412,7 +412,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       candidateHints: ["歌譜", "樂譜", "流行歌譜", "詩歌歌譜", "sheet music", "score"],
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
-      operations: ["continue", "refine", "select"],
+      operations: [],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: { query: { entityTypes: ["selection"] } }
@@ -572,7 +572,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       candidateHints: ["教會資料", "小哈資料庫", "週報音檔"],
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
-      operations: ["continue", "refine", "select"],
+      operations: [],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: { query: { entityTypes: ["selection"] } }
@@ -657,7 +657,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       candidateHints: ["維基百科", "wiki", "wikipedia"],
       entityTypes: ["topic"],
       refinableFields: ["query"],
-      operations: ["continue", "refine", "select"],
+      operations: [],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: { query: { entityTypes: ["topic"] } }
@@ -790,7 +790,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       candidateHints: ["記住的資訊", "保存的資訊", "小哈記得"],
       entityTypes: ["selection"],
       refinableFields: ["query", "selection"],
-      operations: ["continue", "refine", "select"],
+      operations: [],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: { query: { entityTypes: ["selection"] } }

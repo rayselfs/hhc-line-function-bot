@@ -93,6 +93,13 @@ describe("find_pop_sheet_music", () => {
     const result = await handler({ query: "A TIME FOR US", fileType: "pdf" }, handlerContext());
 
     expect(result.replyText).toContain("https://download.invalid/catalog-sheet");
+    expect(result.agentResult).toMatchObject({
+      status: "success",
+      replyText: "歌譜查詢完成。",
+      entities: [{ type: "resource", key: "catalog-sheet-1", label: "歌譜資源" }],
+      supportedOperations: []
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/A TIME FOR US|download\.invalid/iu);
     expect(graph.listFolderFilesRecursive).not.toHaveBeenCalled();
     expect(graph.createSharingLink).toHaveBeenCalledWith(
       "catalog-drive",

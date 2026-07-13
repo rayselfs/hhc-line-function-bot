@@ -1,10 +1,14 @@
 import { extractPptSlideQuery } from "../ppt-query.js";
+import { extractScheduleRoleFocus, refineScheduleQuery } from "./schedule-query-refinement.js";
 import { getFunctionDefinition } from "./definitions.js";
 import { clearGenericSlotArguments, findGenericRequestSlot } from "./generic-slot.js";
 import type { FunctionName, JsonRecord } from "../types.js";
 
 export interface FunctionArgumentNormalizationInput {
   text: string;
+  continuationArguments?: JsonRecord;
+  now?: Date;
+  timeZone?: string;
 }
 
 const wakeWordPattern = /^小哈[\s,，、:：。!！?？]*/i;
@@ -194,18 +198,59 @@ function normalizeServiceScheduleArguments(
   args: JsonRecord,
   input: FunctionArgumentNormalizationInput
 ): JsonRecord {
-  const next = { ...args };
-  if (!stringArg(next, "dateIntent") && /下一場|下場|最近一場|下一次|下次/u.test(input.text)) {
-    next.dateIntent = "next_meeting";
-  }
   const query = stringArg(args, "query");
-  if (query === "主日") {
-    return { ...next, query: "主日服事" };
+  const currentQuery = query || input.text.trim();
+  if (!input.continuationArguments) {
+    const next = { ...args };
+    if (!stringArg(next, "dateIntent")) {
+      const dateIntent = relativeScheduleDateIntent(input.text);
+      if (dateIntent) next.dateIntent = dateIntent;
+    }
+    if (query === "主日") return { ...next, query: "主日服事" };
+    return query ? next : { ...next, query: currentQuery };
   }
-  if (query) {
-    return next;
+  const refinement = refineScheduleQuery(
+    { query: currentQuery },
+    input.now ?? new Date(),
+    input.timeZone ?? "Asia/Taipei"
+  );
+  const role = extractScheduleRoleFocus({
+    query: currentQuery,
+    hasContinuation: Boolean(input.continuationArguments),
+    availableRoles: stringArrayArg(input.continuationArguments, "availableRoles"),
+    now: input.now,
+    timeZone: input.timeZone
+  });
+  const trusted = { ...args };
+  for (const field of ["date", "dateIntent", "specificDate", "meeting", "role", "scheduleType"]) {
+    delete trusted[field];
   }
-  return { ...next, query: input.text.trim() };
+  const structured = Object.fromEntries(
+    Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
+  );
+  return {
+    ...trusted,
+    ...structured,
+    ...(role ? { role } : {}),
+    query: currentQuery === "主日" ? "主日服事" : currentQuery
+  };
+}
+
+function relativeScheduleDateIntent(
+  text: string
+): "next_meeting" | "this_week" | "today" | "tomorrow" | "day_after_tomorrow" | undefined {
+  if (/下一場|下場|最近一場|下一次|下次/u.test(text)) return "next_meeting";
+  if (/這週|這周|本週|本周|这周|这週/u.test(text)) return "this_week";
+  if (/後天|后天/u.test(text)) return "day_after_tomorrow";
+  if (/明天/u.test(text)) return "tomorrow";
+  return /今天/u.test(text) ? "today" : undefined;
+}
+
+function stringArrayArg(args: JsonRecord | undefined, key: string): string[] | undefined {
+  const value = args?.[key];
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
 }
 
 export function extractSheetMusicQuery(text: string): string {

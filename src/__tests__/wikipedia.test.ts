@@ -115,6 +115,22 @@ describe("Wikipedia lookup handler", () => {
     expect(result.replyText).toContain("馬丁・路德是宗教改革的重要人物。");
     expect(result.replyText).toContain("https://zh.wikipedia.org/wiki/Martin_Luther");
     expect(result.replyText).not.toContain("不應直接複製");
+    expect(result.agentResult).toEqual({
+      status: "success",
+      replyText: "維基百科查詢完成。",
+      anchors: { language: "zh" },
+      entities: [
+        { type: "topic", key: expect.stringMatching(/^[a-f0-9]{24}$/u), label: "維基百科主題" }
+      ],
+      evidence: [
+        {
+          kind: "wikipedia_page",
+          reference: { pageId: expect.stringMatching(/^[a-f0-9]{24}$/u) }
+        }
+      ],
+      supportedOperations: []
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/馬丁|Martin Luther|wikipedia\.org/iu);
   });
 
   it("falls back to English Wikipedia only after Chinese has no results", async () => {

@@ -1,9 +1,5 @@
 import { getFunctionDefinition } from "../functions/definitions.js";
-import {
-  extractScheduleRoleFocus,
-  refineScheduleQuery
-} from "../functions/schedule-query-refinement.js";
-import type { QueryScheduleArguments } from "../function-arguments.js";
+import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
 import type { FunctionName, JsonRecord } from "../types.js";
 import type { FunctionContinuationContext } from "./context-manager.js";
 
@@ -23,86 +19,27 @@ export function mergeFunctionContinuationArguments(input: {
     return input.currentArguments;
   }
 
-  const prepared = prepareCurrentArguments(input);
+  const prepared = normalizeFunctionArguments(input.action, input.currentArguments, {
+    text: input.currentText ?? "",
+    continuationArguments: input.continuation.arguments,
+    now: input.now,
+    timeZone: input.timeZone
+  });
   const blocked = new Set<string>();
   for (const group of policy.exclusiveGroups ?? []) {
-    if (group.some((argument) => hasValue(prepared.arguments[argument]))) {
+    if (group.some((argument) => hasValue(prepared[argument]))) {
       for (const argument of group) blocked.add(argument);
     }
   }
-  for (const argument of prepared.changedArguments) blocked.add(argument);
 
   const carried: JsonRecord = {};
   for (const argument of policy.carryArguments) {
     const value = input.continuation.arguments[argument];
-    if (!blocked.has(argument) && !hasValue(prepared.arguments[argument]) && hasValue(value)) {
+    if (!blocked.has(argument) && !hasValue(prepared[argument]) && hasValue(value)) {
       carried[argument] = value;
     }
   }
-  return { ...carried, ...prepared.arguments };
-}
-
-function prepareCurrentArguments(input: {
-  action: FunctionName;
-  currentArguments: JsonRecord;
-  currentText?: string;
-  now?: Date;
-  timeZone?: string;
-  continuation?: FunctionContinuationContext;
-}): { arguments: JsonRecord; changedArguments: Set<string> } {
-  if (input.action !== "query_schedule") {
-    return { arguments: input.currentArguments, changedArguments: new Set() };
-  }
-  const query =
-    typeof input.currentArguments.query === "string"
-      ? input.currentArguments.query
-      : (input.currentText ?? "");
-  const refinement = refineScheduleQuery(
-    { query } as QueryScheduleArguments,
-    input.now ?? new Date(),
-    input.timeZone ?? "Asia/Taipei"
-  );
-  const roleFocus = extractScheduleRoleFocus({
-    query,
-    hasContinuation: true,
-    availableRoles: continuationRoles(input.continuation?.arguments),
-    now: input.now,
-    timeZone: input.timeZone
-  });
-  const changedArguments = new Set<string>();
-  if (roleFocus) {
-    changedArguments.add("role");
-  }
-  const structuredArguments = Object.fromEntries(
-    Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
-  );
-  const trustedArguments = { ...input.currentArguments };
-  for (const argument of [
-    "date",
-    "dateIntent",
-    "specificDate",
-    "meeting",
-    "role",
-    "scheduleType"
-  ]) {
-    delete trustedArguments[argument];
-  }
-  return {
-    arguments: {
-      ...trustedArguments,
-      ...structuredArguments,
-      ...(roleFocus ? { role: roleFocus } : {}),
-      query
-    },
-    changedArguments
-  };
-}
-
-function continuationRoles(arguments_: JsonRecord | undefined): string[] | undefined {
-  const roles = arguments_?.availableRoles;
-  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
-    ? roles
-    : undefined;
+  return { ...carried, ...prepared };
 }
 
 function hasValue(value: unknown): boolean {

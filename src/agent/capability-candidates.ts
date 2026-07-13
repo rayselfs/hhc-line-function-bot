@@ -319,9 +319,9 @@ function cloneContract(contract: AgentCapabilityContract): AgentCapabilityContra
   return {
     intents: [...contract.intents],
     candidateHints: [...contract.candidateHints],
+    operations: [...contract.operations],
     ...(contract.entityTypes ? { entityTypes: [...contract.entityTypes] } : {}),
     ...(contract.refinableFields ? { refinableFields: [...contract.refinableFields] } : {}),
-    ...(contract.operations ? { operations: [...contract.operations] } : {}),
     ...(contract.retrievalEvidence
       ? { retrievalEvidence: { provider: contract.retrievalEvidence.provider } }
       : {}),

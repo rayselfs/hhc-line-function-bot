@@ -1,9 +1,6 @@
+import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
+import { FUNCTION_DEFINITIONS } from "../functions/definitions.js";
 import type { FunctionName, JsonRecord, RouteResult } from "../types.js";
-import type { QueryScheduleArguments } from "../function-arguments.js";
-import {
-  extractScheduleRoleFocus,
-  refineScheduleQuery
-} from "../functions/schedule-query-refinement.js";
 import type { FunctionContinuationContext } from "./context-manager.js";
 
 export function guardSystemRouteWithFunctionIntent(
@@ -29,15 +26,15 @@ export function guardSystemRouteWithFunctionIntent(
     return route;
   }
 
-  const scheduleIntent = detectServiceScheduleIntent(text, enabledFunctions);
-  if (!scheduleIntent) {
+  const explicitIntent = detectExplicitReadIntent(text, enabledFunctions);
+  if (!explicitIntent) {
     return route;
   }
 
   return {
     type: "execute",
-    action: scheduleIntent.action,
-    arguments: scheduleIntent.arguments,
+    action: explicitIntent.action,
+    arguments: explicitIntent.arguments,
     provider: "keyword",
     fallbackProvider:
       route.provider === "ollama" || route.provider === "deepseek" ? route.provider : undefined,
@@ -54,78 +51,66 @@ function detectContinuationIntent(
   if (!continuation || !enabledFunctions.includes(continuation.functionName)) return undefined;
   if (route.type === "execute") return undefined;
   if (route.type === "respond" && route.action !== "small_talk") return undefined;
-  if (continuation.functionName !== "query_schedule") return undefined;
-  const refinement = refineScheduleQuery(
-    { query: text } as QueryScheduleArguments,
-    new Date(),
-    "Asia/Taipei"
+  const definition = FUNCTION_DEFINITIONS.find(
+    ({ name, continuation: policy }) => name === continuation.functionName && Boolean(policy)
   );
-  const role = extractScheduleRoleFocus({
-    query: text,
-    hasContinuation: true,
-    availableRoles: continuationRoles(continuation.arguments)
-  });
-  const arguments_ = Object.fromEntries(
-    Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
+  if (!definition) return undefined;
+  const arguments_ = normalizeFunctionArguments(
+    continuation.functionName,
+    { query: text },
+    {
+      text,
+      continuationArguments: continuation.arguments
+    }
   );
-  if (role) arguments_.role = role;
-  return Object.keys(arguments_).length > 0
-    ? { action: "query_schedule", arguments: { query: text.trim(), ...arguments_ } }
+  return hasContinuationEvidence(text, continuation.arguments, arguments_)
+    ? { action: continuation.functionName, arguments: arguments_ }
     : undefined;
 }
 
-function continuationRoles(arguments_: JsonRecord): string[] | undefined {
-  const roles = arguments_.availableRoles;
-  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
-    ? roles
-    : undefined;
+function hasContinuationEvidence(
+  text: string,
+  previous: JsonRecord,
+  normalized: JsonRecord
+): boolean {
+  if (Object.keys(normalized).some((key) => key !== "query" && key !== "originalQuery")) {
+    return true;
+  }
+  const comparable = normalizeText(text);
+  return Object.values(previous).some((value) =>
+    (Array.isArray(value) ? value : [value]).some(
+      (item) =>
+        typeof item === "string" && normalizeText(item) && comparable.includes(normalizeText(item))
+    )
+  );
 }
 
-function detectServiceScheduleIntent(
+function detectExplicitReadIntent(
   text: string,
   enabledFunctions: FunctionName[]
 ): { action: FunctionName; arguments: JsonRecord } | undefined {
-  const action = enabledFunctions.includes("query_schedule")
-    ? "query_schedule"
-    : enabledFunctions.includes("query_service_schedule")
-      ? "query_service_schedule"
-      : undefined;
-  if (!action) {
-    return undefined;
-  }
+  const enabled = new Set(enabledFunctions);
+  const matches = FUNCTION_DEFINITIONS.filter(
+    (definition) =>
+      enabled.has(definition.name) &&
+      definition.sideEffectLevel === "read" &&
+      [
+        ...(definition.agentCapability?.intents ?? []),
+        ...(definition.agentCapability?.candidateHints ?? []),
+        ...(definition.keywordFallback?.keywords ?? [])
+      ].some((term) => normalizeText(term) && normalizeText(text).includes(normalizeText(term)))
+  );
+  if (matches.length !== 1) return undefined;
+  const action = matches[0]!.name;
+  return {
+    action,
+    arguments: normalizeFunctionArguments(action, { query: text.trim() }, { text })
+  };
+}
 
-  const normalized = text.normalize("NFKC").replace(/\s+/g, "");
-  const hasScheduleWord = /服事|聚會/u.test(normalized);
-  if (!hasScheduleWord) {
-    return undefined;
-  }
-
-  const args: JsonRecord = { query: text.trim() };
-  if (/(下一場|下場|最近一場|下一次|下次)/u.test(normalized)) {
-    args.dateIntent = "next_meeting";
-    return { action, arguments: args };
-  }
-  if (/(這週|這周|本週|本周|这周|这週)/u.test(normalized)) {
-    args.dateIntent = "this_week";
-    return { action, arguments: args };
-  }
-  if (/今天/u.test(normalized)) {
-    args.dateIntent = "today";
-    return { action, arguments: args };
-  }
-  if (/明天/u.test(normalized)) {
-    args.dateIntent = "tomorrow";
-    return { action, arguments: args };
-  }
-  if (/後天|后天/u.test(normalized)) {
-    args.dateIntent = "day_after_tomorrow";
-    return { action, arguments: args };
-  }
-  if (/主日|晨更|門訓|國度禱告|福音餐會|仙履奇緣/u.test(normalized)) {
-    return { action, arguments: args };
-  }
-  if (/服事表|聚會服事/u.test(normalized)) {
-    return { action, arguments: args };
-  }
-  return undefined;
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-TW")
+    .replace(/[\p{P}\p{S}\s]+/gu, "");
 }

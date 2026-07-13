@@ -213,6 +213,19 @@ describe("find_ppt_slides", () => {
       title: "奇異恩典.pptx",
       storage: { provider: "graph", driveId: "drive-id", itemId: "1" }
     });
+    expect(result.agentResult).toEqual({
+      status: "success",
+      replyText: "投影片查詢完成。",
+      entities: [{ type: "resource", key: "1", label: "投影片資源" }],
+      evidence: [
+        {
+          kind: "catalog_item",
+          reference: { resourceId: "1", driveId: "drive-id", itemId: "1" }
+        }
+      ],
+      supportedOperations: []
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/奇異恩典|download\.invalid/iu);
     expect(graph.createSharingLink).toHaveBeenCalledWith(
       "drive-id",
       "1",

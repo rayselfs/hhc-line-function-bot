@@ -520,8 +520,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         const result = await handler(normalizedArguments, {
           ...context,
           continuation:
-            controlledMode === "enabled" && route.action === "query_knowledge"
-              ? knowledgeActiveTaskContinuation(activeTask)
+            controlledMode === "enabled"
+              ? activeTaskContinuation(route.action, activeTask)
               : continuation?.functionName === route.action
                 ? continuation
                 : undefined
@@ -1002,12 +1002,19 @@ function activeTaskTtlMs(profile: BotProfileConfig): number {
   return Math.max(1, profile.generalAgent?.conversationWindowSeconds ?? 60) * 1000;
 }
 
-function knowledgeActiveTaskContinuation(
+function activeTaskContinuation(
+  capability: FunctionName,
   activeTask: ActiveTaskContext | undefined
 ): FunctionContinuationState | undefined {
-  if (activeTask?.capability !== "query_knowledge") return undefined;
+  const operations = getFunctionDefinition(capability)?.agentCapability?.operations ?? [];
+  if (
+    activeTask?.capability !== capability ||
+    !operations.some((operation) => activeTask.supportedOperations.includes(operation))
+  ) {
+    return undefined;
+  }
   return {
-    functionName: "query_knowledge",
+    functionName: capability,
     arguments: { ...activeTask.anchors },
     resultReferences: { ...activeTask.anchors, ...(activeTask.references ?? {}) },
     createdAt: activeTask.createdAt,

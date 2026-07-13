@@ -69,6 +69,19 @@ describe("find_resource", () => {
     expect(result.ok).toBe(true);
     expect(result.replyText).toContain("2026-07-週報音檔.mp3");
     expect(result.replyText).toContain("https://download.invalid/weekly-report");
+    expect(result.agentResult).toEqual({
+      status: "success",
+      replyText: "教會資料查詢完成。",
+      entities: [{ type: "resource", key: expect.any(String), label: "教會資料" }],
+      evidence: [
+        {
+          kind: "catalog_item",
+          reference: { resourceId: expect.any(String), driveId: "drive-1", itemId: "audio-1" }
+        }
+      ],
+      supportedOperations: []
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/週報音檔|download\.invalid/iu);
     expect(graph.createSharingLink).toHaveBeenCalledWith(
       "drive-1",
       "audio-1",
@@ -121,6 +134,10 @@ describe("find_resource", () => {
     const result = await handler({ query: "週報音檔" }, context());
 
     expect(result.replyText).toBe("查不到符合的教會資料。");
+    expect(result.agentResult).toEqual({
+      status: "not_found",
+      replyText: "查不到符合的教會資料。"
+    });
     expect(graph.createSharingLink).not.toHaveBeenCalled();
   });
 });

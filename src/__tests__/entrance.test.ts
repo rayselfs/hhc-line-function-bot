@@ -3260,7 +3260,7 @@ describe("LINE entrance", () => {
     expect(replyText).toHaveBeenCalledWith("reply-token", "已選擇第 1 個投影片", undefined);
   });
 
-  it("applies active-task lifecycle to requester-scoped postback selections", async () => {
+  it("keeps selection-session reads out of requester-scoped active tasks", async () => {
     const config = testConfig();
     config.profiles[0] = {
       ...config.profiles[0]!,
@@ -3348,17 +3348,16 @@ describe("LINE entrance", () => {
     };
 
     expect((await sendSelection("success", "U1")).statusCode).toBe(200);
-    const successfulTask = await conversationWindowStore.activeTask(scope);
-    expect(successfulTask).toMatchObject({ capability: "find_ppt_slides" });
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toBeUndefined();
 
     expect((await sendSelection("ambiguous", "U1")).statusCode).toBe(200);
-    await expect(conversationWindowStore.activeTask(scope)).resolves.toEqual(successfulTask);
+    await expect(conversationWindowStore.activeTask(scope)).resolves.toBeUndefined();
 
     expect((await sendSelection("clear", "U1")).statusCode).toBe(200);
     await expect(conversationWindowStore.activeTask(scope)).resolves.toBeUndefined();
 
     expect((await sendSelection("missing-requester")).statusCode).toBe(200);
-    expect(recordActiveTask).toHaveBeenCalledTimes(1);
+    expect(recordActiveTask).not.toHaveBeenCalled();
   });
 
   it("stores slow agent turns and lets the same requester retrieve the result by postback", async () => {
