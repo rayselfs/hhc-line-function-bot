@@ -10,6 +10,7 @@ const migrations = [
     source_key text not null,
     origin text not null check (origin in ('notion', 'line')),
     external_id text,
+    external_key text,
     service_date date not null,
     meeting text not null default '',
     role text not null default '',
@@ -23,6 +24,17 @@ const migrations = [
     deleted_at timestamptz,
     unique (profile_name, source_key, schedule_identity)
   )
+  `,
+  `alter table schedule_items add column if not exists external_key text`,
+  `
+  update schedule_items
+  set external_key = external_id
+  where external_key is null and external_id is not null
+  `,
+  `
+  create index if not exists schedule_items_external_key_idx
+  on schedule_items (profile_name, source_key, origin, external_key)
+  where deleted_at is null
   `,
   `
   create index if not exists schedule_items_lookup_idx

@@ -99,6 +99,7 @@ export async function syncCatalogSources(
           scheduleUpserted: sync.upserted,
           scheduleSkipped: sync.skipped,
           scheduleTombstoned: sync.tombstoned,
+          scheduleMalformed: sync.malformed,
           ...baseLog
         });
         continue;

@@ -25,6 +25,7 @@ type ScheduleItemRow = {
   source_key: string;
   origin: ScheduleOrigin;
   external_id: string | null;
+  external_key: string | null;
   service_date: Date | string;
   meeting: string;
   role: string;
@@ -43,13 +44,14 @@ export class PostgresScheduleStore implements ScheduleStore {
     const result = await this.db.query<ScheduleItemRow>(
       `
       insert into schedule_items
-        (id, profile_name, source_key, origin, external_id, service_date, meeting, role,
+        (id, profile_name, source_key, origin, external_id, external_key, service_date, meeting, role,
          assignee, notes, normalized_search_text, schedule_identity, external_updated_at,
          deleted_at, updated_at)
-      values ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, now())
+      values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10, $11, $12, $13, $14, $15, now())
       on conflict (profile_name, source_key, schedule_identity) do update
       set origin = excluded.origin,
           external_id = excluded.external_id,
+          external_key = excluded.external_key,
           service_date = excluded.service_date,
           meeting = excluded.meeting,
           role = excluded.role,
@@ -67,6 +69,7 @@ export class PostgresScheduleStore implements ScheduleStore {
         input.sourceKey,
         input.origin,
         input.externalId ?? null,
+        input.externalKey ?? null,
         input.serviceDate,
         input.meeting,
         input.role,
@@ -81,11 +84,11 @@ export class PostgresScheduleStore implements ScheduleStore {
     return mapRow(result.rows[0]);
   }
 
-  async tombstoneMissingExternalIds(input: {
+  async tombstoneMissingExternalKeys(input: {
     profileName: string;
     sourceKey: string;
     origin: ScheduleOrigin;
-    liveExternalIds: string[];
+    liveExternalKeys: string[];
     deletedAt: string;
   }): Promise<number> {
     const result = await this.db.query<{ id: string }>(
@@ -96,12 +99,12 @@ export class PostgresScheduleStore implements ScheduleStore {
       where profile_name = $1
         and source_key = $2
         and origin = $3
-        and external_id is not null
+        and external_key is not null
         and deleted_at is null
-        and not (external_id = any($4::text[]))
+        and not (external_key = any($4::text[]))
       returning id
       `,
-      [input.profileName, input.sourceKey, input.origin, input.liveExternalIds, input.deletedAt]
+      [input.profileName, input.sourceKey, input.origin, input.liveExternalKeys, input.deletedAt]
     );
     return result.rows.length;
   }
@@ -160,6 +163,7 @@ function mapRow(row: ScheduleItemRow): ScheduleItemRecord {
     sourceKey: row.source_key,
     origin: row.origin,
     externalId: row.external_id ?? undefined,
+    externalKey: row.external_key ?? undefined,
     serviceDate: dateKey(row.service_date),
     meeting: row.meeting,
     role: row.role,

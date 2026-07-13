@@ -7,6 +7,7 @@ export interface ScheduleItemInput {
   sourceKey: string;
   origin: ScheduleOrigin;
   externalId?: string;
+  externalKey?: string;
   serviceDate: string;
   meeting: string;
   role: string;
@@ -37,11 +38,11 @@ export interface ScheduleSearchInput {
 
 export interface ScheduleStore {
   upsertItem(input: ScheduleItemInput): Promise<ScheduleItemRecord>;
-  tombstoneMissingExternalIds(input: {
+  tombstoneMissingExternalKeys(input: {
     profileName: string;
     sourceKey: string;
     origin: ScheduleOrigin;
-    liveExternalIds: string[];
+    liveExternalKeys: string[];
     deletedAt: string;
   }): Promise<number>;
   searchItems(input: ScheduleSearchInput): Promise<ScheduleItemRecord[]>;
@@ -64,23 +65,23 @@ export class InMemoryScheduleStore implements ScheduleStore {
     return record;
   }
 
-  async tombstoneMissingExternalIds(input: {
+  async tombstoneMissingExternalKeys(input: {
     profileName: string;
     sourceKey: string;
     origin: ScheduleOrigin;
-    liveExternalIds: string[];
+    liveExternalKeys: string[];
     deletedAt: string;
   }): Promise<number> {
-    const live = new Set(input.liveExternalIds);
+    const live = new Set(input.liveExternalKeys);
     let count = 0;
     for (const item of Array.from(this.items.values())) {
       if (
         item.profileName === input.profileName &&
         item.sourceKey === input.sourceKey &&
         item.origin === input.origin &&
-        item.externalId &&
+        item.externalKey &&
         !item.deletedAt &&
-        !live.has(item.externalId)
+        !live.has(item.externalKey)
       ) {
         this.items.set(item.id, { ...item, deletedAt: input.deletedAt });
         count += 1;
@@ -118,8 +119,9 @@ export function normalizeScheduleText(value: string): string {
 }
 
 export function scheduleItemIdentity(input: ScheduleItemInput): string {
-  if (input.externalId) {
-    return `${input.profileName}:${input.sourceKey}:${input.origin}:external:${input.externalId}`;
+  const externalIdentity = input.externalKey ?? input.externalId;
+  if (externalIdentity) {
+    return `${input.profileName}:${input.sourceKey}:${input.origin}:external:${externalIdentity}`;
   }
   return [
     input.profileName,

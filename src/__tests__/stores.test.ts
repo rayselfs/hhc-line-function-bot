@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MemoryCacheStore } from "../cache/cache-store.js";
 import { createCacheStore } from "../cache/create-cache-store.js";
@@ -13,6 +13,9 @@ import { createRateLimiter, RedisRateLimiter } from "../rate-limit.js";
 import { createSessionStore } from "../state/create-session-store.js";
 import { InMemorySessionStore } from "../state/session-store.js";
 import { RedisSessionStore } from "../state/redis-session-store.js";
+import { runScheduleMigrations } from "../schedules/migrations.js";
+import { PostgresScheduleStore, type PgQueryable } from "../schedules/postgres-store.js";
+import { InMemoryScheduleStore } from "../schedules/store.js";
 
 class FakeRedisClient {
   readonly values = new Map<string, string>();
@@ -288,5 +291,143 @@ describe("store factories", () => {
     await expect(
       limiter.check({ profileName: "helper", source: { type: "user", userId: "U1" } })
     ).resolves.toMatchObject({ allowed: false });
+  });
+});
+
+describe("schedule store", () => {
+  it("migrates legacy external ids into indexed external keys", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+
+    await runScheduleMigrations({ query });
+
+    const sql = query.mock.calls.map(([statement]) => statement).join("\n");
+    expect(sql).toContain("add column if not exists external_key text");
+    expect(sql).toContain("set external_key = external_id");
+    expect(sql).toContain("schedule_items_external_key_idx");
+    expect(sql).toContain("profile_name, source_key, origin, external_key");
+  });
+
+  it("persists and maps derived external keys in Postgres", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: "00000000-0000-0000-0000-000000000001",
+          profile_name: "helper",
+          source_key: "service_schedule",
+          origin: "notion",
+          external_id: "page-1",
+          external_key: "page-1:0:音控",
+          service_date: "2026-07-14",
+          meeting: "晨更",
+          role: "音控",
+          assignee: "資恆",
+          notes: null,
+          normalized_search_text: "晨更音控資恆",
+          external_updated_at: null,
+          deleted_at: null
+        }
+      ]
+    });
+    const store = new PostgresScheduleStore({ query } as PgQueryable);
+
+    await expect(
+      store.upsertItem({
+        profileName: "helper",
+        sourceKey: "service_schedule",
+        origin: "notion",
+        externalId: "page-1",
+        externalKey: "page-1:0:音控",
+        serviceDate: "2026-07-14",
+        meeting: "晨更",
+        role: "音控",
+        assignee: "資恆"
+      })
+    ).resolves.toMatchObject({ externalId: "page-1", externalKey: "page-1:0:音控" });
+    expect(query.mock.calls[0]?.[0]).toContain("external_id, external_key");
+    expect(query.mock.calls[0]?.[1]?.[5]).toBe("page-1:0:音控");
+  });
+
+  it("tombstones missing external keys in Postgres", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ id: "removed" }] });
+    const store = new PostgresScheduleStore({ query } as PgQueryable);
+
+    await expect(
+      store.tombstoneMissingExternalKeys({
+        profileName: "helper",
+        sourceKey: "service_schedule",
+        origin: "notion",
+        liveExternalKeys: ["page-1:0:音控"],
+        deletedAt: "2026-07-13T00:00:00.000Z"
+      })
+    ).resolves.toBe(1);
+    expect(query.mock.calls[0]?.[0]).toContain("external_key is not null");
+    expect(query.mock.calls[0]?.[0]).toContain("external_key = any($4::text[])");
+    expect(query.mock.calls[0]?.[1]).toEqual([
+      "helper",
+      "service_schedule",
+      "notion",
+      ["page-1:0:音控"],
+      "2026-07-13T00:00:00.000Z"
+    ]);
+  });
+
+  it("uses derived external keys for idempotent updates", async () => {
+    const store = new InMemoryScheduleStore();
+    const base = {
+      profileName: "helper",
+      sourceKey: "service_schedule",
+      origin: "notion" as const,
+      externalId: "page-1",
+      externalKey: "page-1:0:音控",
+      serviceDate: "2026-07-14",
+      meeting: "晨更",
+      role: "音控"
+    };
+
+    const original = await store.upsertItem({ ...base, assignee: "資恆" });
+    const updated = await store.upsertItem({ ...base, assignee: "Ray" });
+
+    expect(updated.id).toBe(original.id);
+    await expect(
+      store.searchItems({ profileName: "helper", query: "音控", limit: 10 })
+    ).resolves.toMatchObject([{ id: original.id, assignee: "Ray" }]);
+  });
+
+  it("tombstones only missing derived keys in the selected profile and source", async () => {
+    const store = new InMemoryScheduleStore();
+    const item = (profileName: string, sourceKey: string, externalKey: string, role: string) => ({
+      profileName,
+      sourceKey,
+      origin: "notion" as const,
+      externalId: "page-1",
+      externalKey,
+      serviceDate: "2026-07-14",
+      meeting: "晨更",
+      role,
+      assignee: "同工"
+    });
+    await store.upsertItem(item("helper", "source-a", "page-1:0:音控", "音控"));
+    await store.upsertItem(item("helper", "source-a", "page-1:1:導播", "導播"));
+    await store.upsertItem(item("helper", "source-b", "page-1:1:導播", "導播"));
+    await store.upsertItem(item("main", "source-a", "page-1:1:導播", "導播"));
+
+    await expect(
+      store.tombstoneMissingExternalKeys({
+        profileName: "helper",
+        sourceKey: "source-a",
+        origin: "notion",
+        liveExternalKeys: ["page-1:0:音控"],
+        deletedAt: "2026-07-13T00:00:00.000Z"
+      })
+    ).resolves.toBe(1);
+    await expect(
+      store.searchItems({ profileName: "helper", sourceKeys: ["source-a"], limit: 10 })
+    ).resolves.toHaveLength(1);
+    await expect(
+      store.searchItems({ profileName: "helper", sourceKeys: ["source-b"], limit: 10 })
+    ).resolves.toHaveLength(1);
+    await expect(
+      store.searchItems({ profileName: "main", sourceKeys: ["source-a"], limit: 10 })
+    ).resolves.toHaveLength(1);
   });
 });
