@@ -1,3 +1,5 @@
+import type { AgentResultEnvelope } from "./agent/result-envelope.js";
+
 export const FUNCTION_NAMES = [
   "find_ppt_slides",
   "query_schedule",
@@ -532,6 +534,7 @@ export interface FunctionExecutionResult {
   replyText: string;
   executedAction?: FunctionName;
   quickReplies?: QuickReplyItem[];
+  agentResult?: AgentResultEnvelope;
   agentResource?: AgentResourceReference;
   continuation?: { arguments?: JsonRecord; resultReferences?: JsonRecord };
   smallTalkTrace?: {
