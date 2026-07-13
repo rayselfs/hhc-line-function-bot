@@ -15,7 +15,16 @@ describe("knowledge migrations", () => {
     expect(sql).toContain("aliases text[] not null default '{}'");
     expect(sql).toContain("topics text[] not null default '{}'");
     expect(sql).toContain("sample_queries text[] not null default '{}'");
+    expect(sql).toContain("admin_aliases text[] not null default '{}'");
+    expect(sql).toContain("admin_topics text[] not null default '{}'");
+    expect(sql).toContain("admin_sample_queries text[] not null default '{}'");
+    expect(sql).toContain("routing_display_name text");
+    expect(sql).toContain("section_key text");
     expect(sql).toMatch(/alter table knowledge_sources add column if not exists aliases/iu);
+    expect(sql).toMatch(
+      /select id, heading_path from knowledge_chunks where section_key is null/iu
+    );
+    expect(sql).toMatch(/alter table knowledge_chunks alter column section_key set not null/iu);
     expect(sql).not.toMatch(/create\s+extension/iu);
   });
 });

@@ -212,11 +212,14 @@ service recursively reads blocks and incrementally embeds changed chunks, and
 `query_knowledge` combines lexical and pgvector retrieval before a grounded LLM
 answer. The dedicated `bge-m3` model runs on the private Ollama host; PostgreSQL
 stores only vectors and version metadata. Bounded routing summaries come only
-from source names, administrator aliases/topics/sample queries, document titles,
-and headings. The controlled planner never receives chunks, URLs, or answer
-content. Successful results persist safe source/document/section/ordinal anchors;
-follow-ups remain source-bounded unless current metadata proves an explicit
-source switch.
+from the promoted last-known-good snapshot: staged administrator fields plus
+document titles and headings from the latest successful sync. Failed syncs
+preserve the previous snapshot, and never-successfully-synced rows remain visible
+to admins but ineligible for routing, anchors, and retrieval. The controlled
+planner never receives chunks, URLs, or answer content. Successful results persist
+opaque source/document/hashed-section ids with generic labels and ordinals;
+follow-ups fall back section to document to source, never profile-wide, unless the
+same capped metadata provider proves one unique source switch.
 
 Do not use it for unrestricted chat logging. Normal group chatter must not be
 saved. Temporary Graph sharing links must not be saved; store drive/item ids and

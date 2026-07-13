@@ -416,7 +416,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         embedding: this.options.knowledgeEmbedding,
         batchSize: this.options.knowledgeEmbeddingBatchSize
       });
-      await this.auditKnowledge(input, "knowledge.source.add", sourceKey);
+      await this.auditKnowledge(input, "knowledge.source.add", sourceKey, { outcome: "success" });
       return {
         ok: true,
         replyText: [
@@ -432,6 +432,10 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         sourceKey,
         syncStatus: "failed",
         syncErrorCode: "source_unavailable"
+      });
+      await this.auditKnowledge(input, "knowledge.source.add", sourceKey, {
+        outcome: "failed",
+        errorCode: "source_unavailable"
       });
       return { ok: true, replyText: "無法讀取該頁面，請確認已分享給系統使用的整合服務。" };
     }
@@ -453,7 +457,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
             "知識來源：",
             ...sources.map(
               (source) =>
-                `- ${source.sourceKey}｜${source.displayName}｜${source.enabled ? "啟用" : "停用"}｜${source.syncStatus ?? "pending"}${source.expiresAt ? `｜到期 ${source.expiresAt.slice(0, 10)}` : "｜永久"}｜別名 ${source.aliases.length}｜主題 ${source.topics.length}｜範例問題 ${source.sampleQueries.length}`
+                `- ${source.sourceKey}｜${source.displayName}｜${source.enabled ? "啟用" : "停用"}｜${source.syncStatus ?? "pending"}${source.expiresAt ? `｜到期 ${source.expiresAt.slice(0, 10)}` : "｜永久"}｜別名 ${source.adminAliases.length}｜主題 ${source.adminTopics.length}｜範例問題 ${source.adminSampleQueries.length}`
             )
           ].join("\n")
         : "目前沒有知識來源。"
@@ -482,7 +486,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         embedding: this.options.knowledgeEmbedding,
         batchSize: this.options.knowledgeEmbeddingBatchSize
       });
-      await this.auditKnowledge(input, "knowledge.source.sync", sourceKey);
+      await this.auditKnowledge(input, "knowledge.source.sync", sourceKey, { outcome: "success" });
       return {
         ok: true,
         replyText: `同步完成：${synced.documents} 份文件、${synced.chunks} 個片段。`
@@ -493,6 +497,10 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         sourceKey,
         syncStatus: "failed",
         syncErrorCode: "source_unavailable"
+      });
+      await this.auditKnowledge(input, "knowledge.source.sync", sourceKey, {
+        outcome: "failed",
+        errorCode: "source_unavailable"
       });
       return { ok: true, replyText: "同步失敗，舊版有效內容仍會保留。" };
     }
@@ -539,7 +547,8 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
   private async auditKnowledge(
     input: AdminActionExecutionInput,
     action: string,
-    sourceKey: string
+    sourceKey: string,
+    metadata: Record<string, unknown> = {}
   ): Promise<void> {
     const actorUserId = input.event.source.userId;
     if (!actorUserId) return;
@@ -549,7 +558,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       action,
       targetType: "knowledge_source",
       targetId: sourceKey,
-      metadata: {}
+      metadata
     });
   }
 }

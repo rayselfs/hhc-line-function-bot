@@ -151,8 +151,9 @@ describe("knowledge source admin actions", () => {
       syncStatus: "ready",
       lastSyncedAt: "2026-07-12T00:00:00Z"
     });
+    const accessStore = new InMemoryAccessStore();
     const registry = createAdminActionRegistry({
-      accessStore: new InMemoryAccessStore(),
+      accessStore,
       registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
       registrationInviteCodeTtlMinutes: 60,
       knowledgeStore: store,
@@ -179,6 +180,55 @@ describe("knowledge source admin actions", () => {
     ]);
     await expect(listKnowledgeRoutingMetadata(store, "helper", 20)).resolves.toEqual([
       expect.objectContaining({ sourceKey: "retreat" })
+    ]);
+    expect(accessStore.audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "knowledge.source.sync",
+          metadata: { outcome: "failed", errorCode: "source_unavailable" }
+        })
+      ])
+    );
+  });
+
+  it("audits a failed add after persisting its diagnosable unsynced row", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const accessStore = new InMemoryAccessStore();
+    const registry = createAdminActionRegistry({
+      accessStore,
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60,
+      knowledgeStore: store,
+      notionKnowledge: { fetchRoot: vi.fn().mockRejectedValue(new Error("private details")) }
+    });
+
+    const result = await registry.execute({
+      action: "knowledge_source_add",
+      profile,
+      event,
+      arguments: {
+        url: "https://www.notion.so/Failed-0123456789abcdef0123456789abcdef",
+        displayName: "失敗來源",
+        aliases: ["暫存別名"]
+      }
+    });
+
+    expect(result.replyText).toContain("無法讀取");
+    const [failedSource] = await store.listSources({
+      profileName: "helper",
+      includeDisabled: true
+    });
+    expect(failedSource).toMatchObject({
+      syncStatus: "failed",
+      adminAliases: ["暫存別名"],
+      aliases: []
+    });
+    expect(failedSource?.lastSyncedAt).toBeUndefined();
+    expect(accessStore.audit).toEqual([
+      expect.objectContaining({
+        action: "knowledge.source.add",
+        metadata: { outcome: "failed", errorCode: "source_unavailable" }
+      })
     ]);
   });
 });

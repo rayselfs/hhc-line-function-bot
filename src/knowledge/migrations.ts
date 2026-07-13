@@ -1,3 +1,5 @@
+import { knowledgeSectionKey } from "./section-key.js";
+
 export interface KnowledgeQueryable {
   query(sql: string, values?: unknown[]): Promise<unknown>;
 }
@@ -12,6 +14,10 @@ const migrations = [
     adapter_type text not null,
     external_root_id text not null,
     root_url text not null,
+    admin_aliases text[] not null default '{}',
+    admin_topics text[] not null default '{}',
+    admin_sample_queries text[] not null default '{}',
+    routing_display_name text,
     aliases text[] not null default '{}',
     topics text[] not null default '{}',
     sample_queries text[] not null default '{}',
@@ -30,6 +36,11 @@ const migrations = [
   `alter table knowledge_sources add column if not exists aliases text[] not null default '{}'`,
   `alter table knowledge_sources add column if not exists topics text[] not null default '{}'`,
   `alter table knowledge_sources add column if not exists sample_queries text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists admin_aliases text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists admin_topics text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists admin_sample_queries text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists routing_display_name text`,
+  `update knowledge_sources set routing_display_name=display_name where last_synced_at is not null and routing_display_name is null`,
   `
   create table if not exists knowledge_documents (
     id uuid primary key,
@@ -63,6 +74,7 @@ const migrations = [
     id uuid primary key,
     document_id uuid not null references knowledge_documents(id) on delete cascade,
     heading_path text[] not null default '{}',
+    section_key text not null,
     ordinal integer not null,
     content text not null,
     content_hash text not null,
@@ -72,6 +84,7 @@ const migrations = [
     unique (document_id, content_hash)
   )
   `,
+  `alter table knowledge_chunks add column if not exists section_key text`,
   `
   create table if not exists knowledge_embeddings (
     chunk_id uuid not null references knowledge_chunks(id) on delete cascade,
@@ -93,6 +106,20 @@ export async function runKnowledgeMigrations(db: KnowledgeQueryable): Promise<vo
   for (const migration of migrations) {
     await db.query(migration);
   }
+  const rows = (await db.query(
+    "select id, heading_path from knowledge_chunks where section_key is null"
+  )) as { rows?: Array<{ id?: unknown; heading_path?: unknown }> };
+  for (const row of rows.rows ?? []) {
+    if (typeof row.id !== "string" || !Array.isArray(row.heading_path)) continue;
+    const headingPath = row.heading_path.filter(
+      (heading): heading is string => typeof heading === "string"
+    );
+    await db.query("update knowledge_chunks set section_key=$2 where id=$1", [
+      row.id,
+      knowledgeSectionKey(headingPath)
+    ]);
+  }
+  await db.query("alter table knowledge_chunks alter column section_key set not null");
 }
 
 export async function verifyPgvector(db: KnowledgeQueryable): Promise<void> {

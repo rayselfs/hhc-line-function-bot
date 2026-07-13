@@ -43,6 +43,14 @@ describe("knowledge store", () => {
       nodes: [{ externalId: "node-2", type: "paragraph", ordinal: 0, text: "聚會後關閉音控設備" }],
       chunks: [{ headingPath: [], ordinal: 0, content: "聚會後關閉音控設備", contentHash: "h2" }]
     });
+    for (const sourceKey of [active.sourceKey, expired.sourceKey]) {
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-10T00:00:00Z"
+      });
+    }
 
     const results = await store.search({ profileName: "helper", query: "關閉音控", limit: 5 });
 
@@ -87,6 +95,12 @@ describe("knowledge store", () => {
       dimensions: 3,
       embedding: [1, 0, 0],
       contentHash: "h2"
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: source.sourceKey,
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-10T00:00:00Z"
     });
 
     const results = await store.search({

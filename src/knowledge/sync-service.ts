@@ -77,9 +77,10 @@ export async function syncKnowledgeSource(input: {
     syncStatus: status,
     syncErrorCode: undefined,
     lastSyncedAt: now().toISOString(),
-    aliases: [...input.source.aliases, ...derivedMetadata.aliases],
-    topics: [...input.source.topics, ...derivedMetadata.topics],
-    sampleQueries: input.source.sampleQueries
+    routingDisplayName: input.source.displayName,
+    aliases: [...input.source.adminAliases, ...derivedMetadata.aliases],
+    topics: [...input.source.adminTopics, ...derivedMetadata.topics],
+    sampleQueries: input.source.adminSampleQueries
   });
   return { documents: documents.length, chunks: chunks.length, embedded, status };
 }

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { buildCapabilityCandidates } from "../agent/capability-candidates.js";
 import {
   deriveKnowledgeRoutingMetadata,
-  listKnowledgeRoutingMetadata
+  listKnowledgeRoutingMetadata,
+  matchingKnowledgeRoutingMetadata
 } from "../knowledge/routing-metadata.js";
+import { syncKnowledgeSource } from "../knowledge/sync-service.js";
 import { InMemoryKnowledgeStore } from "../knowledge/store.js";
 
 describe("knowledge routing metadata", () => {
@@ -152,6 +154,144 @@ describe("knowledge routing metadata", () => {
         enabledFunctions: ["query_knowledge"],
         source: "group",
         knowledgeSources: metadata,
+        maxCandidates: 3
+      })
+    ).toEqual([
+      expect.objectContaining({ capability: "query_knowledge", reason: "knowledge_metadata" })
+    ]);
+  });
+
+  it("keeps staged administrator metadata separate from the promoted last-known-good snapshot", async () => {
+    const store = new InMemoryKnowledgeStore();
+    let source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "舊名稱",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true,
+      aliases: ["舊管理別名"],
+      topics: ["舊管理主題"],
+      sampleQueries: ["舊問題"]
+    });
+    await syncKnowledgeSource({
+      source,
+      store,
+      notion: {
+        fetchRoot: async () => [
+          {
+            externalId: "doc",
+            title: "舊文件標題",
+            url: "https://example.test/doc",
+            nodes: [{ externalId: "h", type: "heading_1", ordinal: 0, text: "舊章節" }]
+          }
+        ]
+      }
+    });
+
+    source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "新名稱",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true,
+      aliases: ["新管理別名"],
+      topics: ["新管理主題"],
+      sampleQueries: ["新問題"]
+    });
+
+    await expect(listKnowledgeRoutingMetadata(store, "helper", 20)).resolves.toEqual([
+      expect.objectContaining({
+        displayName: "舊名稱",
+        aliases: expect.arrayContaining(["舊管理別名"]),
+        topics: expect.arrayContaining(["舊文件標題", "舊章節"]),
+        sampleQueries: ["舊問題"]
+      })
+    ]);
+    expect(source).toMatchObject({
+      displayName: "新名稱",
+      adminAliases: ["新管理別名"],
+      adminTopics: ["新管理主題"],
+      adminSampleQueries: ["新問題"]
+    });
+
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      syncStatus: "failed",
+      syncErrorCode: "source_unavailable"
+    });
+    await expect(listKnowledgeRoutingMetadata(store, "helper", 20)).resolves.toEqual([
+      expect.objectContaining({ displayName: "舊名稱", sampleQueries: ["舊問題"] })
+    ]);
+
+    await syncKnowledgeSource({
+      source,
+      store,
+      notion: {
+        fetchRoot: async () => [
+          {
+            externalId: "doc",
+            title: "新文件標題",
+            url: "https://example.test/doc",
+            nodes: [{ externalId: "h", type: "heading_1", ordinal: 0, text: "新章節" }]
+          }
+        ]
+      }
+    });
+    const [promoted] = await listKnowledgeRoutingMetadata(store, "helper", 20);
+    expect(promoted).toMatchObject({
+      displayName: "新名稱",
+      aliases: expect.arrayContaining(["新管理別名"]),
+      topics: expect.arrayContaining(["新管理主題", "新文件標題", "新章節"]),
+      sampleQueries: ["新問題"]
+    });
+    expect(JSON.stringify(promoted)).not.toMatch(/舊管理|舊文件|舊章節|舊問題/u);
+  });
+
+  it("matches routing fields conservatively and requires unique evidence", () => {
+    const sources = [
+      {
+        sourceKey: "alpha-source",
+        displayName: "甲來源",
+        aliases: ["甲", "共同名稱"],
+        topics: ["集合時間"],
+        sampleQueries: ["何時集合"]
+      },
+      {
+        sourceKey: "beta-source",
+        displayName: "乙來源",
+        aliases: ["乙", "共同名稱"],
+        topics: ["集合地點"],
+        sampleQueries: []
+      }
+    ];
+
+    expect(matchingKnowledgeRoutingMetadata("甲", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("請看 alpha-source 內容", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("alpha-source", sources)).toEqual([sources[0]]);
+    expect(matchingKnowledgeRoutingMetadata("共同名稱", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("請問何時集合", sources)).toEqual([sources[0]]);
+    for (const text of ["甲", "請看 alpha-source 內容"]) {
+      expect(
+        buildCapabilityCandidates({
+          text,
+          enabledFunctions: ["query_knowledge"],
+          source: "group",
+          knowledgeSources: sources,
+          maxCandidates: 3
+        })
+      ).toEqual([]);
+    }
+    expect(
+      buildCapabilityCandidates({
+        text: "alpha-source",
+        enabledFunctions: ["query_knowledge"],
+        source: "group",
+        knowledgeSources: sources,
         maxCandidates: 3
       })
     ).toEqual([

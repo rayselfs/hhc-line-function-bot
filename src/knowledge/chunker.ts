@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { KnowledgeChunkInput, KnowledgeNodeInput } from "./store.js";
+import { knowledgeSectionKey } from "./section-key.js";
 
 const TARGET_CHARS = 700;
 
@@ -15,6 +16,7 @@ export function chunkKnowledgeNodes(nodes: KnowledgeNodeInput[]): KnowledgeChunk
     if (content) {
       chunks.push({
         headingPath: [...headingPath],
+        sectionKey: knowledgeSectionKey(headingPath),
         ordinal: pendingStart,
         content,
         contentHash: createHash("sha256")

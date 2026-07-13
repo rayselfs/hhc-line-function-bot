@@ -28,7 +28,7 @@ const ACTIVE_TASK_KEYS = new Set(
 );
 const ENTITY_KEYS = new Set("type key label aliases".split(" "));
 const REFERENCE_KEYS = new Set(
-  "id sourceId sourceKey resourceId driveId itemId pageId documentId chunkId memoryId url section ordinal".split(
+  "id sourceId sourceKey resourceId driveId itemId pageId documentId chunkId memoryId url section sectionKey ordinal".split(
     " "
   )
 );

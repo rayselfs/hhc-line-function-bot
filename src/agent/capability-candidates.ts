@@ -6,7 +6,10 @@ import {
   type FunctionDefinition
 } from "../functions/definitions.js";
 import type { FunctionName } from "../types.js";
-import type { KnowledgeRoutingMetadata } from "../knowledge/routing-metadata.js";
+import {
+  resolveKnowledgeRoutingMetadata,
+  type KnowledgeRoutingMetadata
+} from "../knowledge/routing-metadata.js";
 
 export interface KnowledgeSourceMetadata extends Omit<KnowledgeRoutingMetadata, "sampleQueries"> {
   sampleQueries?: string[];
@@ -149,23 +152,20 @@ function matchesKnowledgeMetadata(
   text: string,
   sources: readonly KnowledgeSourceMetadata[]
 ): boolean {
-  return sources
-    .slice(0, METADATA_LIMITS.sources)
-    .some((source) =>
-      matchesAnyExact(text, [
-        boundedTerm(source.sourceKey),
-        boundedTerm(source.displayName),
-        ...source.aliases
-          .slice(0, METADATA_LIMITS.aliasesPerSource)
-          .map((alias) => boundedTerm(alias)),
-        ...source.topics
-          .slice(0, METADATA_LIMITS.topicsPerSource)
-          .map((topic) => boundedTerm(topic)),
-        ...(source.sampleQueries ?? [])
-          .slice(0, METADATA_LIMITS.sampleQueriesPerSource)
-          .map((query) => boundedTerm(query))
-      ])
-    );
+  const boundedSources = sources.slice(0, METADATA_LIMITS.sources).map((source) => ({
+    sourceKey: boundedTerm(source.sourceKey),
+    displayName: boundedTerm(source.displayName),
+    aliases: source.aliases
+      .slice(0, METADATA_LIMITS.aliasesPerSource)
+      .map((alias) => boundedTerm(alias)),
+    topics: source.topics
+      .slice(0, METADATA_LIMITS.topicsPerSource)
+      .map((topic) => boundedTerm(topic)),
+    sampleQueries: (source.sampleQueries ?? [])
+      .slice(0, METADATA_LIMITS.sampleQueriesPerSource)
+      .map((query) => boundedTerm(query))
+  }));
+  return resolveKnowledgeRoutingMetadata(text, boundedSources).status !== "none";
 }
 
 function boundedTerm(value: string): string {

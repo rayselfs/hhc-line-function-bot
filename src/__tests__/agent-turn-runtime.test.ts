@@ -656,6 +656,7 @@ describe("AgentTurnRuntime", () => {
   });
 
   it("passes knowledge source/document/section anchors to a follow-up and lets schedule intent switch", async () => {
+    const sectionKey = "a".repeat(64);
     const store = new InMemoryConversationWindowStore({
       now: () => new Date("2026-07-08T00:00:00.000Z")
     });
@@ -688,24 +689,24 @@ describe("AgentTurnRuntime", () => {
           status: "success",
           replyText: "第一天去日月潭。",
           anchors: {
-            sourceKey: "retreat",
+            sourceId: "source-opaque-1",
             documentId: "doc-1",
-            section: "第一天",
+            sectionKey,
             ordinal: 0
           },
           entities: [
-            { type: "source", key: "retreat", label: "2026 青年出隊" },
-            { type: "document", key: "doc-1", label: "2026 青年出隊" },
-            { type: "section", key: "第一天", label: "第一天" },
+            { type: "source", key: "source-opaque-1", label: "知識來源" },
+            { type: "document", key: "doc-1", label: "知識文件" },
+            { type: "section", key: sectionKey, label: "知識段落" },
             { type: "ordinal", key: "0", label: "第 1 項" }
           ],
           evidence: [
             {
               kind: "knowledge_section",
               reference: {
-                sourceKey: "retreat",
+                sourceId: "source-opaque-1",
                 documentId: "doc-1",
-                section: "第一天",
+                sectionKey,
                 ordinal: 0
               }
             }
@@ -719,8 +720,8 @@ describe("AgentTurnRuntime", () => {
         agentResult: {
           status: "success",
           replyText: "08:00 集合。",
-          anchors: { sourceKey: "retreat", documentId: "doc-1", section: "第一天" },
-          entities: [{ type: "section", key: "第一天", label: "第一天" }],
+          anchors: { sourceId: "source-opaque-1", documentId: "doc-1", sectionKey },
+          entities: [{ type: "section", key: sectionKey, label: "知識段落" }],
           supportedOperations: ["continue", "refine", "select"]
         }
       });
@@ -776,15 +777,15 @@ describe("AgentTurnRuntime", () => {
         continuation: expect.objectContaining({
           functionName: "query_knowledge",
           arguments: expect.objectContaining({
-            sourceKey: "retreat",
+            sourceId: "source-opaque-1",
             documentId: "doc-1",
-            section: "第一天",
+            sectionKey,
             ordinal: 0
           }),
           resultReferences: expect.objectContaining({
-            sourceKey: "retreat",
+            sourceId: "source-opaque-1",
             documentId: "doc-1",
-            section: "第一天",
+            sectionKey,
             ordinal: 0
           })
         })

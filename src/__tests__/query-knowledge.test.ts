@@ -7,6 +7,36 @@ import type { BotProfileConfig } from "../types.js";
 const profile = { name: "helper", enabledFunctions: ["query_knowledge"] } as BotProfileConfig;
 
 describe("query_knowledge", () => {
+  it("rejects unsynced sources consistently for search and anchors", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "draft",
+      displayName: "尚未同步",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true
+    });
+    const document = await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc",
+      title: "草稿",
+      url: "https://example.test/doc",
+      nodes: [],
+      chunks: [{ headingPath: ["段落"], ordinal: 0, content: "不可搜尋", contentHash: "h" }]
+    });
+
+    await expect(store.search({ profileName: "helper", query: "不可搜尋" })).resolves.toEqual([]);
+    await expect(
+      store.hasAnchor({
+        profileName: "helper",
+        sourceId: source.id,
+        documentId: document.id
+      })
+    ).resolves.toBe(false);
+  });
+
   it("answers only from retrieved evidence and includes a source link without provider names", async () => {
     const store = new InMemoryKnowledgeStore();
     const source = await store.upsertSource({
@@ -37,6 +67,12 @@ describe("query_knowledge", () => {
       embedding: [1, 0, 0],
       contentHash: "h1"
     });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "trip",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-13T00:00:00Z"
+    });
     const completeText = vi.fn().mockResolvedValue("第一個地點是日月潭。");
     const handler = createQueryKnowledgeHandler({
       store,
@@ -66,20 +102,26 @@ describe("query_knowledge", () => {
     expect(result.agentResult).toMatchObject({
       status: "success",
       anchors: {
-        sourceKey: "trip",
+        sourceId: source.id,
         documentId: document.id,
-        section: "第一天",
+        sectionKey: expect.stringMatching(/^[a-f0-9]{64}$/u),
         ordinal: 0
       },
       entities: expect.arrayContaining([
-        expect.objectContaining({ type: "source", label: "八月出遊" }),
-        expect.objectContaining({ type: "document", label: "八月出遊" }),
-        expect.objectContaining({ type: "section", label: "第一天" }),
+        expect.objectContaining({ type: "source", key: source.id, label: "知識來源" }),
+        expect.objectContaining({ type: "document", key: document.id, label: "知識文件" }),
+        expect.objectContaining({
+          type: "section",
+          key: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          label: "知識段落"
+        }),
         expect.objectContaining({ type: "ordinal", key: "0" })
       ]),
       supportedOperations: ["continue", "refine", "select"]
     });
-    expect(JSON.stringify(result.agentResult)).not.toMatch(/https?:|日月潭|notion/iu);
+    expect(JSON.stringify(result.agentResult)).not.toMatch(
+      /https?:|日月潭|notion|八月出遊|第一天|trip/iu
+    );
   });
 
   it("falls back to lexical retrieval and a controlled excerpt when providers fail", async () => {
@@ -107,6 +149,12 @@ describe("query_knowledge", () => {
           contentHash: "h1"
         }
       ]
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "sop",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-13T00:00:00Z"
     });
     const handler = createQueryKnowledgeHandler({
       store,
@@ -183,11 +231,21 @@ describe("query_knowledge", () => {
         }
       ]
     });
+    for (const sourceKey of ["trip", "sop"]) {
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z",
+        aliases: sourceKey === "trip" ? ["出遊"] : ["場復"],
+        topics: sourceKey === "trip" ? ["共同事項"] : ["消防設備"]
+      });
+    }
     const handler = createQueryKnowledgeHandler({ store });
     const continuation = {
       functionName: "query_knowledge" as const,
       arguments: {},
-      resultReferences: { sourceKey: "trip", documentId: tripDocument.id },
+      resultReferences: { sourceId: trip.id, documentId: tripDocument.id },
       createdAt: "2026-07-12T00:00:00.000Z",
       expiresAt: "2026-07-12T00:01:00.000Z"
     };
@@ -222,7 +280,7 @@ describe("query_knowledge", () => {
     expect(noSwitch.agentResult).toMatchObject({ status: "not_found" });
     expect(switched.replyText).toContain("消防設備放在後門");
     expect(switched.continuation?.resultReferences).toEqual(
-      expect.objectContaining({ sourceKey: "sop" })
+      expect.objectContaining({ sourceId: sop.id })
     );
   });
 
@@ -255,6 +313,13 @@ describe("query_knowledge", () => {
           }
         ]
       });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z",
+        topics: ["集合"]
+      });
     }
     const handler = createQueryKnowledgeHandler({ store });
     const context = {
@@ -281,7 +346,7 @@ describe("query_knowledge", () => {
         continuation: {
           functionName: "query_knowledge" as const,
           arguments: {},
-          resultReferences: { sourceKey: "removed", documentId: "missing" },
+          resultReferences: { sourceId: "removed", documentId: "missing" },
           createdAt: "2026-07-13T00:00:00.000Z",
           expiresAt: "2026-07-13T00:01:00.000Z"
         },
@@ -298,13 +363,14 @@ describe("query_knowledge", () => {
 
     expect(ambiguous.agentResult).toMatchObject({
       status: "ambiguous",
-      clarification: { choices: ["alpha 手冊", "beta 手冊"] }
+      clarification: { choices: ["知識來源 1", "知識來源 2"] }
     });
     expect(notFound.agentResult).toMatchObject({ status: "not_found" });
     expect(unavailable.agentResult).toMatchObject({ status: "unavailable" });
     expect(missingExplicitAnchor.agentResult).toMatchObject({ status: "unavailable" });
     for (const result of [ambiguous, notFound, unavailable, missingExplicitAnchor]) {
       expect(JSON.stringify(result.agentResult)).not.toMatch(/https?:|集合資料/iu);
+      expect(JSON.stringify(result.agentResult)).not.toMatch(/alpha 手冊|beta 手冊/u);
     }
   });
 
@@ -319,7 +385,7 @@ describe("query_knowledge", () => {
       rootUrl: "https://example.test/root",
       enabled: true
     });
-    await store.replaceDocument({
+    const document = await store.replaceDocument({
       sourceId: source.id,
       externalId: "doc",
       title: "出隊行程",
@@ -330,10 +396,20 @@ describe("query_knowledge", () => {
         { headingPath: ["第二天"], ordinal: 1, content: "集合時間是八點。", contentHash: "d2" }
       ]
     });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-13T00:00:00Z"
+    });
     const handler = createQueryKnowledgeHandler({ store });
 
     const result = await handler(
-      { query: "集合時間", sourceKey: "retreat", section: "第二天" },
+      {
+        query: "集合時間",
+        sourceKey: "retreat",
+        sectionKey: document.chunks[1]!.sectionKey
+      },
       {
         profile,
         event: {
@@ -346,5 +422,132 @@ describe("query_knowledge", () => {
 
     expect(result.replyText).toContain("八點");
     expect(result.replyText).not.toContain("七點");
+  });
+
+  it("falls back from section to document to source without searching another source", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "出隊",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true
+    });
+    const document = await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc-a",
+      title: "文件 A",
+      url: "https://example.test/a",
+      nodes: [],
+      chunks: [
+        { headingPath: ["第一天"], ordinal: 0, content: "早餐七點。", contentHash: "a1" },
+        { headingPath: ["第二天"], ordinal: 1, content: "集合八點。", contentHash: "a2" }
+      ]
+    });
+    await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc-b",
+      title: "文件 B",
+      url: "https://example.test/b",
+      nodes: [],
+      chunks: [{ headingPath: ["裝備"], ordinal: 0, content: "雨具放車上。", contentHash: "b1" }]
+    });
+    const other = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "other",
+      displayName: "其他",
+      adapterType: "notion",
+      externalRootId: "other",
+      rootUrl: "https://example.test/other",
+      enabled: true
+    });
+    await store.replaceDocument({
+      sourceId: other.id,
+      externalId: "other-doc",
+      title: "其他文件",
+      url: "https://example.test/other-doc",
+      nodes: [],
+      chunks: [{ headingPath: [], ordinal: 0, content: "接送九點。", contentHash: "o1" }]
+    });
+    for (const sourceKey of ["retreat", "other"]) {
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z"
+      });
+    }
+    const handler = createQueryKnowledgeHandler({ store });
+    const context = {
+      profile,
+      continuation: {
+        functionName: "query_knowledge" as const,
+        arguments: {},
+        resultReferences: {
+          sourceId: source.id,
+          documentId: document.id,
+          sectionKey: document.chunks[0]!.sectionKey
+        },
+        createdAt: "2026-07-13T00:00:00.000Z",
+        expiresAt: "2026-07-13T00:01:00.000Z"
+      },
+      event: {
+        type: "message" as const,
+        source: { type: "user" as const, userId: "u" },
+        message: { type: "text" as const, text: "集合" }
+      }
+    };
+
+    const documentFallback = await handler({ query: "集合" }, context);
+    const sourceFallback = await handler(
+      { query: "雨具" },
+      { ...context, event: { ...context.event, message: { type: "text", text: "雨具" } } }
+    );
+    const noProfileFallback = await handler(
+      { query: "接送" },
+      { ...context, event: { ...context.event, message: { type: "text", text: "接送" } } }
+    );
+
+    expect(documentFallback.replyText).toContain("集合八點");
+    expect(sourceFallback.replyText).toContain("雨具放車上");
+    expect(noProfileFallback.agentResult).toMatchObject({ status: "not_found" });
+  });
+
+  it("resolves explicit source keys only from the capped eligible routing provider", async () => {
+    const store = new InMemoryKnowledgeStore();
+    for (let index = 0; index < 21; index += 1) {
+      const sourceKey = `source-${String(index).padStart(2, "0")}`;
+      await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `來源 ${index}`,
+        adapterType: "notion",
+        externalRootId: sourceKey,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z",
+        aliases: [`別名 ${index}`]
+      });
+    }
+    const result = await createQueryKnowledgeHandler({ store })(
+      { query: "查詢", sourceKey: "source-20" },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "user", userId: "u" },
+          message: { type: "text", text: "查詢" }
+        }
+      }
+    );
+
+    expect(result.agentResult).toMatchObject({ status: "unavailable" });
   });
 });

@@ -26,10 +26,10 @@ const scheduleTask: ActiveTaskContext = {
 const knowledgeTask: ActiveTaskContext = {
   version: 1,
   capability: "query_knowledge",
-  anchors: { sourceKey: "retreat" },
+  anchors: { sourceId: "source-1", documentId: "doc-1" },
   entities: [
-    { type: "source", key: "retreat", label: "青年出隊", aliases: ["出隊"] },
-    { type: "document", key: "runbook-1", label: "出隊手冊" }
+    { type: "source", key: "source-1", label: "知識來源" },
+    { type: "document", key: "doc-1", label: "知識文件" }
   ],
   references: { documentId: "doc-1" },
   supportedOperations: ["continue", "refine", "advance", "select"],
@@ -406,65 +406,62 @@ describe("deterministic agent plan validation", () => {
     }
   );
 
-  it("inherits knowledge source and document values only from their declared keys", () => {
-    expect(
-      validateAgentPlan({
-        text: "出隊",
-        enabledFunctions: ["query_knowledge"],
-        candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
-        proposal: {
-          disposition: "execute",
-          capability: "query_knowledge",
-          arguments: { query: "出隊", sourceKey: "retreat", documentId: "doc-1" },
-          confidence: 0.95
-        },
-        activeTask: knowledgeTask,
-        minConfidence: 0.65,
-        sourceType: "user",
-        now
-      })
-    ).toMatchObject({
-      disposition: "execute",
-      arguments: { sourceKey: "retreat", documentId: "doc-1" },
-      reasonCode: "active_task_refinement"
+  it("keeps opaque knowledge source and document values out of planner arguments", () => {
+    const result = validateAgentPlan({
+      text: "繼續查這份知識",
+      enabledFunctions: ["query_knowledge"],
+      candidates: [{ capability: "query_knowledge", reason: "knowledge_metadata", score: 200 }],
+      proposal: {
+        disposition: "execute",
+        capability: "query_knowledge",
+        arguments: { query: "繼續查這份知識", sourceId: "source-1", documentId: "doc-1" },
+        confidence: 0.95
+      },
+      activeTask: knowledgeTask,
+      minConfidence: 0.65,
+      sourceType: "user",
+      now
     });
+    expect(result).toMatchObject({ disposition: "execute", reasonCode: "explicit_intent" });
+    expect(result).not.toHaveProperty("arguments.sourceId");
+    expect(result).not.toHaveProperty("arguments.documentId");
   });
 
-  it("grounds a knowledge section only from the matching active-task section entity", () => {
+  it("keeps an opaque knowledge section out of planner arguments", () => {
+    const sectionKey = "a".repeat(64);
     const task: ActiveTaskContext = {
       ...knowledgeTask,
-      anchors: { ...knowledgeTask.anchors, section: "第一天" },
-      entities: [...knowledgeTask.entities, { type: "section", key: "第一天", label: "第一天" }],
-      references: { ...knowledgeTask.references, section: "第一天" }
+      anchors: { ...knowledgeTask.anchors, sectionKey },
+      entities: [
+        ...knowledgeTask.entities,
+        { type: "section", key: sectionKey, label: "知識段落" }
+      ],
+      references: { ...knowledgeTask.references, sectionKey }
     };
-    expect(
-      validateAgentPlan({
-        text: "第一天幾點集合",
-        enabledFunctions: ["query_knowledge"],
-        candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
-        proposal: {
-          disposition: "refine",
-          capability: "query_knowledge",
-          arguments: { query: "第一天幾點集合", section: "第一天" },
-          confidence: 0.95
-        },
-        activeTask: task,
-        minConfidence: 0.65,
-        sourceType: "user",
-        now
-      })
-    ).toMatchObject({
-      disposition: "execute",
-      arguments: { section: "第一天" },
-      reasonCode: "active_task_refinement"
+    const result = validateAgentPlan({
+      text: "那幾點集合",
+      enabledFunctions: ["query_knowledge"],
+      candidates: [{ capability: "query_knowledge", reason: "knowledge_metadata", score: 200 }],
+      proposal: {
+        disposition: "continue",
+        capability: "query_knowledge",
+        arguments: { query: "那幾點集合", sectionKey },
+        confidence: 0.95
+      },
+      activeTask: task,
+      minConfidence: 0.65,
+      sourceType: "user",
+      now
     });
+    expect(result).toMatchObject({ disposition: "execute", reasonCode: "explicit_intent" });
+    expect(result).not.toHaveProperty("arguments.sectionKey");
   });
 
   it("strips a spoofed proposal reference key even when its value exists in the task", () => {
     const result = validateAgentPlan({
       text: "出隊",
       enabledFunctions: ["query_knowledge"],
-      candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
+      candidates: [{ capability: "query_knowledge", reason: "knowledge_metadata", score: 200 }],
       proposal: {
         disposition: "continue",
         capability: "query_knowledge",

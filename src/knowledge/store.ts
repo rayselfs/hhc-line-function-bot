@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeKnowledgeSourceRoutingFields } from "./routing-metadata.js";
+import { knowledgeSectionKey } from "./section-key.js";
 
 export type KnowledgeAdapterType = "notion";
 
@@ -23,6 +24,10 @@ export interface KnowledgeSourceRecord extends Omit<
   "aliases" | "topics" | "sampleQueries"
 > {
   id: string;
+  adminAliases: string[];
+  adminTopics: string[];
+  adminSampleQueries: string[];
+  routingDisplayName?: string;
   aliases: string[];
   topics: string[];
   sampleQueries: string[];
@@ -44,15 +49,17 @@ export interface KnowledgeNodeInput {
 
 export interface KnowledgeChunkInput {
   headingPath: string[];
+  sectionKey?: string;
   ordinal: number;
   content: string;
   contentHash: string;
   metadata?: Record<string, unknown>;
 }
 
-export interface KnowledgeChunkRecord extends KnowledgeChunkInput {
+export interface KnowledgeChunkRecord extends Omit<KnowledgeChunkInput, "sectionKey"> {
   id: string;
   documentId: string;
+  sectionKey: string;
 }
 
 export interface KnowledgeDocumentRecord {
@@ -86,6 +93,7 @@ export interface KnowledgeStore {
     syncStatus?: KnowledgeSourceRecord["syncStatus"];
     syncErrorCode?: string;
     lastSyncedAt?: string;
+    routingDisplayName?: string;
     aliases?: string[];
     topics?: string[];
     sampleQueries?: string[];
@@ -120,9 +128,9 @@ export interface KnowledgeStore {
   }): Promise<KnowledgeChunkRecord[]>;
   hasAnchor(input: {
     profileName: string;
-    sourceKey: string;
+    sourceId: string;
     documentId: string;
-    section?: string;
+    sectionKey?: string;
   }): Promise<boolean>;
   search(input: {
     profileName: string;
@@ -130,9 +138,10 @@ export interface KnowledgeStore {
     queryEmbedding?: number[];
     embeddingProvider?: string;
     embeddingModel?: string;
+    sourceId?: string;
     sourceKey?: string;
     documentId?: string;
-    section?: string;
+    sectionKey?: string;
     ordinal?: number;
     limit?: number;
   }): Promise<KnowledgeSearchResult[]>;
@@ -159,11 +168,19 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     const existing = Array.from(this.sources.values()).find(
       (item) => item.profileName === input.profileName && item.sourceKey === input.sourceKey
     );
-    const routing = normalizeKnowledgeSourceRoutingFields(input);
+    const staged = normalizeKnowledgeSourceRoutingFields(input);
     const record: KnowledgeSourceRecord = {
       ...existing,
       ...input,
-      ...routing,
+      sourceKey: staged.sourceKey,
+      displayName: staged.displayName,
+      adminAliases: staged.aliases,
+      adminTopics: staged.topics,
+      adminSampleQueries: staged.sampleQueries,
+      routingDisplayName: existing?.routingDisplayName,
+      aliases: existing?.aliases ?? [],
+      topics: existing?.topics ?? [],
+      sampleQueries: existing?.sampleQueries ?? [],
       id: existing?.id ?? randomUUID(),
       syncStatus: existing?.syncStatus ?? "pending"
     };
@@ -188,6 +205,7 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     syncStatus?: KnowledgeSourceRecord["syncStatus"];
     syncErrorCode?: string;
     lastSyncedAt?: string;
+    routingDisplayName?: string;
     aliases?: string[];
     topics?: string[];
     sampleQueries?: string[];
@@ -197,18 +215,34 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     );
     if (!source) return undefined;
     const enabled = input.enabled ?? source.enabled;
-    const routing = normalizeKnowledgeSourceRoutingFields({
-      sourceKey: source.sourceKey,
-      displayName: source.displayName,
-      aliases: input.aliases ?? source.aliases,
-      topics: input.topics ?? source.topics,
-      sampleQueries: input.sampleQueries ?? source.sampleQueries
-    });
+    const shouldPromote = Boolean(input.lastSyncedAt || input.routingDisplayName);
+    const promoted = shouldPromote
+      ? normalizeKnowledgeSourceRoutingFields({
+          sourceKey: source.sourceKey,
+          displayName: input.routingDisplayName ?? source.displayName,
+          aliases: input.aliases ?? source.adminAliases,
+          topics: input.topics ?? source.adminTopics,
+          sampleQueries: input.sampleQueries ?? source.adminSampleQueries
+        })
+      : undefined;
     const updated: KnowledgeSourceRecord = {
       ...source,
-      ...input,
-      ...routing,
       enabled,
+      ...(input.syncStatus ? { syncStatus: input.syncStatus } : {}),
+      ...(input.syncErrorCode === undefined
+        ? input.syncStatus
+          ? { syncErrorCode: undefined }
+          : {}
+        : { syncErrorCode: input.syncErrorCode }),
+      ...(input.lastSyncedAt ? { lastSyncedAt: input.lastSyncedAt } : {}),
+      ...(promoted
+        ? {
+            routingDisplayName: promoted.displayName,
+            aliases: promoted.aliases,
+            topics: promoted.topics,
+            sampleQueries: promoted.sampleQueries
+          }
+        : {}),
       disabledAt: enabled ? undefined : (source.disabledAt ?? this.now().toISOString()),
       purgeAfter: enabled ? undefined : source.purgeAfter
     };
@@ -256,6 +290,7 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       nodes: input.nodes.map((node) => ({ ...node, id: randomUUID() })),
       chunks: input.chunks.map((chunk) => ({
         ...chunk,
+        sectionKey: knowledgeSectionKey(chunk.headingPath),
         id: oldChunks.get(chunk.contentHash)?.id ?? randomUUID(),
         documentId: id
       }))
@@ -308,9 +343,10 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     queryEmbedding?: number[];
     embeddingProvider?: string;
     embeddingModel?: string;
+    sourceId?: string;
     sourceKey?: string;
     documentId?: string;
-    section?: string;
+    sectionKey?: string;
     ordinal?: number;
     limit?: number;
   }): Promise<KnowledgeSearchResult[]> {
@@ -321,18 +357,15 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       if (
         !source ||
         source.profileName !== input.profileName ||
-        !this.sourceActive(source) ||
+        !this.sourceEligible(source) ||
         document.deletedAt
       )
         continue;
       if (input.sourceKey && source.sourceKey !== input.sourceKey) continue;
+      if (input.sourceId && source.id !== input.sourceId) continue;
       if (input.documentId && document.id !== input.documentId) continue;
       for (const chunk of document.chunks) {
-        if (
-          input.section &&
-          !chunk.headingPath.some((heading) => normalize(heading) === normalize(input.section!))
-        )
-          continue;
+        if (input.sectionKey && chunk.sectionKey !== input.sectionKey) continue;
         const lexical = lexicalScore(
           normalizedQuery,
           normalize(`${document.title} ${chunk.headingPath.join(" ")} ${chunk.content}`)
@@ -371,23 +404,21 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
 
   async hasAnchor(input: {
     profileName: string;
-    sourceKey: string;
+    sourceId: string;
     documentId: string;
-    section?: string;
+    sectionKey?: string;
   }): Promise<boolean> {
     const source = Array.from(this.sources.values()).find(
       (item) =>
         item.profileName === input.profileName &&
-        item.sourceKey === input.sourceKey &&
-        this.sourceActive(item)
+        item.id === input.sourceId &&
+        this.sourceEligible(item)
     );
     if (!source) return false;
     const document = this.documents.get(input.documentId);
     if (!document || document.sourceId !== source.id || document.deletedAt) return false;
-    return input.section
-      ? document.chunks.some((chunk) =>
-          chunk.headingPath.some((heading) => normalize(heading) === normalize(input.section!))
-        )
+    return input.sectionKey
+      ? document.chunks.some((chunk) => chunk.sectionKey === input.sectionKey)
       : true;
   }
 
@@ -425,6 +456,10 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     return (
       source.enabled && (!source.expiresAt || Date.parse(source.expiresAt) > this.now().getTime())
     );
+  }
+
+  private sourceEligible(source: KnowledgeSourceRecord): boolean {
+    return this.sourceActive(source) && Boolean(source.lastSyncedAt && source.routingDisplayName);
   }
 
   private latestEmbedding(

@@ -259,21 +259,22 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       intents: ["查知識", "知識查詢", "找知識"],
       candidateHints: ["知識", "sop", "計畫", "流程"],
       entityTypes: ["source", "document", "section", "ordinal"],
-      refinableFields: ["sourceKey", "documentId", "section", "ordinal"],
+      refinableFields: ["sourceKey", "sourceId", "documentId", "sectionKey", "ordinal"],
       operations: ["continue", "refine", "select"],
       ambiguity: "clarify",
       activeEvidence: {
         arguments: {
-          sourceKey: { entityTypes: ["source"], anchorKeys: ["sourceKey"] },
+          sourceKey: { entityTypes: ["source"] },
+          sourceId: { entityTypes: ["source"], anchorKeys: ["sourceId"] },
           documentId: {
             entityTypes: ["document"],
             anchorKeys: ["documentId"],
             referenceKeys: ["documentId"]
           },
-          section: {
+          sectionKey: {
             entityTypes: ["section"],
-            anchorKeys: ["section"],
-            referenceKeys: ["section"]
+            anchorKeys: ["sectionKey"],
+            referenceKeys: ["sectionKey"]
           },
           ordinal: { entityTypes: ["ordinal"], anchorKeys: ["ordinal"] }
         },
@@ -296,7 +297,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     memoryPolicy: { kind: "none" },
     clarificationPrompt: "想查已加入知識中的哪一項資訊？",
     description:
-      '- query_knowledge: answer from administrator-registered internal knowledge sources. Arguments: {"query":"full user question","sourceKey":"known source optional","documentId":"continuation document optional","section":"safe heading optional","ordinal":"zero-based requested item optional","limit":number optional}. Never use it for service schedules when query_schedule applies.',
+      '- query_knowledge: answer from administrator-registered internal knowledge sources. Arguments: {"query":"full user question","sourceKey":"eligible source key optional","sourceId":"active-task opaque source id optional","documentId":"active-task document id optional","sectionKey":"active-task opaque section id optional","ordinal":"zero-based requested item optional","limit":number optional}. Never use it for service schedules when query_schedule applies.',
     argumentSchema: queryKnowledgeArgumentsSchema,
     quickReply: { label: "查知識", command: "小哈 查知識" },
     helpText: "查詢管理員已加入的計畫、SOP與其他內部資訊。",

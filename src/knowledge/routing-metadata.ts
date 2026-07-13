@@ -116,32 +116,76 @@ export function matchingKnowledgeRoutingMetadata(
   text: string,
   sources: readonly KnowledgeRoutingMetadata[]
 ): KnowledgeRoutingMetadata[] {
+  const result = resolveKnowledgeRoutingMetadata(text, sources);
+  return result.status === "unique" ? [result.source] : [];
+}
+
+export type KnowledgeRoutingMatch =
+  | { status: "none" }
+  | { status: "unique"; source: KnowledgeRoutingMetadata }
+  | { status: "ambiguous"; sources: KnowledgeRoutingMetadata[] };
+
+export function resolveKnowledgeRoutingMetadata(
+  text: string,
+  sources: readonly KnowledgeRoutingMetadata[]
+): KnowledgeRoutingMatch {
   const normalizedText = comparable(text);
-  if (!normalizedText) return [];
-  return sources.filter((source) =>
-    routingTerms(source).some((term) => {
-      const normalizedTerm = comparable(term);
-      return normalizedTerm.length > 0 && normalizedText.includes(normalizedTerm);
-    })
-  );
+  if (!normalizedText) return { status: "none" };
+  const matches = sources.filter((source) => matchesRoutingSource(text, normalizedText, source));
+  if (matches.length === 0) return { status: "none" };
+  if (matches.length === 1) return { status: "unique", source: matches[0]! };
+  return { status: "ambiguous", sources: matches };
 }
 
 function sourceRoutingMetadata(source: KnowledgeSourceRecord): KnowledgeRoutingMetadata {
-  return normalizeKnowledgeSourceRoutingFields(source);
+  if (!source.routingDisplayName) throw new Error("knowledge_routing_snapshot_missing");
+  return normalizeKnowledgeSourceRoutingFields({
+    sourceKey: source.sourceKey,
+    displayName: source.routingDisplayName,
+    aliases: source.aliases,
+    topics: source.topics,
+    sampleQueries: source.sampleQueries
+  });
 }
 
 function lastKnownGoodSource(source: KnowledgeSourceRecord): boolean {
-  return Boolean(source.enabled && source.lastSyncedAt);
+  return Boolean(source.enabled && source.lastSyncedAt && source.routingDisplayName);
 }
 
-function routingTerms(source: KnowledgeRoutingMetadata): string[] {
-  return [
-    source.sourceKey,
-    source.displayName,
-    ...source.aliases,
-    ...source.topics,
-    ...source.sampleQueries
-  ];
+function matchesRoutingSource(
+  rawText: string,
+  normalizedText: string,
+  source: KnowledgeRoutingMetadata
+): boolean {
+  if (normalizedText === comparable(source.sourceKey)) return true;
+  return [source.displayName, ...source.aliases, ...source.topics, ...source.sampleQueries].some(
+    (term) => matchesConservativeTerm(rawText, normalizedText, term)
+  );
+}
+
+function matchesConservativeTerm(rawText: string, normalizedText: string, term: string): boolean {
+  const normalizedTerm = comparable(term);
+  if (!normalizedTerm || !longEnough(normalizedTerm)) return false;
+  if (/^[a-z0-9]+$/u.test(normalizedTerm)) {
+    return latinTokens(rawText).some(
+      (token) => token === normalizedTerm || token.includes(normalizedTerm)
+    );
+  }
+  return normalizedText.includes(normalizedTerm);
+}
+
+function longEnough(term: string): boolean {
+  const length = Array.from(term).length;
+  return /^[a-z0-9]+$/u.test(term) ? length >= 3 : length >= 2;
+}
+
+function latinTokens(text: string): string[] {
+  return (
+    text
+      .normalize("NFKC")
+      .toLowerCase()
+      .match(/[a-z0-9-]+/gu) ?? []
+  );
 }
 
 function titleVariants(value: string): string[] {

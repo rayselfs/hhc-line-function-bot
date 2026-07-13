@@ -1,8 +1,9 @@
 import type { EmbeddingClient } from "../clients/ollama-embedding.js";
 import { queryKnowledgeArgumentsSchema } from "../function-arguments.js";
 import {
-  matchingKnowledgeRoutingMetadata,
-  normalizeKnowledgeSourceRoutingFields
+  listKnowledgeRoutingMetadata,
+  resolveKnowledgeRoutingMetadata,
+  type KnowledgeRoutingMetadata
 } from "../knowledge/routing-metadata.js";
 import type {
   KnowledgeSearchResult,
@@ -15,8 +16,7 @@ import {
   knowledgeCitationLines,
   knowledgeNotFoundResult,
   knowledgeSuccessEnvelope,
-  knowledgeUnavailableResult,
-  uniqueKnowledgeResultSources
+  knowledgeUnavailableResult
 } from "./knowledge-result.js";
 
 export interface QueryKnowledgeOptions {
@@ -45,33 +45,45 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
     } catch {
       return knowledgeUnavailableResult();
     }
-
-    const anchor = knowledgeAnchor(context.continuation);
-    if (anchor && !(await anchorAvailable(options.store, context.profile.name, anchor))) {
+    let routingMetadata: KnowledgeRoutingMetadata[];
+    try {
+      routingMetadata = await listKnowledgeRoutingMetadata(options.store, context.profile.name, 20);
+    } catch {
       return knowledgeUnavailableResult();
     }
-    if (
-      !anchor &&
-      args.sourceKey &&
-      args.documentId &&
-      !(await anchorAvailable(options.store, context.profile.name, {
-        sourceKey: args.sourceKey,
-        documentId: args.documentId,
-        ...(args.section ? { section: args.section } : {})
-      }))
-    ) {
+    const eligibleSources = routingMetadata.flatMap((metadata) => {
+      const source = activeSources.find(({ sourceKey }) => sourceKey === metadata.sourceKey);
+      return source ? [{ source, metadata }] : [];
+    });
+
+    const anchor = knowledgeAnchor(context.continuation);
+    if (anchor && !eligibleSources.some(({ source }) => source.id === anchor.sourceId)) {
       return knowledgeUnavailableResult();
     }
 
     const sourceResolution = resolveSource({
       query: args.query,
       requestedSourceKey: args.sourceKey,
+      requestedSourceId: args.sourceId,
       anchor,
-      sources: activeSources
+      sources: eligibleSources
     });
     if (sourceResolution.status === "unavailable") return knowledgeUnavailableResult();
+    if (sourceResolution.status === "not_found") return knowledgeNotFoundResult();
     if (sourceResolution.status === "ambiguous") {
       return knowledgeAmbiguousResult(sourceResolution.sources);
+    }
+    const targetSource = sourceResolution.source;
+    if (
+      !anchor &&
+      args.documentId &&
+      !(await anchorAvailable(options.store, context.profile.name, {
+        sourceId: targetSource.id,
+        documentId: args.documentId,
+        ...(args.sectionKey ? { sectionKey: args.sectionKey } : {})
+      }))
+    ) {
+      return knowledgeUnavailableResult();
     }
 
     let queryEmbedding: number[] | undefined;
@@ -83,34 +95,32 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       }
     }
 
-    const targetSourceKey = sourceResolution.sourceKey;
-    const anchored = Boolean(anchor && targetSourceKey === anchor.sourceKey && !args.sourceKey);
-    const documentId = args.documentId ?? (anchored ? anchor?.documentId : undefined);
-    const section = args.section ?? (anchored ? anchor?.section : undefined);
-    const ordinal = args.ordinal ?? (anchored ? anchor?.ordinal : undefined);
-    let results: KnowledgeSearchResult[];
-    try {
-      results = await options.store.search({
-        profileName: context.profile.name,
-        query: args.query,
-        queryEmbedding,
-        embeddingProvider: options.embedding?.provider,
-        embeddingModel: options.embedding?.model,
-        sourceKey: targetSourceKey,
-        documentId,
-        section,
-        ordinal,
-        limit: Math.min(args.limit ?? 8, 8)
-      });
-    } catch {
-      return knowledgeUnavailableResult();
-    }
+    const anchored = Boolean(
+      anchor &&
+      targetSource.id === anchor.sourceId &&
+      !args.sourceKey &&
+      !args.sourceId &&
+      !args.documentId &&
+      !args.sectionKey
+    );
+    const scopes = retrievalScopes({
+      anchored,
+      anchor,
+      documentId: args.documentId,
+      sectionKey: args.sectionKey,
+      ordinal: args.ordinal
+    });
+    const results = await searchScopes(options, {
+      profileName: context.profile.name,
+      query: args.query,
+      queryEmbedding,
+      sourceId: targetSource.id,
+      scopes,
+      limit: Math.min(args.limit ?? 8, 8)
+    });
+    if (!results) return knowledgeUnavailableResult();
 
     if (results.length === 0) return knowledgeNotFoundResult();
-    const resultSources = uniqueKnowledgeResultSources(results);
-    if (!targetSourceKey && resultSources.length > 1) {
-      return knowledgeAmbiguousResult(resultSources);
-    }
 
     const answer = await groundedAnswer(
       options.textGenerator,
@@ -140,9 +150,9 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
 }
 
 interface KnowledgeAnchor {
-  sourceKey: string;
+  sourceId: string;
   documentId: string;
-  section?: string;
+  sectionKey?: string;
   ordinal?: number;
 }
 
@@ -151,15 +161,15 @@ function knowledgeAnchor(
 ): KnowledgeAnchor | undefined {
   if (continuation?.functionName !== "query_knowledge") return undefined;
   const references = continuation.resultReferences;
-  const sourceKey = references?.sourceKey;
+  const sourceId = references?.sourceId;
   const documentId = references?.documentId;
-  const section = references?.section;
+  const sectionKey = references?.sectionKey;
   const ordinal = references?.ordinal;
-  return typeof sourceKey === "string" && typeof documentId === "string"
+  return typeof sourceId === "string" && typeof documentId === "string"
     ? {
-        sourceKey,
+        sourceId,
         documentId,
-        ...(typeof section === "string" ? { section } : {}),
+        ...(typeof sectionKey === "string" ? { sectionKey } : {}),
         ...(typeof ordinal === "number" && Number.isInteger(ordinal) && ordinal >= 0
           ? { ordinal }
           : {})
@@ -180,52 +190,143 @@ async function anchorAvailable(
 }
 
 type SourceResolution =
-  | { status: "resolved"; sourceKey?: string }
+  | { status: "resolved"; source: KnowledgeSourceRecord }
   | { status: "ambiguous"; sources: KnowledgeSourceRecord[] }
+  | { status: "not_found" }
   | { status: "unavailable" };
 
 function resolveSource(input: {
   query: string;
   requestedSourceKey?: string;
+  requestedSourceId?: string;
   anchor?: KnowledgeAnchor;
-  sources: KnowledgeSourceRecord[];
+  sources: Array<{ source: KnowledgeSourceRecord; metadata: KnowledgeRoutingMetadata }>;
 }): SourceResolution {
-  if (input.requestedSourceKey) {
-    return input.sources.some(({ sourceKey }) => sourceKey === input.requestedSourceKey)
-      ? { status: "resolved", sourceKey: input.requestedSourceKey }
-      : { status: "unavailable" };
+  if (input.requestedSourceKey || input.requestedSourceId) {
+    const requested = input.sources.find(
+      ({ source, metadata }) =>
+        (!input.requestedSourceKey || metadata.sourceKey === input.requestedSourceKey) &&
+        (!input.requestedSourceId || source.id === input.requestedSourceId)
+    );
+    return requested ? { status: "resolved", source: requested.source } : { status: "unavailable" };
   }
 
-  const safeMetadata = input.sources.flatMap((source) => {
-    try {
-      return [normalizeKnowledgeSourceRoutingFields(source)];
-    } catch {
-      return [];
-    }
-  });
-  const matches = matchingKnowledgeRoutingMetadata(input.query, safeMetadata);
-  const matchedKeys = new Set(matches.map(({ sourceKey }) => sourceKey));
+  const match = resolveKnowledgeRoutingMetadata(
+    input.query,
+    input.sources.map(({ metadata }) => metadata)
+  );
 
   if (input.anchor) {
-    const anchoredSource = input.sources.find(
-      ({ sourceKey }) => sourceKey === input.anchor!.sourceKey
-    );
+    const anchoredSource = input.sources.find(({ source }) => source.id === input.anchor!.sourceId);
     if (!anchoredSource) return { status: "unavailable" };
-    if (matchedKeys.size === 0 || matchedKeys.has(input.anchor.sourceKey)) {
-      return { status: "resolved", sourceKey: input.anchor.sourceKey };
+    if (
+      match.status === "none" ||
+      (match.status === "unique" && match.source.sourceKey === anchoredSource.metadata.sourceKey)
+    ) {
+      return { status: "resolved", source: anchoredSource.source };
     }
-    const switches = input.sources.filter(({ sourceKey }) => matchedKeys.has(sourceKey));
-    return switches.length === 1
-      ? { status: "resolved", sourceKey: switches[0]!.sourceKey }
-      : { status: "ambiguous", sources: switches };
+    if (match.status === "unique") {
+      const switched = input.sources.find(
+        ({ metadata }) => metadata.sourceKey === match.source.sourceKey
+      );
+      return switched ? { status: "resolved", source: switched.source } : { status: "unavailable" };
+    }
+    return {
+      status: "ambiguous",
+      sources: input.sources
+        .filter(({ metadata }) =>
+          match.sources.some(({ sourceKey }) => sourceKey === metadata.sourceKey)
+        )
+        .map(({ source }) => source)
+    };
   }
 
-  const matchedSources = input.sources.filter(({ sourceKey }) => matchedKeys.has(sourceKey));
-  if (matchedSources.length > 1) return { status: "ambiguous", sources: matchedSources };
-  return {
-    status: "resolved",
-    ...(matchedSources[0] ? { sourceKey: matchedSources[0].sourceKey } : {})
-  };
+  if (match.status === "unique") {
+    const resolved = input.sources.find(
+      ({ metadata }) => metadata.sourceKey === match.source.sourceKey
+    );
+    return resolved ? { status: "resolved", source: resolved.source } : { status: "unavailable" };
+  }
+  if (match.status === "ambiguous") {
+    return {
+      status: "ambiguous",
+      sources: input.sources
+        .filter(({ metadata }) =>
+          match.sources.some(({ sourceKey }) => sourceKey === metadata.sourceKey)
+        )
+        .map(({ source }) => source)
+    };
+  }
+  return input.sources.length === 1
+    ? { status: "resolved", source: input.sources[0]!.source }
+    : { status: "not_found" };
+}
+
+interface RetrievalScope {
+  documentId?: string;
+  sectionKey?: string;
+  ordinal?: number;
+}
+
+function retrievalScopes(input: {
+  anchored: boolean;
+  anchor?: KnowledgeAnchor;
+  documentId?: string;
+  sectionKey?: string;
+  ordinal?: number;
+}): RetrievalScope[] {
+  if (!input.anchored) {
+    return [
+      {
+        ...(input.documentId ? { documentId: input.documentId } : {}),
+        ...(input.sectionKey ? { sectionKey: input.sectionKey } : {}),
+        ...(input.ordinal !== undefined ? { ordinal: input.ordinal } : {})
+      }
+    ];
+  }
+  const scopes: RetrievalScope[] = [];
+  if (input.anchor?.sectionKey) {
+    scopes.push({
+      documentId: input.anchor.documentId,
+      sectionKey: input.anchor.sectionKey,
+      ...(input.anchor.ordinal !== undefined ? { ordinal: input.anchor.ordinal } : {})
+    });
+  }
+  scopes.push({ documentId: input.anchor!.documentId }, {});
+  return scopes.filter(
+    (scope, index) => index === 0 || JSON.stringify(scope) !== JSON.stringify(scopes[index - 1])
+  );
+}
+
+async function searchScopes(
+  options: QueryKnowledgeOptions,
+  input: {
+    profileName: string;
+    query: string;
+    queryEmbedding?: number[];
+    sourceId: string;
+    scopes: RetrievalScope[];
+    limit: number;
+  }
+): Promise<KnowledgeSearchResult[] | undefined> {
+  try {
+    for (const scope of input.scopes) {
+      const results = await options.store.search({
+        profileName: input.profileName,
+        query: input.query,
+        queryEmbedding: input.queryEmbedding,
+        embeddingProvider: options.embedding?.provider,
+        embeddingModel: options.embedding?.model,
+        sourceId: input.sourceId,
+        ...scope,
+        limit: input.limit
+      });
+      if (results.length > 0) return results;
+    }
+    return [];
+  } catch {
+    return undefined;
+  }
 }
 
 async function groundedAnswer(
