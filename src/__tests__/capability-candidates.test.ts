@@ -69,21 +69,25 @@ describe("deterministic capability candidates", () => {
     ]);
   });
 
-  it.each(["那你是誰？", "那你叫什麼名字", "那你是誰啊", "你的名字叫什麼？", "名字呢，你叫什麼？"])(
-    "keeps structural interpersonal questions out of active-task continuation: %s",
-    (text) => {
-      expect(
-        buildCapabilityCandidates({
-          text,
-          enabledFunctions: ["query_knowledge"],
-          activeTask: knowledgeTask,
-          source: "group",
-          knowledgeSources: [],
-          maxCandidates: 3
-        })
-      ).toEqual([]);
-    }
-  );
+  it.each([
+    "那你是誰？",
+    "那你叫什麼名字",
+    "那你是誰啊",
+    "那你名字叫什麼",
+    "你的名字叫什麼？",
+    "名字呢，你叫什麼？"
+  ])("keeps structural interpersonal questions out of active-task continuation: %s", (text) => {
+    expect(
+      buildCapabilityCandidates({
+        text,
+        enabledFunctions: ["query_knowledge"],
+        activeTask: knowledgeTask,
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })
+    ).toEqual([]);
+  });
 
   it("still routes an explicit function request that addresses the bot", () => {
     expect(
@@ -96,6 +100,29 @@ describe("deterministic capability candidates", () => {
         maxCandidates: 3
       })[0]
     ).toMatchObject({ capability: "query_schedule", reason: "explicit_intent" });
+  });
+
+  it("keeps second-person informational task questions eligible", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "那你知道幾點集合嗎？",
+        enabledFunctions: ["query_knowledge"],
+        activeTask: knowledgeTask,
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_knowledge", reason: "active_task_entity" });
+
+    expect(
+      buildCapabilityCandidates({
+        text: "你可以幫我查明天的服事安排嗎？",
+        enabledFunctions: ["query_schedule"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_schedule" });
   });
 
   it.each([

@@ -17,6 +17,9 @@ const DESIRE_WRITE_PATTERN = new RegExp(
   "u"
 );
 const DIRECT_WRITE_PATTERN = new RegExp(`^(?:請)?(?:${WRITE_ACTION})`, "u");
+const MAX_INTERPERSONAL_QUESTION_CHARACTERS = 48;
+const SECOND_PERSON_IDENTITY_QUESTION =
+  /^(?:(?:那|那麼|所以|請問|想問|我想問))?(?:你|妳|您)(?:是(?:誰|哪位|(?:什麼|甚麼|啥)(?:樣)?(?:的)?(?:人|角色|身份|身分)?)|叫(?:什麼|甚麼|啥)(?:名字|姓名)?|(?:的)?(?:名字|姓名)(?:叫|是)?(?:什麼|甚麼|啥)|(?:的)?(?:個性|性格|人設)(?:是(?:什麼|甚麼|啥)(?:樣)?|如何|怎麼樣|怎樣)|(?:會|能|可以)(?:做)?(?:什麼|甚麼|啥))(?:啊|呀|呢|嗎|嘛)?$/u;
 
 export function hasWriteIntent(text: string): boolean {
   const normalized = normalizeIntentText(text);
@@ -39,13 +42,8 @@ export function isInterpersonalOrSmallTalkText(text: string): boolean {
   const addressedText = stripBotAddress(text);
   if (classifySmallTalkCategory(addressedText)) return true;
   const normalized = normalizeIntentText(addressedText);
-  const hasSecondPerson = /(?:你|妳|您)/u.test(normalized);
-  if (!hasSecondPerson) return false;
-  const hasQuestionStructure =
-    /(?:誰|什麼|甚麼|啥|哪(?:裡|邊|個|位)?|幾|怎麼|如何|為什麼|何時|多久|多少|名字|姓名|嗎|嘛|呢|啊|呀)/u.test(
-      normalized
-    );
-  return hasQuestionStructure;
+  if (Array.from(normalized).length > MAX_INTERPERSONAL_QUESTION_CHARACTERS) return false;
+  return SECOND_PERSON_IDENTITY_QUESTION.test(normalized);
 }
 
 function stripBotAddress(text: string): string {

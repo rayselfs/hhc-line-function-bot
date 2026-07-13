@@ -41,11 +41,13 @@ describe("plan evidence scalar grounding", () => {
       "那你是誰？",
       "那你叫什麼名字",
       "那你是誰啊",
+      "那你名字叫什麼",
       "你的名字叫什麼？",
       "名字呢，你叫什麼？"
     ]) {
       expect(hasEllipticalActiveTaskReference(text)).toBe(false);
     }
     expect(hasEllipticalActiveTaskReference("那第一天叫什麼名字？")).toBe(true);
+    expect(hasEllipticalActiveTaskReference("那你知道幾點集合嗎？")).toBe(true);
   });
 });

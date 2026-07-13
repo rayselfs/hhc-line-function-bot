@@ -39,6 +39,25 @@ describe("controlled agent planner eval corpus", () => {
         ({ name }) => name === "acceptance-9-requester-isolation-no-inherited-task"
       )
     ).toHaveProperty("requesterIsolation");
+    expect(
+      AGENT_PLANNER_EVAL_CASES.find(({ name }) => name === "acceptance-1-focused-schedule-role")
+        ?.expectedProposal
+    ).toMatchObject({
+      arguments: { dateIntent: "next_meeting", role: "導播" },
+      absentArgumentKeys: ["specificDate"]
+    });
+    expect(
+      AGENT_PLANNER_EVAL_CASES.find(({ name }) => name === "acceptance-11-model-cannot-inject-date")
+        ?.expectedProposal
+    ).toMatchObject({
+      arguments: { meeting: "主日", role: "音控" },
+      absentArgumentKeys: ["specificDate"]
+    });
+    expect(
+      AGENT_PLANNER_EVAL_CASES.filter(
+        ({ expectedProposal }) => expectedProposal.status !== "no_plan"
+      ).every(({ expectedProposal }) => Boolean(expectedProposal.arguments))
+    ).toBe(true);
   });
 
   it("passes deterministic stub proposals through the real validator", async () => {
@@ -47,9 +66,15 @@ describe("controlled agent planner eval corpus", () => {
     expect(report.total).toBe(AGENT_PLANNER_EVAL_CASES.length);
     expect(report.candidateFailures).toEqual([]);
     expect(report.proposalAttempted).toBe(report.total);
-    expect(report.proposalFailures).toContain(
-      "acceptance-7-explicit-cross-function-switch:proposal"
-    );
+    expect(report.proposalPassed).toBe(10);
+    expect(report.proposalFailures).toEqual([
+      "acceptance-1-focused-schedule-role:proposal",
+      "acceptance-5-dynamic-knowledge-title:proposal",
+      "acceptance-7-explicit-cross-function-switch:proposal",
+      "acceptance-10-expired-task-unavailable:proposal",
+      "acceptance-11-model-cannot-inject-date:proposal",
+      "negative-overreaching-proposal:proposal"
+    ]);
     expect(report.validatedFailures).toEqual([]);
     expect(report.validatedPassed).toBe(report.total);
     expect(JSON.stringify(report)).not.toMatch(

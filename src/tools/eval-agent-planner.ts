@@ -126,7 +126,16 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     text: "幫我查下一場聚會服事的導播",
     enabledFunctions: ["query_schedule"],
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "execute", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: {
+        query: "幫我查下一場聚會服事的導播",
+        dateIntent: "next_meeting",
+        role: "導播"
+      },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -139,7 +148,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_schedule"],
     activeTask: scheduleTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "continue", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "continue",
+      capability: "query_schedule",
+      arguments: { query: "前攝影", role: "前攝影" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -153,7 +167,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_schedule"],
     activeTask: scheduleTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "refine", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "refine",
+      capability: "query_schedule",
+      arguments: { query: "攝影是誰", role: "攝影" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "clarify",
       capability: "query_schedule",
@@ -166,7 +185,16 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_schedule"],
     activeTask: scheduleTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "execute", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: {
+        query: "下一場服事表的前攝影是誰",
+        dateIntent: "next_meeting",
+        role: "前攝影"
+      },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -180,7 +208,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_knowledge"],
     knowledgeSources: [retreatMetadata],
     expectedCandidates: ["query_knowledge"],
-    expectedProposal: { disposition: "execute", capability: "query_knowledge" },
+    expectedProposal: {
+      disposition: "execute",
+      capability: "query_knowledge",
+      arguments: { query: "第一天去哪裡", ordinal: 0 },
+      absentArgumentKeys: ["sourceId", "documentId", "sectionKey"]
+    },
     expectedFinal: { disposition: "execute", capability: "query_knowledge" }
   },
   {
@@ -189,7 +222,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_knowledge"],
     activeTask: knowledgeTask,
     expectedCandidates: ["query_knowledge"],
-    expectedProposal: { disposition: "continue", capability: "query_knowledge" },
+    expectedProposal: {
+      disposition: "continue",
+      capability: "query_knowledge",
+      arguments: { query: "那幾點集合" },
+      absentArgumentKeys: ["sourceId", "documentId", "sectionKey"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_knowledge",
@@ -205,7 +243,7 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     expectedProposal: {
       disposition: "switch",
       capability: "query_schedule",
-      arguments: { meeting: "主日", role: "音控" },
+      arguments: { query: "那主日音控呢", meeting: "主日", role: "音控" },
       absentArgumentKeys: ["specificDate"]
     },
     expectedFinal: {
@@ -245,7 +283,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_knowledge"],
     activeTask: expiredKnowledgeTask,
     expectedCandidates: ["query_knowledge"],
-    expectedProposal: { disposition: "continue", capability: "query_knowledge" },
+    expectedProposal: {
+      disposition: "continue",
+      capability: "query_knowledge",
+      arguments: { query: "第一天去哪裡", ordinal: 0 },
+      absentArgumentKeys: ["sourceId", "documentId", "sectionKey"]
+    },
     expectedFinal: {
       disposition: "clarify",
       capability: "query_knowledge",
@@ -257,7 +300,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     text: "查主日服事的音控",
     enabledFunctions: ["query_schedule"],
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "execute", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: { query: "查主日服事的音控", meeting: "主日", role: "音控" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -287,7 +335,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_schedule"],
     activeTask: scheduleTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "refine", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "refine",
+      capability: "query_schedule",
+      arguments: { query: "攝影是誰", role: "攝影" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: { disposition: "clarify", reasonCode: "ambiguous_entity" }
   },
   {
@@ -296,7 +349,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_knowledge", "query_schedule"],
     activeTask: knowledgeTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "switch", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "switch",
+      capability: "query_schedule",
+      arguments: { query: "那主日音控呢", meeting: "主日", role: "音控" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -308,7 +366,7 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     text: "你好",
     enabledFunctions: ["query_schedule"],
     expectedCandidates: [],
-    expectedProposal: { disposition: "execute", capability: "query_schedule" },
+    expectedProposal: { status: "no_plan" },
     expectedFinal: { disposition: "deny", reasonCode: "candidate_not_allowed" },
     offlineOnly: true
   }
