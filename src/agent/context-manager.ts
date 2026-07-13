@@ -1,5 +1,10 @@
 import type { FunctionContinuationState, FunctionName, JsonRecord } from "../types.js";
-import type { ActiveTaskContext } from "./active-task.js";
+import {
+  cloneActiveTask,
+  decodeActiveTask,
+  prepareActiveTaskForStorage,
+  type ActiveTaskContext
+} from "./active-task.js";
 
 export interface ConversationWindowScope {
   profileName: string;
@@ -36,6 +41,7 @@ export interface ConversationWindowStore {
   recordActiveTask(input: {
     scope: ConversationWindowScope;
     task: ActiveTaskContext;
+    /** Compatibility input only; task.expiresAt is authoritative. */
     ttlMs: number;
   }): Promise<void>;
   activeTask(scope: ConversationWindowScope): Promise<ActiveTaskContext | undefined>;
@@ -142,7 +148,9 @@ export class InMemoryConversationWindowStore implements ConversationWindowStore 
   }): Promise<void> {
     if (!input.scope.requesterUserId) return;
     void input.ttlMs;
-    this.activeTasks.set(conversationScopeKey(input.scope), sanitizeActiveTask(input.task));
+    const task = prepareActiveTaskForStorage(input.task, this.now());
+    if (!task) return;
+    this.activeTasks.set(conversationScopeKey(input.scope), task);
   }
 
   async activeTask(scope: ConversationWindowScope): Promise<ActiveTaskContext | undefined> {
@@ -154,7 +162,7 @@ export class InMemoryConversationWindowStore implements ConversationWindowStore 
       this.activeTasks.delete(key);
       return undefined;
     }
-    return task;
+    return cloneActiveTask(task);
   }
 
   async clearActiveTask(scope: ConversationWindowScope): Promise<void> {
@@ -268,19 +276,28 @@ export class RedisConversationWindowStore implements ConversationWindowStore {
     ttlMs: number;
   }): Promise<void> {
     if (!input.scope.requesterUserId) return;
+    void input.ttlMs;
+    const now = this.now();
+    const task = prepareActiveTaskForStorage(input.task, now);
+    if (!task) return;
     await this.options.client.setEx(
       this.activeTaskKey(input.scope),
-      Math.max(1, Math.ceil(input.ttlMs / 1000)),
-      JSON.stringify(sanitizeActiveTask(input.task))
+      Math.max(1, Math.ceil((Date.parse(task.expiresAt) - now.getTime()) / 1000)),
+      JSON.stringify(task)
     );
   }
 
   async activeTask(scope: ConversationWindowScope): Promise<ActiveTaskContext | undefined> {
     if (!scope.requesterUserId) return undefined;
-    const raw = await this.options.client.get(this.activeTaskKey(scope));
+    const key = this.activeTaskKey(scope);
+    const raw = await this.options.client.get(key);
     if (!raw) return undefined;
-    const task = JSON.parse(raw) as ActiveTaskContext;
-    return new Date(task.expiresAt).getTime() > this.now().getTime() ? task : undefined;
+    const task = decodeActiveTask(raw, this.now());
+    if (!task) {
+      await this.options.client.del(key);
+      return undefined;
+    }
+    return task;
   }
 
   async clearActiveTask(scope: ConversationWindowScope): Promise<void> {
@@ -320,26 +337,6 @@ function sanitizeContinuationRecord(input: JsonRecord): JsonRecord {
       output[key] = value.slice(0, 10).map((entry) => entry.slice(0, 200));
   }
   return output;
-}
-
-function sanitizeActiveTask(task: ActiveTaskContext): ActiveTaskContext {
-  return {
-    version: 1,
-    capability: task.capability,
-    anchors: sanitizeContinuationRecord(task.anchors),
-    entities: task.entities.slice(0, 20).map((entity) => ({
-      type: entity.type.slice(0, 200),
-      key: entity.key.slice(0, 200),
-      label: entity.label.slice(0, 500),
-      aliases: entity.aliases?.slice(0, 10).map((alias) => alias.slice(0, 200))
-    })),
-    references: task.references ? sanitizeContinuationRecord(task.references) : undefined,
-    supportedOperations: task.supportedOperations
-      .slice(0, 8)
-      .map((operation) => operation.slice(0, 200)),
-    createdAt: task.createdAt,
-    expiresAt: task.expiresAt
-  };
 }
 
 export interface ContextManagerOptions {
