@@ -32,4 +32,35 @@ describe("live agent planner fallback probe", () => {
     });
     expect(fallback.completeJson).toHaveBeenCalledOnce();
   });
+
+  it("reports validator rejection using only safe planner diagnostics", async () => {
+    const fallback: ChatProvider = {
+      providerName: "ollama",
+      completeJson: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          version: 1,
+          disposition: "execute",
+          capability: "query_schedule",
+          arguments: {
+            query: "private-eval-query",
+            role: "private-eval-role"
+          },
+          confidence: 0.5
+        })
+      )
+    };
+
+    const error = await evaluateForcedOllamaFallback(fallback, "helper").catch(
+      (caught: unknown) => caught
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      "eval_agent_forced_fallback_validation_failed:" +
+        "disposition=clarify,capability=query_schedule,reason=low_confidence," +
+        "provider=ollama,proposal=execute,confidence=0.5"
+    );
+    expect((error as Error).message).not.toContain("private-eval-query");
+    expect((error as Error).message).not.toContain("private-eval-role");
+  });
 });

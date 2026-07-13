@@ -108,6 +108,8 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
     };
   }
   if (proposal.disposition === "clarify") {
+    const deterministicPlan = deterministicClarificationRecovery(input);
+    if (deterministicPlan) return deterministicPlan;
     return { disposition: "clarify", reasonCode: "planner_clarification" };
   }
   if (proposal.disposition === "deny") {
@@ -237,6 +239,20 @@ function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
       : { disposition: "clarify", reasonCode: "planner_unavailable" };
   }
 
+  const deterministicPlan = deterministicExplicitIntentPlan(input, explicitCandidates);
+  if (deterministicPlan) return deterministicPlan;
+  return {
+    disposition: "clarify",
+    capability: explicitCandidates[0],
+    reasonCode: "missing_required_slot"
+  };
+}
+
+function deterministicExplicitIntentPlan(
+  input: ValidateAgentPlanInput,
+  explicitCandidates = revalidatedExplicitCandidates(input)
+): Extract<ValidatedAgentPlan, { disposition: "execute" }> | undefined {
+  if (explicitCandidates.length !== 1) return undefined;
   const capability = explicitCandidates[0];
   const definition = getFunctionDefinition(capability)!;
   const rawArguments = definition.requiredSlots.some(({ argument }) => argument === "query")
@@ -249,7 +265,7 @@ function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
     definition
   );
   if (!validatedArguments || findMissingRequiredSlot(capability, validatedArguments)) {
-    return { disposition: "clarify", capability, reasonCode: "missing_required_slot" };
+    return undefined;
   }
   return {
     disposition: "execute",
@@ -257,6 +273,60 @@ function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
     arguments: validatedArguments,
     reasonCode: "deterministic_explicit_intent"
   };
+}
+
+function deterministicClarificationRecovery(
+  input: ValidateAgentPlanInput
+): ValidatedAgentPlan | undefined {
+  const explicitCapabilities = revalidatedExplicitCandidates(input);
+  if (explicitCapabilities.length > 1) return undefined;
+
+  let candidate: AgentPlanValidationCandidate | undefined;
+  if (explicitCapabilities.length === 1) {
+    candidate = selectedCandidate(input.candidates, explicitCapabilities[0]);
+  } else {
+    const trustedCandidates = input.candidates.filter(({ reason }) =>
+      ["active_task_entity", "knowledge_metadata", "retrieval_evidence"].includes(reason)
+    );
+    if (trustedCandidates.length === 1) candidate = trustedCandidates[0];
+  }
+  if (!candidate) return undefined;
+
+  const definition = getFunctionDefinition(candidate.capability);
+  if (
+    !definition ||
+    definition.deprecated ||
+    definition.sideEffectLevel !== "read" ||
+    !definition.agentCapability ||
+    !input.enabledFunctions.includes(candidate.capability) ||
+    !sourceAllowed(definition, input.sourceType)
+  ) {
+    return undefined;
+  }
+
+  const rawArguments = definition.requiredSlots.some(({ argument }) => argument === "query")
+    ? { query: input.text }
+    : {};
+  const argumentsValue =
+    normalizeCurrentTextArguments(candidate.capability, rawArguments, input.text) ?? rawArguments;
+  const activeTask = liveActiveTask(input.activeTask, input.now ?? new Date());
+  const disposition =
+    candidate.reason !== "active_task_entity" &&
+    activeTask &&
+    activeTask.capability !== candidate.capability
+      ? "switch"
+      : "execute";
+
+  return validateAgentPlan({
+    ...input,
+    proposal: {
+      status: "proposed",
+      disposition,
+      capability: candidate.capability,
+      arguments: argumentsValue,
+      confidence: 1
+    }
+  });
 }
 
 function validateCapabilityPolicy(
@@ -315,12 +385,7 @@ function parseAndNormalizeArguments(
   activeTask?: ActiveTaskContext,
   activeAuthority = false
 ): JsonRecord | undefined {
-  const parsed = parseFunctionArguments(capability, argumentsValue);
-  if (!parsed) return undefined;
-  const normalized = parseFunctionArguments(
-    capability,
-    normalizeFunctionArguments(capability, parsed, { text, inferStructuredEvidence: true })
-  );
+  const normalized = normalizeCurrentTextArguments(capability, argumentsValue, text);
   if (!normalized) return undefined;
   const grounded = groundPlanRecord({
     record: normalized,
@@ -330,6 +395,20 @@ function parseAndNormalizeArguments(
     activeAuthority
   });
   return grounded.ambiguous ? undefined : parseFunctionArguments(capability, grounded.value);
+}
+
+function normalizeCurrentTextArguments(
+  capability: FunctionName,
+  argumentsValue: JsonRecord,
+  text: string
+): JsonRecord | undefined {
+  const parsed = parseFunctionArguments(capability, argumentsValue);
+  if (!parsed) return undefined;
+  const normalized = parseFunctionArguments(
+    capability,
+    normalizeFunctionArguments(capability, parsed, { text, inferStructuredEvidence: true })
+  );
+  return normalized;
 }
 
 function revalidatedExplicitCandidates(input: ValidateAgentPlanInput): FunctionName[] {

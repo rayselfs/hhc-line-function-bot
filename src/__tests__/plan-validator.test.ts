@@ -646,10 +646,155 @@ describe("deterministic agent plan validation", () => {
     ).toEqual({ disposition: "chat", reasonCode: "no_capability_evidence" });
   });
 
+  it("recovers a complete explicit read request from an over-cautious planner clarification", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "幫我查下一場聚會服事的導播",
+          proposal: { disposition: "clarify", arguments: {}, confidence: 0.95 },
+          sourceType: "group"
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: {
+        query: "幫我查下一場聚會服事的導播",
+        dateIntent: "next_meeting",
+        role: "導播"
+      },
+      reasonCode: "explicit_intent"
+    });
+  });
+
+  it("recovers a unique requester-scoped active-task refinement from planner clarification", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "前攝影",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "clarify",
+            capability: "query_schedule",
+            arguments: {},
+            confidence: 0
+          },
+          activeTask: scheduleTask
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: { query: "前攝影", role: "前攝影" },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
+  it("keeps an ambiguous active-task refinement controlled when the planner clarifies", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "攝影是誰",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "clarify",
+            capability: "query_schedule",
+            arguments: {},
+            confidence: 0
+          },
+          activeTask: {
+            ...scheduleTask,
+            entities: [
+              ...scheduleTask.entities,
+              { type: "role", key: "rear-camera", label: "後攝影", aliases: ["攝影"] }
+            ]
+          }
+        })
+      )
+    ).toEqual({
+      disposition: "clarify",
+      capability: "query_schedule",
+      reasonCode: "ambiguous_entity"
+    });
+  });
+
+  it("recovers trusted dynamic-knowledge metadata evidence from planner clarification", () => {
+    expect(
+      validateAgentPlan({
+        text: "第一天去哪裡",
+        enabledFunctions: ["query_knowledge"],
+        candidates: [{ capability: "query_knowledge", reason: "knowledge_metadata", score: 200 }],
+        proposal: {
+          disposition: "clarify",
+          capability: "query_knowledge",
+          arguments: {},
+          confidence: 0
+        },
+        minConfidence: 0.65,
+        sourceType: "group",
+        now
+      })
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_knowledge",
+      arguments: { query: "第一天去哪裡" }
+    });
+  });
+
+  it("preserves an explicit cross-function switch during deterministic recovery", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "那主日音控呢",
+          enabledFunctions: ["query_knowledge", "query_schedule"],
+          candidates: [{ capability: "query_schedule", reason: "argument_evidence", score: 350 }],
+          proposal: {
+            disposition: "clarify",
+            capability: "query_schedule",
+            arguments: {},
+            confidence: 0.6
+          },
+          activeTask: knowledgeTask
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      reasonCode: "explicit_capability_switch",
+      arguments: { meeting: "主日", role: "音控" }
+    });
+  });
+
+  it("does not recover an expired active task from planner clarification", () => {
+    expect(
+      validateAgentPlan({
+        text: "那幾點集合",
+        enabledFunctions: ["query_knowledge"],
+        candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
+        proposal: {
+          disposition: "clarify",
+          capability: "query_knowledge",
+          arguments: {},
+          confidence: 0
+        },
+        activeTask: { ...knowledgeTask, expiresAt: "2026-07-12T23:59:59.000Z" },
+        minConfidence: 0.65,
+        sourceType: "group",
+        now
+      })
+    ).toEqual({
+      disposition: "clarify",
+      capability: "query_knowledge",
+      reasonCode: "active_task_unavailable"
+    });
+  });
+
   it("preserves a planner clarification as a controlled clarification", () => {
     expect(
       validateAgentPlan(
         input({
+          text: "攝影是誰",
+          candidates: [{ capability: "query_schedule", reason: "capability_hint", score: 100 }],
           proposal: { disposition: "clarify", arguments: {}, confidence: 0.9 }
         })
       )

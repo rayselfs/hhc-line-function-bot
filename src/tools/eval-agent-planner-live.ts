@@ -73,7 +73,16 @@ export async function evaluateForcedOllamaFallback(
     now: new Date("2026-07-14T00:00:00.000Z")
   });
   if (finalPlan.disposition !== "execute" || finalPlan.capability !== "query_schedule") {
-    throw new Error("eval_agent_forced_fallback_validation_failed");
+    const finalCapability = "capability" in finalPlan ? finalPlan.capability : undefined;
+    throw new Error(
+      "eval_agent_forced_fallback_validation_failed:" +
+        `disposition=${finalPlan.disposition},` +
+        `capability=${finalCapability ?? "none"},` +
+        `reason=${finalPlan.reasonCode},` +
+        `provider=${proposal.provider},` +
+        `proposal=${proposal.disposition},` +
+        `confidence=${proposal.confidence}`
+    );
   }
   return {
     provider: "ollama",
