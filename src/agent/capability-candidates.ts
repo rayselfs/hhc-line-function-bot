@@ -30,8 +30,17 @@ export interface BuildCapabilityCandidatesInput {
   activeTask?: ActiveTaskContext;
   knowledgeSources: readonly KnowledgeSourceMetadata[];
   maxCandidates: number;
-  source?: FunctionAllowedSource;
+  source: FunctionAllowedSource;
 }
+
+type CandidateSourceIsRequired =
+  Pick<BuildCapabilityCandidatesInput, "source"> extends Required<
+    Pick<BuildCapabilityCandidatesInput, "source">
+  >
+    ? true
+    : never;
+// Keep `source` required at compile time in addition to the runtime fail-closed guard.
+const CANDIDATE_SOURCE_IS_REQUIRED: CandidateSourceIsRequired = true;
 
 interface RankedCandidate extends CapabilityCandidate {
   definitionOrder: number;
@@ -55,7 +64,9 @@ export function buildCapabilityCandidates(
   input: BuildCapabilityCandidatesInput
 ): CapabilityCandidate[] {
   const limit = candidateLimit(input.maxCandidates);
-  if (limit === 0 || !normalize(input.text)) return [];
+  if (!CANDIDATE_SOURCE_IS_REQUIRED || !input.source || limit === 0 || !normalize(input.text)) {
+    return [];
+  }
 
   const enabled = new Set(input.enabledFunctions);
   const ranked: RankedCandidate[] = [];
@@ -82,14 +93,14 @@ export function buildCapabilityCandidates(
 function isEligibleDefinition(
   definition: FunctionDefinition,
   enabled: ReadonlySet<FunctionName>,
-  source: FunctionAllowedSource | undefined
+  source: FunctionAllowedSource
 ): boolean {
   return (
     enabled.has(definition.name) &&
     definition.sideEffectLevel === "read" &&
     !definition.deprecated &&
     Boolean(definition.agentCapability) &&
-    (!source || definition.allowedSources.includes(source))
+    definition.allowedSources.includes(source)
   );
 }
 
@@ -172,9 +183,48 @@ function matchesAnyHint(text: string, hints: readonly string[]): boolean {
   return hints.some((hint) => {
     const normalizedHint = normalize(hint);
     if (!normalizedHint) return false;
+    if (Array.from(normalizedHint).length <= 3) {
+      return matchesShortHint(text, normalizedText, normalizedHint);
+    }
     if (normalizedText.includes(normalizedHint)) return true;
     return oneEditWindowMatch(normalizedText, normalizedHint);
   });
+}
+
+function matchesShortHint(text: string, normalizedText: string, hint: string): boolean {
+  const hintCharacters = Array.from(hint);
+  if (/^[a-z0-9]+$/u.test(hint)) {
+    return latinWordTokens(text).some((token) => {
+      const tokenCharacters = Array.from(token);
+      return (
+        tokenCharacters.length === hintCharacters.length &&
+        editDistanceAtMostOne(tokenCharacters, hintCharacters)
+      );
+    });
+  }
+  if (normalizedText.includes(hint)) return true;
+  if (hintCharacters.length < 3) return false;
+  return sameLengthWindowMatch(normalizedText, hintCharacters);
+}
+
+function latinWordTokens(text: string): string[] {
+  return (
+    text
+      .normalize("NFKC")
+      .toLowerCase()
+      .match(/[a-z0-9]+/gu) ?? []
+  );
+}
+
+function sameLengthWindowMatch(text: string, hint: string[]): boolean {
+  const textCharacters = Array.from(text);
+  if (hint.length > textCharacters.length) return false;
+  for (let start = 0; start <= textCharacters.length - hint.length; start += 1) {
+    if (editDistanceAtMostOne(textCharacters.slice(start, start + hint.length), hint)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function oneEditWindowMatch(text: string, hint: string): boolean {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCapabilityCandidates,
+  type BuildCapabilityCandidatesInput,
   type KnowledgeSourceMetadata
 } from "../agent/capability-candidates.js";
 import type { ActiveTaskContext } from "../agent/active-task.js";
@@ -42,12 +43,24 @@ const retreatKnowledge: KnowledgeSourceMetadata = {
 };
 
 describe("deterministic capability candidates", () => {
+  it("fails closed at runtime when source policy input is omitted", () => {
+    const unsafeInput = {
+      text: "查維基百科 Fastify",
+      enabledFunctions: ["query_wikipedia"],
+      knowledgeSources: [],
+      maxCandidates: 3
+    } as BuildCapabilityCandidatesInput;
+
+    expect(buildCapabilityCandidates(unsafeInput)).toEqual([]);
+  });
+
   it("uses an active task entity as bounded continuation evidence", () => {
     expect(
       buildCapabilityCandidates({
         text: "前攝影",
         enabledFunctions: ["query_schedule", "query_knowledge"],
         activeTask: scheduleTask,
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })
@@ -60,6 +73,7 @@ describe("deterministic capability candidates", () => {
     const candidates = buildCapabilityCandidates({
       text: "第一天去哪裡",
       enabledFunctions: ["query_schedule", "query_knowledge"],
+      source: "group",
       knowledgeSources: [retreatKnowledge],
       maxCandidates: 3
     });
@@ -77,6 +91,7 @@ describe("deterministic capability candidates", () => {
         text: "查主日服事，第一天也要看",
         enabledFunctions: ["query_schedule", "query_knowledge"],
         activeTask: knowledgeTask,
+        source: "group",
         knowledgeSources: [retreatKnowledge],
         maxCandidates: 3
       }).map(({ capability, reason }) => ({ capability, reason }))
@@ -92,6 +107,7 @@ describe("deterministic capability candidates", () => {
         text: "幫我記住前攝影",
         enabledFunctions: ["query_schedule", "save_schedule"],
         activeTask: scheduleTask,
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })
@@ -103,6 +119,7 @@ describe("deterministic capability candidates", () => {
       buildCapabilityCandidates({
         text: "查服事並幫我保存服事表",
         enabledFunctions: ["save_schedule"],
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })
@@ -114,6 +131,7 @@ describe("deterministic capability candidates", () => {
       buildCapabilityCandidates({
         text: "小哈 查投影片 主日報告",
         enabledFunctions: ["find_ppt_slides"],
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })[0]
@@ -123,11 +141,39 @@ describe("deterministic capability candidates", () => {
       buildCapabilityCandidates({
         text: "小哈 找投影篇 主日報告",
         enabledFunctions: ["find_ppt_slides"],
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })[0]
     ).toMatchObject({ capability: "find_ppt_slides", reason: "capability_hint" });
   });
+
+  it("matches an exact short SOP token", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "請查 SOP",
+        enabledFunctions: ["query_knowledge"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_knowledge", reason: "capability_hint" });
+  });
+
+  it.each(["Open the report", "This is sophisticated reporting"])(
+    "does not match short hints inside unrelated English: %s",
+    (text) => {
+      expect(
+        buildCapabilityCandidates({
+          text,
+          enabledFunctions: ["query_knowledge"],
+          source: "group",
+          knowledgeSources: [],
+          maxCandidates: 3
+        })
+      ).toEqual([]);
+    }
+  );
 
   it("returns no candidate for unrelated negative text", () => {
     expect(
@@ -139,6 +185,7 @@ describe("deterministic capability candidates", () => {
           "query_knowledge",
           "find_sheet_music"
         ],
+        source: "group",
         knowledgeSources: [retreatKnowledge],
         maxCandidates: 3
       })
@@ -150,6 +197,7 @@ describe("deterministic capability candidates", () => {
       buildCapabilityCandidates({
         text: "找歌譜 主日報告",
         enabledFunctions: ["find_ppt_slides", "find_sheet_music"],
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       }).map(({ capability }) => capability)
@@ -179,6 +227,7 @@ describe("deterministic capability candidates", () => {
     const input = {
       text: "查投影片也查歌譜",
       enabledFunctions: ["find_sheet_music", "find_ppt_slides"] as const,
+      source: "group" as const,
       knowledgeSources: [],
       maxCandidates: 1
     };
@@ -195,6 +244,7 @@ describe("deterministic capability candidates", () => {
         text: "第一天",
         enabledFunctions: ["query_schedule", "query_knowledge"],
         activeTask: knowledgeTask,
+        source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       }).map(({ capability }) => capability)
