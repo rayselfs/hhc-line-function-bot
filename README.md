@@ -7,7 +7,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Fastify webhook server with LINE signature validation.
 - Multiple bot profiles in one service, each on its own webhook path.
 - Per-profile access policy, wake words, message type filtering, and function toggles.
-- Function router that uses Ollama `qwen3:4b-instruct` by default, with optional DeepSeek API key provider support.
+- Controlled semantic planner that uses DeepSeek as the helper profile's primary function-routing provider and Ollama as its fallback.
 - Action catalog that separates user functions, admin actions, and system actions.
 - Policy gate and admin action registry for natural-language admin operations.
 - Conservative keyword fallback when Ollama times out, is unreachable, or returns invalid JSON.
@@ -16,7 +16,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
 - Definition-driven clarification state for missing slots. A generic capability request such as `查投影片`, `查流行歌譜`, `查維基百科`, or `查服事表` never runs a lookup; the bot asks for the missing value first.
 - Friendly intro/help replies for `小哈`, `小哈可以幹嘛`, `help`, and related prompts without exposing internal function names or backing services.
-- Controlled agent turn runtime for routing, slot clarification, in-flight locks, recent file recall, and explicit text/resource memories.
+- Controlled agent turn runtime for bounded capability candidates, validated semantic plans, requester-scoped active tasks, slot clarification, in-flight locks, recent file recall, and explicit text/resource memories.
 - Requester-scoped short conversation windows, so group follow-up messages can continue naturally without letting other users inherit context.
 - Long-running task handoff: slow turns can reply with a "check result" postback instead of using LINE push quota.
 - Free Wikipedia-only lookup: Chinese Wikipedia first, English fallback, then source-bounded summary generation.
@@ -31,10 +31,12 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Function handlers:
   - `find_ppt_slides`: searches a configured presentation folder, fuzzy-matches `.pptx`, `.ppt`, `.key`, and `.odp` names, and returns 24 hour sharing links.
   - `query_schedule`: one user-facing service-schedule query that selects configured sources without exposing them.
+  - `query_knowledge`: searches admin-registered, profile-shared Notion knowledge with grounded hybrid retrieval.
   - `find_sheet_music`: canonical sheet-music lookup for configured pop and hymn sheet sources. `find_pop_sheet_music` remains an internal legacy alias only.
   - `find_resource`: generic authorized church catalog lookup for non-schedule, non-slide, non-sheet-music resources such as future weekly report audio.
   - `query_wikipedia`: reads a matching Wikipedia introduction and returns a source-bounded summary.
   - `save_schedule`: previews and manages the helper profile's shared canonical text-only service schedules with one-year retention.
+  - `save_resource`: validates, scans, confirms, publishes, and indexes authorized LINE attachments.
 
 The helper production profile enables only the controlled church lookup functions and structured schedule management. Generic text/resource memory functions remain internal modules but are not enabled for ordinary helper conversations.
 
@@ -148,7 +150,13 @@ Provider access is profile-scoped. Internal helper profiles may explicitly list 
 
 Each profile can override lane policy with `providerPolicy`. The internal helper profile uses `deepseek -> ollama` for `function_routing`, `smart_talk`, and `general_agent`, while keeping `admin_routing` and `memory_routing` on Ollama.
 
-The profile `controlledAgent` block gates controlled semantic planning and bounds the candidate count and minimum planner confidence. With `shadow=true`, sanitized planner outcomes are recorded without changing execution. Read capabilities may declaratively opt into a bounded retrieval-evidence provider. The knowledge provider probes at most 20 promoted sources in the current profile and returns only a candidate reason to the planner—never source IDs/names, titles, URLs, or content. Every non-explicit knowledge-evidence path—active-task entities, routing metadata, knowledge capability hints, and retrieval evidence—uses the same conservative small-talk and write-intent guard. Explicit knowledge queries remain eligible; disabled functions and provider failures fail closed. DeepSeek proposals are advisory only: they never bypass deterministic profile policy, function toggles, argument validation, clarification, access control, or registered handler execution.
+The helper profile enables the controlled agent with at most three candidates and a minimum planner confidence of `0.65`. Candidate generation is deterministic and considers only effective, enabled functions with a declarative `agentCapability` contract. Evidence can come from explicit current-message intent, declared argument patterns, a live requester-scoped active task, promoted dynamic-knowledge metadata, or a bounded read-only retrieval probe. No provider may invent a capability or expand the effective function set.
+
+DeepSeek is the primary `function_routing` planner and Ollama is the configured fallback. The model proposes only a disposition, one candidate capability, bounded arguments/references, and confidence; it does not execute tools. The server then revalidates the proposal against the candidate set, source policy, function toggle, side-effect policy, current-message evidence, active-task authority, required slots, argument schema, and the `0.65` threshold. Unsupported or ungrounded values are discarded, ambiguity becomes clarification, and disabled or unauthorized capabilities are denied. When providers are unavailable, an unambiguous explicit request may still use the deterministic definition contract; unresolved evidence fails closed to clarification rather than guessing.
+
+Read capabilities may declaratively opt into a bounded retrieval-evidence provider. The knowledge provider probes at most 20 promoted sources in the current profile and returns only a candidate reason to the planner—never source IDs/names, titles, URLs, or content. Every non-explicit knowledge-evidence path—active-task entities, routing metadata, knowledge capability hints, and retrieval evidence—uses the same conservative small-talk and write-intent guard. Explicit knowledge queries remain eligible. DeepSeek proposals remain advisory: they never bypass deterministic profile policy, function toggles, argument validation, clarification, access control, or registered handler execution.
+
+`controlledAgent.enabled=false` is the production rollback switch during the acceptance window. `shadow=true` can observe sanitized controlled-planner outcomes while legacy routing still owns the reply; shadow work is detached and never delays or changes that reply. Restore `enabled=true, shadow=false` after diagnosis. Keep `function_routing` on `deepseek -> ollama` unless a separately reviewed provider-policy change is intended.
 
 If a lane's primary provider returns invalid JSON, times out, or is unavailable, the lane can fall back to its configured fallback provider. Function routing can still fall back to conservative keyword routing after model failures. Explicit model deny decisions do not fall back. Remote API small talk is bounded by `LLM_GENERAL_MAX_OUTPUT_TOKENS` rather than the local Ollama 80-character fallback limit.
 
@@ -238,11 +246,13 @@ The webhook service should stay on `node dist/index.js`; do not run recurring sy
 
 ## Agent Runtime And Memory
 
-The agent turn runtime centralizes natural-language task execution after LINE entrance checks. It handles pre-route resource recall, pending text sessions, admin natural-language actions, routing, missing-slot clarification, in-flight duplicate locks, function execution, and sanitized turn traces.
+The agent turn runtime centralizes natural-language task execution after LINE entrance checks. It handles pre-route resource recall, pending text sessions, admin natural-language actions, deterministic capability generation, model planning, plan validation, missing-slot clarification, in-flight duplicate locks, registered function execution, active-task transitions, and sanitized turn traces.
 
 Admin `/last-agent-turns` diagnostics include controlled phases for active-task state, bounded capability names/count, planner provider/disposition/confidence bucket, validator reason, result-envelope status/anchor count/entity types, and active-task lifecycle outcome. These traces never retain raw messages, people, prompts, filenames, URLs, evidence, tokens, source titles/IDs, or temporary sharing links.
 
-This keeps new functions on a consistent contract: define the capability, normalize arguments, add any required slots, register the handler, and let the runtime apply the shared safety rails.
+Successful read handlers return an `agentResult` envelope in addition to their user-facing reply. The envelope has a controlled status (`success`, `not_found`, `ambiguous`, or `unavailable`) and may contain only declared entity types, canonical anchors, opaque evidence references, supported continuation operations, and a clarification payload. Only a successful envelope can create or replace an active task. Not-found, unavailable, failed, or missing envelopes preserve the last valid task unless an explicit function switch requires clearing it. Active-task state has its own absolute TTL and is scoped by profile, LINE source, and requester, so a second group member cannot inherit another member's context.
+
+This keeps new functions on one generic contract: declare `agentCapability`, normalize and schema-check arguments, define any required slots and active-evidence rules, register the handler, and return a structured `agentResult` for successful reads. Source-specific parsing belongs in a domain adapter before the generic function result is built; it must not leak back into the router as one-off keywords or top-level continuation branches.
 
 The memory layer adds controlled memory without making the bot an unrestricted chat recorder. Explicit group memories are private to the requester by default; group sharing must be explicit. Writes are confirmed and audited, owner/admin deletion is enforced, and expired records are physically purged.
 
@@ -366,7 +376,7 @@ For the current HHC media service schedule database, use these property mappings
 
 The production catalog sync job also registers the media team service schedule as a Notion `schedule` source and writes rows into the PostgreSQL `schedule_items` read model. Notion database reads follow every result cursor before syncing, so the read model is not limited to the first page. `query_schedule` checks that read model before any live Notion fallback, so users only ask for a service schedule; they never need to choose Notion or PostgreSQL. LINE-created schedules remain separate write-controlled schedule records and do not write back to Notion.
 
-Schedule lookup combines LLM/keyword-router arguments with deterministic query refinement. Recognized date, meeting, role, schedule-type, and media-team terms become structured filters and are removed before residual text search. An empty residual therefore adds no full-text condition. This shared refinement contract can be adopted by future query functions, but each domain must provide its own adapter instead of adding function-specific parsing to the router.
+Schedule lookup combines validated planner arguments with deterministic query refinement. Notion and structured-text adapters first normalize source-specific rows into the same schedule-item shape and preserve each distinct role assignment. Recognized date, meeting, role, schedule-type, and media-team terms then become structured filters and are removed before residual text search. An empty residual therefore adds no full-text condition. Future query domains should follow the same boundary—normalize at ingestion/query-adapter level, then expose a declarative capability and structured result—rather than adding function-specific parsing to the router.
 
 ## Dynamic Knowledge Sources
 
@@ -454,8 +464,10 @@ pnpm format:check
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm config:validate
 pnpm eval:router
 pnpm eval:admin
+pnpm eval:agent
 pnpm build
 ```
 
@@ -463,4 +475,5 @@ Optional live local-model check:
 
 ```powershell
 pnpm eval:router:ollama
+pnpm eval:agent:live
 ```

@@ -6,7 +6,7 @@
 - The bot is a restricted church helper, not an open-ended chat bot.
 - It should feel smart inside explicitly enabled functions, but deny or clarify requests outside those functions.
 - Runtime behavior is controlled by bot profiles, function toggles, access control, and state stores.
-- LLM routing defaults to Ollama, with optional `deepseek` support through `DEEPSEEK_API_KEY`.
+- The helper controlled planner uses DeepSeek as primary `function_routing` with Ollama fallback; other profiles may remain Ollama-only. Remote DeepSeek access uses `DEEPSEEK_API_KEY`.
 - Group follow-up context is requester-scoped and short-lived; never feed raw whole-group chat into the model.
 - Slow tasks may be stored as long-running jobs and returned through a LINE postback button; do not use LINE push quota for those results.
 - Public `/healthz` is minimal liveness. Public `/readyz` checks only Postgres and Redis.
@@ -62,12 +62,16 @@ When adding or changing a function:
 
 - Add or update the function definition.
 - Include capability metadata: `displayName`, `shortDescription`, `examples`, `requires`, `scope`, `sideEffectLevel`, `allowedSources`, `requiredSlots`, `resourcePolicy`, `memoryPolicy`, and `clarificationPrompt`.
+- Every enabled read function must declare an `agentCapability` contract with bounded intents/hints, allowed operations, entity types, refinable fields, ambiguity policy, and field-local active-evidence rules. Retrieval-evidence providers must be declarative, read-only, bounded, and content-free.
+- Read handlers must return a structured `agentResult` envelope for success, not-found, ambiguity, and unavailable outcomes. Successful envelopes may expose only declared safe entity types, canonical anchors, opaque references, supported operations, clarification metadata, and reply data.
+- Keep source/domain parsing in an ingestion or query adapter. Do not add function-specific branches to the generic controlled router, planner, validator, or top-level continuation flow.
 - For a required value that users can omit by naming only the capability, declare `genericRequest.phrases` on that required slot (and `clearArguments` for related model-inferred fields). Do not add function-specific generic-request checks in routers or handlers.
 - Register the function module.
 - Update routing and argument extraction.
 - Add clarification behavior for missing required slots.
 - Add postback/numeric selection behavior if multiple results are possible.
 - Add tests for enabled, disabled, unclear, deny, missing-slot, and multi-result cases.
+- Add controlled-agent tests for candidate generation, argument/reference grounding, validator rejection, result-envelope lifecycle, stale active tasks, and group requester isolation.
 - Update README and this file if the behavior changes how agents should work.
 
 When adding or changing an admin action:
@@ -91,6 +95,8 @@ When adding or changing an admin action:
 - `src/function-arguments.ts`: argument extraction and slot handling.
 - `src/functions/*`: function definitions, modules, and implementations.
 - `src/agent/turn-runtime.ts`: shared text-turn pipeline after LINE entrance checks.
+- `src/agent/capability-candidates.ts`, `src/agent/planner.ts`, and `src/agent/plan-validator.ts`: deterministic candidate generation, advisory semantic planning, and the server-owned authority boundary.
+- `src/agent/active-task.ts` and `src/agent/active-task-transition.ts`: requester-scoped continuation state derived from successful structured read results.
 - `src/agent/context-manager.ts`: runtime context budget/compression plus requester-scoped conversation windows and independently expiring function continuation state.
 - `src/agent/jobs.ts`: long-running job results scoped by profile/source/requester.
 - `src/agent/slot-clarification.ts`: definition-driven required-slot clarification.
@@ -136,6 +142,9 @@ When adding or changing an admin action:
 ## Function Module Contract
 
 - Every `FUNCTION_NAMES` entry must have a matching `FUNCTION_MODULES` module and function definition.
+- Every enabled read definition must have an `agentCapability`, and every entity type emitted by its `agentResult` must be declared by that contract.
+- A planner proposal never grants authority. Deterministic validation must recheck the effective enabled-function set, LINE source, side-effect policy, current-message evidence, active-task authority, confidence, schema, and required slots before execution.
+- Active tasks are profile/source/requester scoped, expire independently of conversation turns, and may be created or replaced only by successful structured results whose operations intersect the definition contract.
 - Each module owns its router eval cases. Include positive, missing-slot, typo, negative, disabled, and cross-function cases.
 - Use `expected: { type: "execute", ... }` or `expected: { type: "deny", ... }` so evals can check both allowed and blocked behavior.
 - Keep `pnpm eval:router` deterministic and offline. Use `pnpm eval:router:ollama` only for manual live-model checks.
@@ -162,6 +171,7 @@ When adding or changing an admin action:
 - Do not add automatic group-chat recording. Text memory must be explicit user intent.
 - LINE attachment download/storage is allowed only through the controlled `save_resource` pending-attachment flow. If a profile explicitly allows `image` or `file` and the requester has effective `save_resource`, the webhook may store a short-lived requester/source-scoped pending attachment session and ask for purpose. The later text handler may download only after a supported purpose, must check target source write capability, size, MIME/magic bytes, extension, safe filename, hash, and virus scan, must fail closed when scanning is unavailable or not clean, and must require explicit confirmation before uploading to OneDrive and upserting catalog metadata. Do not add another binary publish path.
 - Agent turn traces are diagnostic metadata only. Do not store raw user text, file names, invite codes, secrets, or generated sharing links in traces.
+- Controlled-agent traces are allowlist-only. Record phases, bounded capability names/counts, provider/disposition/confidence bucket, validator reason, result status/anchor count/entity types, and lifecycle outcome. Never fall back to serializing raw prompts, messages, people, URLs, source titles/IDs, retrieval evidence, or provider payloads.
 - Do not assume multi-replica safety without Redis for sessions/cache/invite codes.
 - Group and room clarification/selection sessions are requester-scoped. They require the same `source.userId` to continue, and should not be created or matched when LINE does not provide a requester user id.
 - Long-running job result retrieval follows the same requester/source rule. A group user must not be able to fetch another user's job result.
@@ -179,6 +189,8 @@ When adding or changing an admin action:
   - `pnpm test`
   - `pnpm build`
 - For router behavior changes, also run `pnpm eval:router` when relevant.
+- For controlled-agent candidate/planner/validator/result changes, also run `pnpm eval:agent`.
+- Run `pnpm eval:agent:live` manually when DeepSeek credentials and the configured Ollama endpoint are available; do not add it to CI.
 - For live Ollama model validation, run `pnpm eval:router:ollama` manually; do not add it to CI.
 - For admin natural-language routing changes, also run `pnpm eval:admin`.
 - For webhook entrance changes, consider `pnpm smoke:webhook` against a local dev server or deployed URL.
@@ -200,6 +212,7 @@ Testing map:
 - `AGENTS.md`, `README.md`, and `docs/**`-only changes should not trigger the pipeline.
 - Do not push deploy-triggering changes to `main` unless the user explicitly asks to deploy or confirms that deploying is acceptable.
 - If the user asks for code changes but not deployment, commit locally or leave changes staged/unstaged as appropriate, then ask before pushing.
+- During controlled-agent production acceptance, `controlledAgent.enabled=false` is the rollback switch and `shadow=true` is detached observation while legacy routing owns the reply. Normal helper operation is `enabled=true, shadow=false`; do not change the DeepSeek-primary/Ollama-fallback lane policy as part of a rollback.
 
 ## Deployment Context
 

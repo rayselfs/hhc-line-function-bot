@@ -42,8 +42,8 @@
       "conversationWindowSeconds": 60
     },
     "controlledAgent": {
-      "enabled": false,
-      "shadow": true,
+      "enabled": true,
+      "shadow": false,
       "maxCandidates": 3,
       "minPlannerConfidence": 0.65
     },

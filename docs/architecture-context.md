@@ -11,13 +11,12 @@ It is intentionally not an open-ended chatbot. User messages are allowed to feel
 natural, but execution is limited to configured profiles, access policy, enabled
 functions, and admin gates.
 
-The service is lane-based and local-first for controlled routing:
+The service is lane-based and authority-first for controlled routing:
 
-- Ollama is the default provider for `function_routing`, `admin_routing`, and
-  `memory_routing`.
-- DeepSeek can be enabled per profile for `smart_talk` and future
-  higher-value generation lanes such as `general_agent` and
-  `context_compression`, with Ollama fallback where configured.
+- The helper profile uses DeepSeek as the primary `function_routing` planner
+  with Ollama fallback. Admin and memory routing remain local Ollama lanes.
+- DeepSeek can also be enabled per profile for `smart_talk`, `general_agent`,
+  and `context_compression`, with Ollama fallback where configured.
 - `deepseek` is an optional remote API provider that uses `DEEPSEEK_API_KEY`.
 - Provider runtimes may reason and generate text, but this bot owns authority:
   profile policy, function toggles, tool execution, memory writes, and deny or
@@ -25,10 +24,13 @@ The service is lane-based and local-first for controlled routing:
 - The line bot does not expose provider OAuth callback routes or store LLM
   tokens in PostgreSQL. Remote provider API keys live in ACA secrets or local
   `.env` only.
-- Keyword fallback is conservative and only runs when configured model
-  providers are unavailable, time out, or return invalid JSON.
-- Explicit model deny decisions do not fall back.
-- Function execution is still controlled by server-side policy and registered
+- The helper controlled planner is enabled with three deterministic candidates
+  and a `0.65` minimum confidence. Provider output is advisory; deterministic
+  validation owns function/source policy, evidence, arguments, and execution.
+- Unresolved provider failure, low confidence, or ambiguous evidence fails
+  closed to clarification. One unambiguous explicit request may use the
+  definition-owned deterministic recovery path.
+- Function execution remains controlled by server-side policy and registered
   handlers.
 - Agent memory is controlled and explicit: file results store metadata only,
   text memory is saved only when requested, and short-lived links are regenerated.
@@ -57,19 +59,30 @@ For normal LINE webhook messages, read the flow in this order:
 8. Pending text sessions and agent-memory follow-ups can short-circuit the
    router.
 9. Intro and small-talk system actions can respond without function execution.
-10. `src/agent/context-manager.ts` builds a bounded runtime context.
-11. `src/router.ts` asks the configured LLM provider for a strict JSON route.
-12. `src/keyword-router.ts` may provide conservative fallback.
-13. Definition-driven slot clarification asks for missing required metadata
-    before handlers run. Generic capability-only requests are identified by the
-    same slot metadata and override model-inferred values.
+10. In controlled mode, the runtime reads the independently expiring,
+    requester-scoped active task and generates at most the configured number of
+    candidates from declarative function contracts.
+11. `src/agent/planner.ts` asks the `function_routing` provider for a bounded
+    semantic proposal. DeepSeek is primary for helper and Ollama is fallback.
+12. `src/agent/plan-validator.ts` treats that proposal as untrusted: it
+    rechecks current-message evidence, active-task authority, effective function
+    policy, side effects, source, confidence, schema, and required slots.
+13. Definition-driven clarification handles missing or ambiguous values before
+    handlers run. The model cannot invent a function or carry an undeclared
+    value from old context.
 14. Agent memory can resolve aliases before expensive file searches.
-15. The turn runtime applies in-flight locks, calls the registered handler, and
-    records sanitized route/function/turn diagnostics.
+15. The turn runtime applies in-flight locks, calls only the registered handler,
+    records a sanitized result envelope, and transitions active-task state only
+    from a successful structured read result.
 16. Slow turns can be stored as long-running jobs and returned through a
     requester-scoped LINE postback.
 17. Successful file handlers can record resource metadata for later recall.
 18. Handler output is replied through the LINE client.
+
+During the production acceptance window, `controlledAgent.enabled=false` is the
+rollback switch. `shadow=true` runs detached, sanitized observation while the
+legacy router owns the reply; it cannot delay or change that reply. The normal
+production setting is `enabled=true, shadow=false`.
 
 The main entrance behavior lives in `src/server.ts`; tests for it live mostly in
 `src/__tests__/entrance.test.ts`.
@@ -135,8 +148,19 @@ Routing is deliberately layered:
   rules are profile-owned configuration; code owns only operational limits and
   provider fallback behavior.
 - `src/agent/turn-runtime.ts`: shared text-turn pipeline for memory prechecks,
-  text sessions, admin natural-language actions, routing, slot clarification,
-  in-flight locks, function execution, and sanitized traces.
+  text sessions, admin natural-language actions, controlled routing, slot
+  clarification, in-flight locks, function execution, active-task transitions,
+  and sanitized traces.
+- `src/agent/capability-candidates.ts`: deterministic, bounded candidates from
+  enabled function contracts, active-task evidence, and approved read-only
+  evidence providers.
+- `src/agent/planner.ts`: bounded semantic proposal through the configured
+  `function_routing` primary/fallback providers.
+- `src/agent/plan-validator.ts`: deterministic authority boundary that grounds
+  arguments/references and rejects unsupported plans.
+- `src/agent/active-task.ts` and `src/agent/active-task-transition.ts`:
+  requester-scoped continuation state derived only from successful structured
+  results.
 - `src/agent/slot-clarification.ts`: required-slot handling driven by function
   definition metadata.
 - `src/router.ts`: primary JSON router with provider/fallback diagnostics.
@@ -158,14 +182,24 @@ To add or change a user function:
 2. Add or update the function definition in `src/functions/definitions.ts`,
    including side-effect level, allowed sources, required slots, resource policy,
    and memory policy.
-3. Add argument schema and normalization.
-4. Add a module in `src/functions/modules.ts` with router eval cases.
-5. Register the handler in `src/functions/registry.ts`.
-6. Add clarification state if required slots can be missing.
-7. Add postback or numeric selection if multiple results are possible.
-8. Add tests for enabled, disabled, unclear, missing-slot, typo/fuzzy, deny, and
-   multi-result behavior.
-9. Update README and AGENTS if the user/admin surface changes.
+3. For every enabled read function, declare `agentCapability`: current-message
+   intents/hints, operations, entity types, refinable fields, ambiguity policy,
+   and field-local active-evidence rules. Add a bounded read-only evidence
+   provider only when metadata alone cannot establish a candidate.
+4. Add argument schema, normalization, and any source-specific adapter. Keep
+   domain parsing out of the generic planner and turn runtime.
+5. Add a module in `src/functions/modules.ts` with router eval cases.
+6. Register the handler in `src/functions/registry.ts`.
+7. Return a structured `agentResult` from read outcomes. A success envelope may
+   contain only declared safe entities, canonical anchors, opaque references,
+   supported operations, and reply data; never put raw secrets, URLs, prompts,
+   evidence text, or temporary links in active-task state.
+8. Add clarification state if required slots can be missing.
+9. Add postback or numeric selection if multiple results are possible.
+10. Add tests for candidate generation, validator rejection, enabled, disabled,
+    unclear, missing-slot, typo/fuzzy, deny, result-envelope lifecycle,
+    requester isolation, and multi-result behavior.
+11. Update README and AGENTS if the user/admin surface changes.
 
 High-value tests:
 
@@ -180,6 +214,22 @@ Run `pnpm eval:router` after changing function routing.
 
 The controlled agent runtime lives in `src/agent/*` and is wired from
 `src/index.ts` into `src/server.ts`.
+
+The generic turn contract is:
+
+1. Generate a bounded candidate set only from effective enabled functions and
+   each definition's `agentCapability` metadata.
+2. Let DeepSeek (primary) or Ollama (fallback) propose semantics over that set.
+   The planner receives bounded contracts and safe active-task summaries, not
+   arbitrary source content or execution authority.
+3. Deterministically validate capability choice, source, side effects,
+   confidence, current-message evidence, active-task evidence, arguments,
+   references, and required slots.
+4. Execute one registered handler or return a controlled chat/clarify/deny
+   outcome.
+5. Consume the handler's structured result envelope and update an active task
+   only for a successful result with operations allowed by both the function
+   contract and result.
 
 Use it for cross-function agent behavior that should not belong to one function
 handler:
@@ -205,6 +255,13 @@ handler:
 - memory commands such as `/memories`, `/forget-memory <id>`, and
   `/memory-status`
 - sanitized turn diagnostics through `/last-agent-turns`
+
+Result envelopes use the shared statuses `success`, `not_found`, `ambiguous`,
+and `unavailable`. Entity types must be declared by the capability contract.
+Anchors and references must be canonical, bounded, and safe to persist. A
+missing, failed, not-found, or unavailable envelope cannot manufacture a new
+active task. Active tasks have an absolute TTL separate from the conversation
+window and are keyed by profile, LINE source, and requester.
 
 Dynamic knowledge uses a separate `knowledge_*` read model rather than catalog
 items or schedule rows. Admin direct-chat actions register Notion roots, the sync
@@ -239,6 +296,21 @@ snapshot contract. Failure health updates require the invocation's expected
 revision, so stale admin or scheduled syncs cannot overwrite a newer ready snapshot.
 The staging initialization marker runs the legacy live-to-staged copy once and
 preserves a later staged permanent (`NULL`) expiry across restarts.
+
+Schedule sources follow the same adapter boundary. The Notion roster adapter
+and structured text schedule store normalize their input into one schedule-item
+model before query refinement, preserving distinct role assignments instead of
+asking the planner to understand source formatting. Future knowledge domains
+should add an adapter, declarative capability, and structured result—not a new
+top-level travel/SOP branch.
+
+Agent traces are allowlist-sanitized by construction. They contain phase,
+bounded capability names/count, provider/disposition/confidence bucket,
+validator reason, result status/anchor count/entity types, and task lifecycle
+only. Raw messages, people, prompts, filenames, URLs, source titles/IDs,
+retrieval evidence, tokens, and sharing links are never used as a diagnostic
+fallback; fields that cannot be safely normalized are omitted. Trace writes are
+best-effort and never acquire routing authority.
 
 Do not use it for unrestricted chat logging. Normal group chatter must not be
 saved. Temporary Graph sharing links must not be saved; store drive/item ids and
@@ -443,9 +515,15 @@ pnpm format:check
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm config:validate
 pnpm eval:router
+pnpm eval:admin
+pnpm eval:agent
 pnpm build
 ```
+
+Run `pnpm eval:agent:live` manually when DeepSeek credentials and the configured
+Ollama endpoint are available. It is an acceptance check, not a CI dependency.
 
 For docs-only changes, `pnpm format:check` is usually enough.
 

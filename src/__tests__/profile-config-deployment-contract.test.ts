@@ -18,6 +18,15 @@ describe("production profile configuration deployment contract", () => {
       name: string;
       allowedMessageTypes: string[];
       enabledFunctions: string[];
+      controlledAgent?: {
+        enabled: boolean;
+        shadow: boolean;
+        maxCandidates: number;
+        minPlannerConfidence: number;
+      };
+      providerPolicy?: {
+        function_routing?: { primary: string; fallback?: string };
+      };
     }>;
     const helper = profiles.find((profile) => profile.name === "helper");
 
@@ -71,6 +80,16 @@ describe("production profile configuration deployment contract", () => {
       expect.arrayContaining(["find_resource", "save_resource"])
     );
     expect(helper?.allowedMessageTypes).toEqual(expect.arrayContaining(["text", "image", "file"]));
+    expect(helper?.controlledAgent).toEqual({
+      enabled: true,
+      shadow: false,
+      maxCandidates: 3,
+      minPlannerConfidence: 0.65
+    });
+    expect(helper?.providerPolicy?.function_routing).toEqual({
+      primary: "deepseek",
+      fallback: "ollama"
+    });
     expect(pipeline).toContain("--secret-names bot-profiles-base64-json");
     expect(pipeline).not.toContain("--secret-name bot-profiles-base64-json");
     expect(readProjectFile("README.md")).toContain("sole complete");
