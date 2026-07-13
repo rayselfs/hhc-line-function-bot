@@ -1,7 +1,23 @@
 import type { EmbeddingClient } from "../clients/ollama-embedding.js";
 import { queryKnowledgeArgumentsSchema } from "../function-arguments.js";
-import type { KnowledgeSearchResult, KnowledgeStore } from "../knowledge/store.js";
+import {
+  matchingKnowledgeRoutingMetadata,
+  normalizeKnowledgeSourceRoutingFields
+} from "../knowledge/routing-metadata.js";
+import type {
+  KnowledgeSearchResult,
+  KnowledgeSourceRecord,
+  KnowledgeStore
+} from "../knowledge/store.js";
 import type { FunctionHandler, TextGenerationProvider } from "../types.js";
+import {
+  knowledgeAmbiguousResult,
+  knowledgeCitationLines,
+  knowledgeNotFoundResult,
+  knowledgeSuccessEnvelope,
+  knowledgeUnavailableResult,
+  uniqueKnowledgeResultSources
+} from "./knowledge-result.js";
 
 export interface QueryKnowledgeOptions {
   store: KnowledgeStore;
@@ -19,6 +35,45 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
         replyText: "想查已加入知識中的哪一項資訊？"
       };
     }
+
+    let activeSources: KnowledgeSourceRecord[];
+    try {
+      activeSources = await options.store.listSources({
+        profileName: context.profile.name,
+        includeDisabled: false
+      });
+    } catch {
+      return knowledgeUnavailableResult();
+    }
+
+    const anchor = knowledgeAnchor(context.continuation);
+    if (anchor && !(await anchorAvailable(options.store, context.profile.name, anchor))) {
+      return knowledgeUnavailableResult();
+    }
+    if (
+      !anchor &&
+      args.sourceKey &&
+      args.documentId &&
+      !(await anchorAvailable(options.store, context.profile.name, {
+        sourceKey: args.sourceKey,
+        documentId: args.documentId,
+        ...(args.section ? { section: args.section } : {})
+      }))
+    ) {
+      return knowledgeUnavailableResult();
+    }
+
+    const sourceResolution = resolveSource({
+      query: args.query,
+      requestedSourceKey: args.sourceKey,
+      anchor,
+      sources: activeSources
+    });
+    if (sourceResolution.status === "unavailable") return knowledgeUnavailableResult();
+    if (sourceResolution.status === "ambiguous") {
+      return knowledgeAmbiguousResult(sourceResolution.sources);
+    }
+
     let queryEmbedding: number[] | undefined;
     if (options.embedding) {
       try {
@@ -27,37 +82,34 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
         queryEmbedding = undefined;
       }
     }
-    const anchor = knowledgeAnchor(context.continuation);
-    const sourceKey = args.sourceKey ?? anchor?.sourceKey;
-    const documentId = args.documentId ?? anchor?.documentId;
-    let results = await options.store.search({
-      profileName: context.profile.name,
-      query: args.query,
-      queryEmbedding,
-      embeddingProvider: options.embedding?.provider,
-      embeddingModel: options.embedding?.model,
-      sourceKey,
-      documentId,
-      ordinal: args.ordinal,
-      limit: Math.min(args.limit ?? 8, 8)
-    });
-    if (results.length === 0 && anchor && !args.sourceKey && !args.documentId) {
+
+    const targetSourceKey = sourceResolution.sourceKey;
+    const anchored = Boolean(anchor && targetSourceKey === anchor.sourceKey && !args.sourceKey);
+    const documentId = args.documentId ?? (anchored ? anchor?.documentId : undefined);
+    const section = args.section ?? (anchored ? anchor?.section : undefined);
+    const ordinal = args.ordinal ?? (anchored ? anchor?.ordinal : undefined);
+    let results: KnowledgeSearchResult[];
+    try {
       results = await options.store.search({
         profileName: context.profile.name,
         query: args.query,
         queryEmbedding,
         embeddingProvider: options.embedding?.provider,
         embeddingModel: options.embedding?.model,
-        ordinal: args.ordinal,
+        sourceKey: targetSourceKey,
+        documentId,
+        section,
+        ordinal,
         limit: Math.min(args.limit ?? 8, 8)
       });
+    } catch {
+      return knowledgeUnavailableResult();
     }
-    if (results.length === 0) {
-      return {
-        ok: true,
-        executedAction: "query_knowledge",
-        replyText: "目前加入的知識中找不到足夠資料回答這個問題。"
-      };
+
+    if (results.length === 0) return knowledgeNotFoundResult();
+    const resultSources = uniqueKnowledgeResultSources(results);
+    if (!targetSourceKey && resultSources.length > 1) {
+      return knowledgeAmbiguousResult(resultSources);
     }
 
     const answer = await groundedAnswer(
@@ -66,42 +118,114 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       args.query,
       results
     );
-    const sources = uniqueSources(results);
+    const sources = knowledgeCitationLines(results);
+    const replyText = [
+      answer,
+      "",
+      "來源：",
+      ...sources.map((source) => `${source.title}：${source.url}`)
+    ].join("\n");
+    const agentResult = knowledgeSuccessEnvelope(results);
     return {
       ok: true,
       executedAction: "query_knowledge",
+      agentResult,
       continuation: {
-        arguments: {
-          query: args.query,
-          sourceKey: results[0]!.source.sourceKey,
-          documentId: results[0]!.document.id,
-          ordinal: args.ordinal
-        },
-        resultReferences: {
-          sourceKey: results[0]!.source.sourceKey,
-          documentId: results[0]!.document.id
-        }
+        arguments: { query: args.query, ...(agentResult.anchors ?? {}) },
+        resultReferences: agentResult.anchors
       },
-      replyText: [
-        answer,
-        "",
-        "來源：",
-        ...sources.map((source) => `${source.title}：${source.url}`)
-      ].join("\n")
+      replyText
     };
   };
 }
 
+interface KnowledgeAnchor {
+  sourceKey: string;
+  documentId: string;
+  section?: string;
+  ordinal?: number;
+}
+
 function knowledgeAnchor(
   continuation: Parameters<FunctionHandler>[1]["continuation"]
-): { sourceKey: string; documentId: string } | undefined {
+): KnowledgeAnchor | undefined {
   if (continuation?.functionName !== "query_knowledge") return undefined;
   const references = continuation.resultReferences;
   const sourceKey = references?.sourceKey;
   const documentId = references?.documentId;
+  const section = references?.section;
+  const ordinal = references?.ordinal;
   return typeof sourceKey === "string" && typeof documentId === "string"
-    ? { sourceKey, documentId }
+    ? {
+        sourceKey,
+        documentId,
+        ...(typeof section === "string" ? { section } : {}),
+        ...(typeof ordinal === "number" && Number.isInteger(ordinal) && ordinal >= 0
+          ? { ordinal }
+          : {})
+      }
     : undefined;
+}
+
+async function anchorAvailable(
+  store: KnowledgeStore,
+  profileName: string,
+  anchor: KnowledgeAnchor
+): Promise<boolean> {
+  try {
+    return await store.hasAnchor({ profileName, ...anchor });
+  } catch {
+    return false;
+  }
+}
+
+type SourceResolution =
+  | { status: "resolved"; sourceKey?: string }
+  | { status: "ambiguous"; sources: KnowledgeSourceRecord[] }
+  | { status: "unavailable" };
+
+function resolveSource(input: {
+  query: string;
+  requestedSourceKey?: string;
+  anchor?: KnowledgeAnchor;
+  sources: KnowledgeSourceRecord[];
+}): SourceResolution {
+  if (input.requestedSourceKey) {
+    return input.sources.some(({ sourceKey }) => sourceKey === input.requestedSourceKey)
+      ? { status: "resolved", sourceKey: input.requestedSourceKey }
+      : { status: "unavailable" };
+  }
+
+  const safeMetadata = input.sources.flatMap((source) => {
+    try {
+      return [normalizeKnowledgeSourceRoutingFields(source)];
+    } catch {
+      return [];
+    }
+  });
+  const matches = matchingKnowledgeRoutingMetadata(input.query, safeMetadata);
+  const matchedKeys = new Set(matches.map(({ sourceKey }) => sourceKey));
+
+  if (input.anchor) {
+    const anchoredSource = input.sources.find(
+      ({ sourceKey }) => sourceKey === input.anchor!.sourceKey
+    );
+    if (!anchoredSource) return { status: "unavailable" };
+    if (matchedKeys.size === 0 || matchedKeys.has(input.anchor.sourceKey)) {
+      return { status: "resolved", sourceKey: input.anchor.sourceKey };
+    }
+    const switches = input.sources.filter(({ sourceKey }) => matchedKeys.has(sourceKey));
+    return switches.length === 1
+      ? { status: "resolved", sourceKey: switches[0]!.sourceKey }
+      : { status: "ambiguous", sources: switches };
+  }
+
+  const matchedSources = input.sources.filter(({ sourceKey }) => matchedKeys.has(sourceKey));
+  if (matchedSources.length > 1) return { status: "ambiguous", sources: matchedSources };
+  return {
+    status: "resolved",
+    ...(matchedSources[0] ? { sourceKey: matchedSources[0].sourceKey } : {})
+  };
 }
 
 async function groundedAnswer(
@@ -128,16 +252,4 @@ async function groundedAnswer(
     }
   }
   return results[0]!.content;
-}
-
-function uniqueSources(results: KnowledgeSearchResult[]): Array<{ title: string; url: string }> {
-  const seen = new Set<string>();
-  const sources: Array<{ title: string; url: string }> = [];
-  for (const result of results) {
-    if (!seen.has(result.document.id)) {
-      seen.add(result.document.id);
-      sources.push({ title: result.document.title, url: result.document.url });
-    }
-  }
-  return sources;
 }

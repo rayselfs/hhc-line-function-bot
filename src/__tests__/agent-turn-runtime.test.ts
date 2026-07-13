@@ -655,6 +655,147 @@ describe("AgentTurnRuntime", () => {
     await expect(store.activeTask(scope)).resolves.toEqual(successfulTask);
   });
 
+  it("passes knowledge source/document/section anchors to a follow-up and lets schedule intent switch", async () => {
+    const store = new InMemoryConversationWindowStore({
+      now: () => new Date("2026-07-08T00:00:00.000Z")
+    });
+    const resolve = vi
+      .fn<ControlledAgentRouter["resolve"]>()
+      .mockResolvedValueOnce({
+        disposition: "execute",
+        capability: "query_knowledge",
+        arguments: { query: "第一天去哪裡" },
+        reasonCode: "explicit_intent"
+      })
+      .mockResolvedValueOnce({
+        disposition: "execute",
+        capability: "query_knowledge",
+        arguments: { query: "那幾點集合" },
+        reasonCode: "active_task_refinement"
+      })
+      .mockResolvedValueOnce({
+        disposition: "execute",
+        capability: "query_schedule",
+        arguments: { query: "那主日音控呢" },
+        reasonCode: "explicit_capability_switch"
+      });
+    const knowledgeHandler = vi
+      .fn<FunctionHandler>()
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "第一天去日月潭。",
+        agentResult: {
+          status: "success",
+          replyText: "第一天去日月潭。",
+          anchors: {
+            sourceKey: "retreat",
+            documentId: "doc-1",
+            section: "第一天",
+            ordinal: 0
+          },
+          entities: [
+            { type: "source", key: "retreat", label: "2026 青年出隊" },
+            { type: "document", key: "doc-1", label: "2026 青年出隊" },
+            { type: "section", key: "第一天", label: "第一天" },
+            { type: "ordinal", key: "0", label: "第 1 項" }
+          ],
+          evidence: [
+            {
+              kind: "knowledge_section",
+              reference: {
+                sourceKey: "retreat",
+                documentId: "doc-1",
+                section: "第一天",
+                ordinal: 0
+              }
+            }
+          ],
+          supportedOperations: ["continue", "refine", "select"]
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        replyText: "08:00 集合。",
+        agentResult: {
+          status: "success",
+          replyText: "08:00 集合。",
+          anchors: { sourceKey: "retreat", documentId: "doc-1", section: "第一天" },
+          entities: [{ type: "section", key: "第一天", label: "第一天" }],
+          supportedOperations: ["continue", "refine", "select"]
+        }
+      });
+    const scheduleHandler = vi.fn<FunctionHandler>().mockResolvedValue({
+      ok: true,
+      replyText: "主日音控：同工",
+      agentResult: {
+        status: "success",
+        replyText: "主日音控：同工",
+        anchors: { meeting: "主日" },
+        entities: [{ type: "role", key: "音控", label: "音控" }],
+        supportedOperations: ["continue", "refine", "advance"]
+      }
+    });
+    const runtime = createRuntime({
+      controlledAgentRouter: { resolve },
+      conversationWindowStore: store,
+      functionRegistry: {
+        query_knowledge: knowledgeHandler,
+        query_schedule: scheduleHandler
+      }
+    });
+    const enabledProfile = profile(["query_knowledge", "query_schedule"], {
+      generalAgent: { enabled: true, conversationWindowSeconds: 60 },
+      controlledAgent: {
+        enabled: true,
+        shadow: false,
+        maxCandidates: 3,
+        minPlannerConfidence: 0.65
+      }
+    });
+
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("第一天去哪裡"),
+      requestId: "req-knowledge-first"
+    });
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("那幾點集合"),
+      requestId: "req-knowledge-follow-up"
+    });
+    await runtime.handleTextTurn({
+      profile: enabledProfile,
+      event: textEvent("那主日音控呢"),
+      requestId: "req-knowledge-switch"
+    });
+
+    expect(knowledgeHandler).toHaveBeenNthCalledWith(
+      2,
+      { query: "那幾點集合" },
+      expect.objectContaining({
+        continuation: expect.objectContaining({
+          functionName: "query_knowledge",
+          arguments: expect.objectContaining({
+            sourceKey: "retreat",
+            documentId: "doc-1",
+            section: "第一天",
+            ordinal: 0
+          }),
+          resultReferences: expect.objectContaining({
+            sourceKey: "retreat",
+            documentId: "doc-1",
+            section: "第一天",
+            ordinal: 0
+          })
+        })
+      })
+    );
+    expect(scheduleHandler).toHaveBeenCalledOnce();
+    await expect(
+      store.activeTask({ profileName: "helper", sourceKey: "group:C1", requesterUserId: "U1" })
+    ).resolves.toMatchObject({ capability: "query_schedule", anchors: { meeting: "主日" } });
+  });
+
   it.each(["找不到符合的投影片", "找到多份投影片，請選一份"])(
     "preserves an active task after an unstructured PPT result: %s",
     async (replyText) => {

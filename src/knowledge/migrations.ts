@@ -12,6 +12,9 @@ const migrations = [
     adapter_type text not null,
     external_root_id text not null,
     root_url text not null,
+    aliases text[] not null default '{}',
+    topics text[] not null default '{}',
+    sample_queries text[] not null default '{}',
     enabled boolean not null default true,
     expires_at timestamptz,
     disabled_at timestamptz,
@@ -24,6 +27,9 @@ const migrations = [
     unique (profile_name, source_key)
   )
   `,
+  `alter table knowledge_sources add column if not exists aliases text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists topics text[] not null default '{}'`,
+  `alter table knowledge_sources add column if not exists sample_queries text[] not null default '{}'`,
   `
   create table if not exists knowledge_documents (
     id uuid primary key,

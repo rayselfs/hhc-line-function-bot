@@ -112,6 +112,7 @@ export const queryKnowledgeArgumentsSchema = z
     query: z.string().optional().default(""),
     sourceKey: z.string().trim().min(1).optional(),
     documentId: z.string().trim().min(1).optional(),
+    section: z.string().trim().min(1).optional(),
     ordinal: z
       .preprocess(
         (value) => (typeof value === "string" ? Number(value) : value),

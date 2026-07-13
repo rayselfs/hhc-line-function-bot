@@ -157,7 +157,7 @@ const adminActions: ActionDefinition<AdminActionName>[] = [
     naturalLanguage: true,
     auditAction: "knowledge.source.add",
     description:
-      "Register and immediately synchronize an internal knowledge source. Arguments: url, displayName, optional expiresAt (ISO date).",
+      "Register and immediately synchronize an internal knowledge source. Arguments: url, displayName, optional aliases, topics, sampleQueries, expiresAt (ISO date).",
     naturalLanguageHints: ["加入知識來源", "新增知識來源", "加入 notion 頁面", "新增 notion 頁面"]
   },
   {

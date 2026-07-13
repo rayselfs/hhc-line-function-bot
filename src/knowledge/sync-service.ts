@@ -1,6 +1,7 @@
 import type { EmbeddingClient } from "../clients/ollama-embedding.js";
 import type { NotionKnowledgeClient } from "../clients/notion-knowledge.js";
 import { chunkKnowledgeNodes } from "./chunker.js";
+import { deriveKnowledgeRoutingMetadata } from "./routing-metadata.js";
 import type { KnowledgeSourceRecord, KnowledgeStore } from "./store.js";
 
 export interface KnowledgeSyncResult {
@@ -20,6 +21,7 @@ export async function syncKnowledgeSource(input: {
 }): Promise<KnowledgeSyncResult> {
   const now = input.now ?? (() => new Date());
   const documents = await input.notion.fetchRoot(input.source.externalRootId);
+  const derivedMetadata = deriveKnowledgeRoutingMetadata(input.source.displayName, documents);
   const chunks = [];
   for (const document of documents) {
     const record = await input.store.replaceDocument({
@@ -74,7 +76,10 @@ export async function syncKnowledgeSource(input: {
     sourceKey: input.source.sourceKey,
     syncStatus: status,
     syncErrorCode: undefined,
-    lastSyncedAt: now().toISOString()
+    lastSyncedAt: now().toISOString(),
+    aliases: [...input.source.aliases, ...derivedMetadata.aliases],
+    topics: [...input.source.topics, ...derivedMetadata.topics],
+    sampleQueries: input.source.sampleQueries
   });
   return { documents: documents.length, chunks: chunks.length, embedded, status };
 }

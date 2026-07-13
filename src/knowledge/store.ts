@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { normalizeKnowledgeSourceRoutingFields } from "./routing-metadata.js";
+
 export type KnowledgeAdapterType = "notion";
 
 export interface KnowledgeSourceInput {
@@ -11,10 +13,19 @@ export interface KnowledgeSourceInput {
   rootUrl: string;
   enabled: boolean;
   expiresAt?: string;
+  aliases?: string[];
+  topics?: string[];
+  sampleQueries?: string[];
 }
 
-export interface KnowledgeSourceRecord extends KnowledgeSourceInput {
+export interface KnowledgeSourceRecord extends Omit<
+  KnowledgeSourceInput,
+  "aliases" | "topics" | "sampleQueries"
+> {
   id: string;
+  aliases: string[];
+  topics: string[];
+  sampleQueries: string[];
   disabledAt?: string;
   purgeAfter?: string;
   lastSyncedAt?: string;
@@ -75,6 +86,9 @@ export interface KnowledgeStore {
     syncStatus?: KnowledgeSourceRecord["syncStatus"];
     syncErrorCode?: string;
     lastSyncedAt?: string;
+    aliases?: string[];
+    topics?: string[];
+    sampleQueries?: string[];
   }): Promise<KnowledgeSourceRecord | undefined>;
   removeSource(input: { profileName: string; sourceKey: string }): Promise<boolean>;
   replaceDocument(input: {
@@ -104,6 +118,12 @@ export interface KnowledgeStore {
     provider: string;
     model: string;
   }): Promise<KnowledgeChunkRecord[]>;
+  hasAnchor(input: {
+    profileName: string;
+    sourceKey: string;
+    documentId: string;
+    section?: string;
+  }): Promise<boolean>;
   search(input: {
     profileName: string;
     query: string;
@@ -112,6 +132,7 @@ export interface KnowledgeStore {
     embeddingModel?: string;
     sourceKey?: string;
     documentId?: string;
+    section?: string;
     ordinal?: number;
     limit?: number;
   }): Promise<KnowledgeSearchResult[]>;
@@ -138,9 +159,11 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     const existing = Array.from(this.sources.values()).find(
       (item) => item.profileName === input.profileName && item.sourceKey === input.sourceKey
     );
+    const routing = normalizeKnowledgeSourceRoutingFields(input);
     const record: KnowledgeSourceRecord = {
       ...existing,
       ...input,
+      ...routing,
       id: existing?.id ?? randomUUID(),
       syncStatus: existing?.syncStatus ?? "pending"
     };
@@ -165,15 +188,26 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     syncStatus?: KnowledgeSourceRecord["syncStatus"];
     syncErrorCode?: string;
     lastSyncedAt?: string;
+    aliases?: string[];
+    topics?: string[];
+    sampleQueries?: string[];
   }): Promise<KnowledgeSourceRecord | undefined> {
     const source = Array.from(this.sources.values()).find(
       (item) => item.profileName === input.profileName && item.sourceKey === input.sourceKey
     );
     if (!source) return undefined;
     const enabled = input.enabled ?? source.enabled;
+    const routing = normalizeKnowledgeSourceRoutingFields({
+      sourceKey: source.sourceKey,
+      displayName: source.displayName,
+      aliases: input.aliases ?? source.aliases,
+      topics: input.topics ?? source.topics,
+      sampleQueries: input.sampleQueries ?? source.sampleQueries
+    });
     const updated: KnowledgeSourceRecord = {
       ...source,
       ...input,
+      ...routing,
       enabled,
       disabledAt: enabled ? undefined : (source.disabledAt ?? this.now().toISOString()),
       purgeAfter: enabled ? undefined : source.purgeAfter
@@ -276,6 +310,7 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     embeddingModel?: string;
     sourceKey?: string;
     documentId?: string;
+    section?: string;
     ordinal?: number;
     limit?: number;
   }): Promise<KnowledgeSearchResult[]> {
@@ -293,6 +328,11 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       if (input.sourceKey && source.sourceKey !== input.sourceKey) continue;
       if (input.documentId && document.id !== input.documentId) continue;
       for (const chunk of document.chunks) {
+        if (
+          input.section &&
+          !chunk.headingPath.some((heading) => normalize(heading) === normalize(input.section!))
+        )
+          continue;
         const lexical = lexicalScore(
           normalizedQuery,
           normalize(`${document.title} ${chunk.headingPath.join(" ")} ${chunk.content}`)
@@ -327,6 +367,28 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     return candidates
       .sort((a, b) => b.score - a.score || a.ordinal - b.ordinal)
       .slice(0, input.limit ?? 8);
+  }
+
+  async hasAnchor(input: {
+    profileName: string;
+    sourceKey: string;
+    documentId: string;
+    section?: string;
+  }): Promise<boolean> {
+    const source = Array.from(this.sources.values()).find(
+      (item) =>
+        item.profileName === input.profileName &&
+        item.sourceKey === input.sourceKey &&
+        this.sourceActive(item)
+    );
+    if (!source) return false;
+    const document = this.documents.get(input.documentId);
+    if (!document || document.sourceId !== source.id || document.deletedAt) return false;
+    return input.section
+      ? document.chunks.some((chunk) =>
+          chunk.headingPath.some((heading) => normalize(heading) === normalize(input.section!))
+        )
+      : true;
   }
 
   async purgeExpired(now: Date): Promise<number> {

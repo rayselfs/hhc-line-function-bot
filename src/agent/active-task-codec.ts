@@ -28,7 +28,7 @@ const ACTIVE_TASK_KEYS = new Set(
 );
 const ENTITY_KEYS = new Set("type key label aliases".split(" "));
 const REFERENCE_KEYS = new Set(
-  "id sourceId sourceKey resourceId driveId itemId pageId documentId chunkId memoryId url".split(
+  "id sourceId sourceKey resourceId driveId itemId pageId documentId chunkId memoryId url section ordinal".split(
     " "
   )
 );
@@ -194,6 +194,11 @@ function normalizeReferences(input: unknown, mode: NormalizeMode): JsonRecord | 
   }
   const output: JsonRecord = {};
   for (const [key, value] of entries) {
+    if (key === "ordinal") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined;
+      output[key] = value;
+      continue;
+    }
     const normalized =
       key === "url"
         ? normalizeEvidenceUrl(value)

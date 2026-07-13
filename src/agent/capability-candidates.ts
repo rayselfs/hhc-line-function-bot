@@ -6,12 +6,10 @@ import {
   type FunctionDefinition
 } from "../functions/definitions.js";
 import type { FunctionName } from "../types.js";
+import type { KnowledgeRoutingMetadata } from "../knowledge/routing-metadata.js";
 
-export interface KnowledgeSourceMetadata {
-  sourceKey: string;
-  displayName: string;
-  aliases: string[];
-  topics: string[];
+export interface KnowledgeSourceMetadata extends Omit<KnowledgeRoutingMetadata, "sampleQueries"> {
+  sampleQueries?: string[];
 }
 
 export type CapabilityCandidateReason =
@@ -55,9 +53,10 @@ const REASON_SCORE: Record<CapabilityCandidateReason, number> = {
 
 const METADATA_LIMITS = {
   sources: 20,
-  aliasesPerSource: 10,
+  aliasesPerSource: 20,
   topicsPerSource: 20,
-  termCharacters: 200
+  sampleQueriesPerSource: 20,
+  termCharacters: 100
 } as const;
 
 export function buildCapabilityCandidates(
@@ -161,7 +160,10 @@ function matchesKnowledgeMetadata(
           .map((alias) => boundedTerm(alias)),
         ...source.topics
           .slice(0, METADATA_LIMITS.topicsPerSource)
-          .map((topic) => boundedTerm(topic))
+          .map((topic) => boundedTerm(topic)),
+        ...(source.sampleQueries ?? [])
+          .slice(0, METADATA_LIMITS.sampleQueriesPerSource)
+          .map((query) => boundedTerm(query))
       ])
     );
 }

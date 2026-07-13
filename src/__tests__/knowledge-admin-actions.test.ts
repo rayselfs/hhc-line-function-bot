@@ -5,6 +5,7 @@ import { InMemoryConfirmationStore } from "../actions/confirmation-store.js";
 import { InMemoryRegistrationInviteCodeStore } from "../access/registration-invite-code-store.js";
 import { InMemoryAccessStore } from "../access/memory-access-store.js";
 import { InMemoryKnowledgeStore } from "../knowledge/store.js";
+import { listKnowledgeRoutingMetadata } from "../knowledge/routing-metadata.js";
 import type { BotProfileConfig, LineEvent } from "../types.js";
 
 const profile = {
@@ -43,7 +44,10 @@ describe("knowledge source admin actions", () => {
       event,
       arguments: {
         url: "https://www.notion.so/SOP-0123456789abcdef0123456789abcdef",
-        displayName: "聚會 SOP"
+        displayName: "2026 青年出隊",
+        aliases: ["出隊", "青年隊"],
+        topics: ["集合"],
+        sampleQueries: ["第一天去哪裡", "那幾點集合"]
       }
     });
 
@@ -54,6 +58,44 @@ describe("knowledge source admin actions", () => {
     expect(accessStore.audit).toEqual(
       expect.arrayContaining([expect.objectContaining({ action: "knowledge.source.add" })])
     );
+    await expect(store.listSources({ profileName: "helper" })).resolves.toEqual([
+      expect.objectContaining({
+        aliases: expect.arrayContaining(["出隊", "青年隊"]),
+        topics: expect.arrayContaining(["聚會 SOP", "集合"]),
+        sampleQueries: ["第一天去哪裡", "那幾點集合"]
+      })
+    ]);
+  });
+
+  it("lists routing metadata counts without echoing safe sample queries", async () => {
+    const store = new InMemoryKnowledgeStore();
+    await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "2026 青年出隊",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true,
+      aliases: ["出隊"],
+      topics: ["第一天"],
+      sampleQueries: ["那幾點集合"]
+    });
+    const registry = createAdminActionRegistry({
+      accessStore: new InMemoryAccessStore(),
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60,
+      knowledgeStore: store
+    });
+
+    const result = await registry.execute({
+      action: "knowledge_source_list",
+      profile,
+      event
+    });
+
+    expect(result.replyText).toContain("別名 1｜主題 1｜範例問題 1");
+    expect(result.replyText).not.toContain("那幾點集合");
   });
 
   it("preserves the source key through destructive confirmation", async () => {
@@ -89,5 +131,54 @@ describe("knowledge source admin actions", () => {
     await expect(
       store.listSources({ profileName: "helper", includeDisabled: true })
     ).resolves.toEqual([]);
+  });
+
+  it("keeps last-known-good routing metadata while recording a transient sync failure", async () => {
+    const store = new InMemoryKnowledgeStore();
+    await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "2026 青年出隊",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true,
+      topics: ["第一天"]
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-12T00:00:00Z"
+    });
+    const registry = createAdminActionRegistry({
+      accessStore: new InMemoryAccessStore(),
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60,
+      knowledgeStore: store,
+      notionKnowledge: { fetchRoot: vi.fn().mockRejectedValue(new Error("temporary")) }
+    });
+
+    const result = await registry.execute({
+      action: "knowledge_source_sync",
+      profile,
+      event,
+      arguments: { sourceKey: "retreat" }
+    });
+
+    expect(result.replyText).toContain("同步失敗");
+    await expect(
+      store.listSources({ profileName: "helper", includeDisabled: true })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        sourceKey: "retreat",
+        syncStatus: "failed",
+        syncErrorCode: "source_unavailable",
+        lastSyncedAt: "2026-07-12T00:00:00Z"
+      })
+    ]);
+    await expect(listKnowledgeRoutingMetadata(store, "helper", 20)).resolves.toEqual([
+      expect.objectContaining({ sourceKey: "retreat" })
+    ]);
   });
 });

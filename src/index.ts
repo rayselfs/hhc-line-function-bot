@@ -32,6 +32,7 @@ import { createFunctionRegistries } from "./functions/registry.js";
 import { createInFlightStore } from "./in-flight/create-in-flight-store.js";
 import { createKeywordFallbackRouter } from "./keyword-router.js";
 import { createKnowledgeStore } from "./knowledge/create-store.js";
+import { listKnowledgeRoutingMetadata } from "./knowledge/routing-metadata.js";
 import { createProfileAwareProvider } from "./llm/provider-runtime.js";
 import { createLastErrorStore } from "./observability/create-last-error-store.js";
 import { createConsoleRouteObserver } from "./observability/route-observer.js";
@@ -171,14 +172,7 @@ const controlledAgentRouter = createControlledAgentRouter({
   planner: agentPlanner,
   knowledgeMetadata: {
     async list(profileName, limit) {
-      return (await knowledgeStore.listSources({ profileName, includeDisabled: false }))
-        .slice(0, limit)
-        .map((source) => ({
-          sourceKey: source.sourceKey,
-          displayName: source.displayName,
-          aliases: [],
-          topics: []
-        }));
+      return listKnowledgeRoutingMetadata(knowledgeStore, profileName, limit);
     }
   }
 });

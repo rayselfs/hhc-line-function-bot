@@ -211,7 +211,12 @@ items or schedule rows. Admin direct-chat actions register Notion roots, the syn
 service recursively reads blocks and incrementally embeds changed chunks, and
 `query_knowledge` combines lexical and pgvector retrieval before a grounded LLM
 answer. The dedicated `bge-m3` model runs on the private Ollama host; PostgreSQL
-stores only vectors and version metadata.
+stores only vectors and version metadata. Bounded routing summaries come only
+from source names, administrator aliases/topics/sample queries, document titles,
+and headings. The controlled planner never receives chunks, URLs, or answer
+content. Successful results persist safe source/document/section/ordinal anchors;
+follow-ups remain source-bounded unless current metadata proves an explicit
+source switch.
 
 Do not use it for unrestricted chat logging. Normal group chatter must not be
 saved. Temporary Graph sharing links must not be saved; store drive/item ids and

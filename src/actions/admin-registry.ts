@@ -391,17 +391,24 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     if (expiresAt && !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/u.test(expiresAt))
       return { ok: true, replyText: "到期日請使用 YYYY-MM-DD。" };
     const sourceKey = sourceKeyFor(displayName, externalRootId);
-    const source = await dependencies.store.upsertSource({
-      profileName: input.profile.name,
-      sourceKey,
-      displayName,
-      adapterType: "notion",
-      externalRootId,
-      rootUrl: url,
-      enabled: true,
-      expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined
-    });
     try {
+      const source = await dependencies.store.upsertSource({
+        profileName: input.profile.name,
+        sourceKey,
+        displayName,
+        adapterType: "notion",
+        externalRootId,
+        rootUrl: url,
+        enabled: true,
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        aliases: readStringArrayArg(input.arguments, ["aliases", "alias"]),
+        topics: readStringArrayArg(input.arguments, ["topics", "topic"]),
+        sampleQueries: readStringArrayArg(input.arguments, [
+          "sampleQueries",
+          "sample_queries",
+          "examples"
+        ])
+      });
       const synced = await syncKnowledgeSource({
         source,
         store: dependencies.store,
@@ -446,7 +453,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
             "知識來源：",
             ...sources.map(
               (source) =>
-                `- ${source.sourceKey}｜${source.displayName}｜${source.enabled ? "啟用" : "停用"}｜${source.syncStatus ?? "pending"}${source.expiresAt ? `｜到期 ${source.expiresAt.slice(0, 10)}` : "｜永久"}`
+                `- ${source.sourceKey}｜${source.displayName}｜${source.enabled ? "啟用" : "停用"}｜${source.syncStatus ?? "pending"}${source.expiresAt ? `｜到期 ${source.expiresAt.slice(0, 10)}` : "｜永久"}｜別名 ${source.aliases.length}｜主題 ${source.topics.length}｜範例問題 ${source.sampleQueries.length}`
             )
           ].join("\n")
         : "目前沒有知識來源。"
@@ -481,6 +488,12 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         replyText: `同步完成：${synced.documents} 份文件、${synced.chunks} 個片段。`
       };
     } catch {
+      await dependencies.store.updateSource({
+        profileName: input.profile.name,
+        sourceKey,
+        syncStatus: "failed",
+        syncErrorCode: "source_unavailable"
+      });
       return { ok: true, replyText: "同步失敗，舊版有效內容仍會保留。" };
     }
   }
@@ -622,6 +635,23 @@ function readStringArg(args: JsonRecord | undefined, keys: string[]): string | u
     }
   }
   return undefined;
+}
+
+function readStringArrayArg(args: JsonRecord | undefined, keys: string[]): string[] {
+  if (!args) return [];
+  for (const key of keys) {
+    const value = args[key];
+    if (Array.isArray(value)) {
+      return value.filter((item): item is string => typeof item === "string");
+    }
+    if (typeof value === "string") {
+      return value
+        .split(/[,，\n]/u)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
 }
 
 function mergeFunctionNames(left: FunctionName[], right: FunctionName[]): FunctionName[] {

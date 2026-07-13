@@ -33,6 +33,7 @@ import type {
   AdminActionRouterPort,
   BotProfileConfig,
   FunctionExecutionResult,
+  FunctionContinuationState,
   FunctionHandlerContext,
   FunctionName,
   FunctionRegistry,
@@ -518,7 +519,12 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       try {
         const result = await handler(normalizedArguments, {
           ...context,
-          continuation: continuation?.functionName === route.action ? continuation : undefined
+          continuation:
+            controlledMode === "enabled" && route.action === "query_knowledge"
+              ? knowledgeActiveTaskContinuation(activeTask)
+              : continuation?.functionName === route.action
+                ? continuation
+                : undefined
         });
         if (controlledMode === "enabled") {
           await applyActiveTaskTransition({
@@ -994,6 +1000,19 @@ function activeTaskScope(
 
 function activeTaskTtlMs(profile: BotProfileConfig): number {
   return Math.max(1, profile.generalAgent?.conversationWindowSeconds ?? 60) * 1000;
+}
+
+function knowledgeActiveTaskContinuation(
+  activeTask: ActiveTaskContext | undefined
+): FunctionContinuationState | undefined {
+  if (activeTask?.capability !== "query_knowledge") return undefined;
+  return {
+    functionName: "query_knowledge",
+    arguments: { ...activeTask.anchors },
+    resultReferences: { ...activeTask.anchors, ...(activeTask.references ?? {}) },
+    createdAt: activeTask.createdAt,
+    expiresAt: activeTask.expiresAt
+  };
 }
 
 async function readFunctionContinuation(

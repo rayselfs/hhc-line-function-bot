@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { normalizeKnowledgeSourceRoutingFields } from "./routing-metadata.js";
+
 import type {
   KnowledgeChunkInput,
   KnowledgeDocumentRecord,
@@ -20,25 +22,31 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
   constructor(private readonly db: PgKnowledgeQueryable) {}
 
   async upsertSource(input: KnowledgeSourceInput): Promise<KnowledgeSourceRecord> {
+    const routing = normalizeKnowledgeSourceRoutingFields(input);
     const result = await this.db.query(
       `insert into knowledge_sources
-       (id, profile_name, source_key, display_name, adapter_type, external_root_id, root_url, enabled, expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       (id, profile_name, source_key, display_name, adapter_type, external_root_id, root_url, enabled, expires_at, aliases, topics, sample_queries)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        on conflict (profile_name, source_key) do update set
          display_name=excluded.display_name, adapter_type=excluded.adapter_type,
          external_root_id=excluded.external_root_id, root_url=excluded.root_url,
-         enabled=excluded.enabled, expires_at=excluded.expires_at, updated_at=now()
+         enabled=excluded.enabled, expires_at=excluded.expires_at,
+         aliases=excluded.aliases, topics=excluded.topics, sample_queries=excluded.sample_queries,
+         updated_at=now()
        returning *`,
       [
         randomUUID(),
         input.profileName,
-        input.sourceKey,
-        input.displayName,
+        routing.sourceKey,
+        routing.displayName,
         input.adapterType,
         input.externalRootId,
         input.rootUrl,
         input.enabled,
-        input.expiresAt ?? null
+        input.expiresAt ?? null,
+        routing.aliases,
+        routing.topics,
+        routing.sampleQueries
       ]
     );
     return mapSource(result.rows[0]!);
@@ -64,14 +72,36 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     syncStatus?: KnowledgeSourceRecord["syncStatus"];
     syncErrorCode?: string;
     lastSyncedAt?: string;
+    aliases?: string[];
+    topics?: string[];
+    sampleQueries?: string[];
   }): Promise<KnowledgeSourceRecord | undefined> {
+    let routing;
+    if (input.aliases || input.topics || input.sampleQueries) {
+      const current = (
+        await this.db.query(
+          "select display_name, aliases, topics, sample_queries from knowledge_sources where profile_name=$1 and source_key=$2",
+          [input.profileName, input.sourceKey]
+        )
+      ).rows[0];
+      if (!current) return undefined;
+      routing = normalizeKnowledgeSourceRoutingFields({
+        sourceKey: input.sourceKey,
+        displayName: String(current.display_name),
+        aliases: input.aliases ?? stringArray(current.aliases),
+        topics: input.topics ?? stringArray(current.topics),
+        sampleQueries: input.sampleQueries ?? stringArray(current.sample_queries)
+      });
+    }
     const result = await this.db.query(
       `update knowledge_sources set
          enabled=coalesce($3, enabled),
          disabled_at=case when $3::boolean=false then coalesce(disabled_at, now()) when $3::boolean=true then null else disabled_at end,
          purge_after=case when $3::boolean=true then null else purge_after end,
          sync_status=coalesce($4, sync_status), sync_error_code=$5,
-         last_synced_at=coalesce($6::timestamptz, last_synced_at), updated_at=now()
+         last_synced_at=coalesce($6::timestamptz, last_synced_at),
+         aliases=coalesce($7::text[], aliases), topics=coalesce($8::text[], topics),
+         sample_queries=coalesce($9::text[], sample_queries), updated_at=now()
        where profile_name=$1 and source_key=$2 returning *`,
       [
         input.profileName,
@@ -79,7 +109,10 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         input.enabled ?? null,
         input.syncStatus ?? null,
         input.syncErrorCode ?? null,
-        input.lastSyncedAt ?? null
+        input.lastSyncedAt ?? null,
+        routing?.aliases ?? null,
+        routing?.topics ?? null,
+        routing?.sampleQueries ?? null
       ]
     );
     return result.rows[0] ? mapSource(result.rows[0]) : undefined;
@@ -229,6 +262,24 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     return result.rows.map(mapChunk);
   }
 
+  async hasAnchor(input: {
+    profileName: string;
+    sourceKey: string;
+    documentId: string;
+    section?: string;
+  }): Promise<boolean> {
+    const result = await this.db.query(
+      `select 1 from knowledge_documents d join knowledge_sources s on s.id=d.source_id
+       where s.profile_name=$1 and s.source_key=$2 and s.enabled=true
+         and (s.expires_at is null or s.expires_at>now()) and d.id=$3 and d.deleted_at is null
+         and ($4::text is null or exists (
+           select 1 from knowledge_chunks c where c.document_id=d.id and c.active=true and $4=any(c.heading_path)
+         )) limit 1`,
+      [input.profileName, input.sourceKey, input.documentId, input.section ?? null]
+    );
+    return result.rows.length > 0;
+  }
+
   async search(input: {
     profileName: string;
     query: string;
@@ -237,6 +288,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     embeddingModel?: string;
     sourceKey?: string;
     documentId?: string;
+    section?: string;
     ordinal?: number;
     limit?: number;
   }): Promise<KnowledgeSearchResult[]> {
@@ -244,7 +296,8 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     const result = await this.db.query(
       `with candidates as (
         select c.*, d.external_id, d.title, d.url, s.id source_id, s.profile_name,
-          s.source_key, s.display_name, s.adapter_type, s.external_root_id, s.root_url,
+          s.source_key, s.display_name, s.aliases, s.topics, s.sample_queries,
+          s.adapter_type, s.external_root_id, s.root_url,
           s.enabled, s.expires_at, s.disabled_at, s.purge_after, s.last_synced_at,
           s.sync_status, s.sync_error_code,
           case when c.content ilike '%' || $2 || '%' or d.title ilike '%' || $2 || '%' then 2.0
@@ -257,6 +310,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         where s.profile_name=$1 and s.enabled=true and (s.expires_at is null or s.expires_at>now())
           and d.deleted_at is null and c.active=true
           and ($4::text is null or s.source_key=$4) and ($5::uuid is null or d.id=$5)
+          and ($10::text is null or $10=any(c.heading_path))
       ) select *, lexical_score+vector_score+ordinal_score score from candidates
         where lexical_score+vector_score+ordinal_score > 0 order by score desc, ordinal asc limit $7`,
       [
@@ -268,7 +322,8 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         input.ordinal ?? null,
         input.limit ?? 8,
         input.embeddingProvider ?? null,
-        input.embeddingModel ?? null
+        input.embeddingModel ?? null,
+        input.section ?? null
       ]
     );
     return result.rows.map(mapSearchResult);
@@ -296,11 +351,21 @@ function iso(value: unknown): string | undefined {
   return value ? new Date(value as string).toISOString() : undefined;
 }
 function mapSource(row: Record<string, unknown>): KnowledgeSourceRecord {
+  const routing = normalizeKnowledgeSourceRoutingFields({
+    sourceKey: String(row.source_key),
+    displayName: String(row.display_name),
+    aliases: stringArray(row.aliases),
+    topics: stringArray(row.topics),
+    sampleQueries: stringArray(row.sample_queries)
+  });
   return {
     id: String(row.id),
     profileName: String(row.profile_name),
-    sourceKey: String(row.source_key),
-    displayName: String(row.display_name),
+    sourceKey: routing.sourceKey,
+    displayName: routing.displayName,
+    aliases: routing.aliases,
+    topics: routing.topics,
+    sampleQueries: routing.sampleQueries,
     adapterType: "notion",
     externalRootId: String(row.external_root_id),
     rootUrl: String(row.root_url),
@@ -312,6 +377,11 @@ function mapSource(row: Record<string, unknown>): KnowledgeSourceRecord {
     syncStatus: row.sync_status as KnowledgeSourceRecord["syncStatus"],
     syncErrorCode: row.sync_error_code ? String(row.sync_error_code) : undefined
   };
+}
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 function mapChunk(row: Record<string, unknown>) {
   return {

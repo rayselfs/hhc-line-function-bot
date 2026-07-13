@@ -430,6 +430,36 @@ describe("deterministic agent plan validation", () => {
     });
   });
 
+  it("grounds a knowledge section only from the matching active-task section entity", () => {
+    const task: ActiveTaskContext = {
+      ...knowledgeTask,
+      anchors: { ...knowledgeTask.anchors, section: "第一天" },
+      entities: [...knowledgeTask.entities, { type: "section", key: "第一天", label: "第一天" }],
+      references: { ...knowledgeTask.references, section: "第一天" }
+    };
+    expect(
+      validateAgentPlan({
+        text: "第一天幾點集合",
+        enabledFunctions: ["query_knowledge"],
+        candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
+        proposal: {
+          disposition: "refine",
+          capability: "query_knowledge",
+          arguments: { query: "第一天幾點集合", section: "第一天" },
+          confidence: 0.95
+        },
+        activeTask: task,
+        minConfidence: 0.65,
+        sourceType: "user",
+        now
+      })
+    ).toMatchObject({
+      disposition: "execute",
+      arguments: { section: "第一天" },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
   it("strips a spoofed proposal reference key even when its value exists in the task", () => {
     const result = validateAgentPlan({
       text: "出隊",

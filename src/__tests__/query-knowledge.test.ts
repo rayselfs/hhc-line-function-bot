@@ -63,6 +63,23 @@ describe("query_knowledge", () => {
     expect(completeText).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: expect.stringContaining("只能根據證據") })
     );
+    expect(result.agentResult).toMatchObject({
+      status: "success",
+      anchors: {
+        sourceKey: "trip",
+        documentId: document.id,
+        section: "第一天",
+        ordinal: 0
+      },
+      entities: expect.arrayContaining([
+        expect.objectContaining({ type: "source", label: "八月出遊" }),
+        expect.objectContaining({ type: "document", label: "八月出遊" }),
+        expect.objectContaining({ type: "section", label: "第一天" }),
+        expect.objectContaining({ type: "ordinal", key: "0" })
+      ]),
+      supportedOperations: ["continue", "refine", "select"]
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/https?:|日月潭|notion/iu);
   });
 
   it("falls back to lexical retrieval and a controlled excerpt when providers fail", async () => {
@@ -119,7 +136,7 @@ describe("query_knowledge", () => {
     expect(result.replyText).toContain("聚會結束後請關閉音控設備");
   });
 
-  it("uses the canonical document first and falls back globally for a new topic", async () => {
+  it("uses the canonical document first and only switches globally with current metadata evidence", async () => {
     const store = new InMemoryKnowledgeStore();
     const trip = await store.upsertSource({
       profileName: "helper",
@@ -128,7 +145,9 @@ describe("query_knowledge", () => {
       adapterType: "notion",
       externalRootId: "trip-root",
       rootUrl: "https://example.test/trip",
-      enabled: true
+      enabled: true,
+      aliases: ["出遊"],
+      topics: ["共同事項"]
     });
     const sop = await store.upsertSource({
       profileName: "helper",
@@ -137,7 +156,9 @@ describe("query_knowledge", () => {
       adapterType: "notion",
       externalRootId: "sop-root",
       rootUrl: "https://example.test/sop",
-      enabled: true
+      enabled: true,
+      aliases: ["場復"],
+      topics: ["消防設備"]
     });
     const tripDocument = await store.replaceDocument({
       sourceId: trip.id,
@@ -181,19 +202,149 @@ describe("query_knowledge", () => {
     };
 
     const scoped = await handler({ query: "共同事項" }, handlerContext);
-    const fallback = await handler(
-      { query: "消防設備" },
+    const noSwitch = await handler(
+      { query: "後門在哪裡" },
       {
         ...handlerContext,
-        event: { ...handlerContext.event, message: { type: "text", text: "消防設備" } }
+        event: { ...handlerContext.event, message: { type: "text", text: "後門在哪裡" } }
+      }
+    );
+    const switched = await handler(
+      { query: "消防設備放哪裡" },
+      {
+        ...handlerContext,
+        event: { ...handlerContext.event, message: { type: "text", text: "消防設備放哪裡" } }
       }
     );
 
     expect(scoped.replyText).toContain("攜帶雨具");
     expect(scoped.replyText).not.toContain("sop-doc");
-    expect(fallback.replyText).toContain("消防設備放在後門");
-    expect(fallback.continuation?.resultReferences).toEqual(
+    expect(noSwitch.agentResult).toMatchObject({ status: "not_found" });
+    expect(switched.replyText).toContain("消防設備放在後門");
+    expect(switched.continuation?.resultReferences).toEqual(
       expect.objectContaining({ sourceKey: "sop" })
     );
+  });
+
+  it("returns safe not-found, ambiguous, and unavailable result envelopes", async () => {
+    const now = () => new Date("2026-07-13T00:00:00Z");
+    const store = new InMemoryKnowledgeStore(now);
+    for (const sourceKey of ["alpha", "beta"]) {
+      const source = await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `${sourceKey} 手冊`,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true,
+        topics: ["集合"]
+      });
+      await store.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: `${sourceKey} 文件`,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [
+          {
+            headingPath: ["集合"],
+            ordinal: 0,
+            content: `${sourceKey} 集合資料`,
+            contentHash: `${sourceKey}-hash`
+          }
+        ]
+      });
+    }
+    const handler = createQueryKnowledgeHandler({ store });
+    const context = {
+      profile,
+      event: {
+        type: "message" as const,
+        source: { type: "user" as const, userId: "u" },
+        message: { type: "text" as const, text: "集合" }
+      }
+    };
+
+    const ambiguous = await handler({ query: "集合" }, context);
+    const notFound = await handler(
+      { query: "完全不存在的詞" },
+      {
+        ...context,
+        event: { ...context.event, message: { type: "text", text: "完全不存在的詞" } }
+      }
+    );
+    const unavailable = await handler(
+      { query: "再說一次" },
+      {
+        ...context,
+        continuation: {
+          functionName: "query_knowledge" as const,
+          arguments: {},
+          resultReferences: { sourceKey: "removed", documentId: "missing" },
+          createdAt: "2026-07-13T00:00:00.000Z",
+          expiresAt: "2026-07-13T00:01:00.000Z"
+        },
+        event: { ...context.event, message: { type: "text", text: "再說一次" } }
+      }
+    );
+    const missingExplicitAnchor = await handler(
+      { query: "再說一次", sourceKey: "alpha", documentId: "missing" },
+      {
+        ...context,
+        event: { ...context.event, message: { type: "text", text: "再說一次" } }
+      }
+    );
+
+    expect(ambiguous.agentResult).toMatchObject({
+      status: "ambiguous",
+      clarification: { choices: ["alpha 手冊", "beta 手冊"] }
+    });
+    expect(notFound.agentResult).toMatchObject({ status: "not_found" });
+    expect(unavailable.agentResult).toMatchObject({ status: "unavailable" });
+    expect(missingExplicitAnchor.agentResult).toMatchObject({ status: "unavailable" });
+    for (const result of [ambiguous, notFound, unavailable, missingExplicitAnchor]) {
+      expect(JSON.stringify(result.agentResult)).not.toMatch(/https?:|集合資料/iu);
+    }
+  });
+
+  it("accepts an explicit safe section anchor and searches only that section", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "2026 青年出隊",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true
+    });
+    await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc",
+      title: "出隊行程",
+      url: "https://example.test/doc",
+      nodes: [],
+      chunks: [
+        { headingPath: ["第一天"], ordinal: 0, content: "集合時間是七點。", contentHash: "d1" },
+        { headingPath: ["第二天"], ordinal: 1, content: "集合時間是八點。", contentHash: "d2" }
+      ]
+    });
+    const handler = createQueryKnowledgeHandler({ store });
+
+    const result = await handler(
+      { query: "集合時間", sourceKey: "retreat", section: "第二天" },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "user", userId: "u" },
+          message: { type: "text", text: "第二天集合時間" }
+        }
+      }
+    );
+
+    expect(result.replyText).toContain("八點");
+    expect(result.replyText).not.toContain("七點");
   });
 });
