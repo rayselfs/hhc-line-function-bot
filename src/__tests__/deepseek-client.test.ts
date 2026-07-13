@@ -50,6 +50,37 @@ describe("DeepSeek client", () => {
     });
   });
 
+  it("combines an external JSON-request abort signal with its internal timeout", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchImpl = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    const controller = new AbortController();
+    const pending = provider(fetchImpl).completeJson({
+      prompt: "Return JSON.",
+      profileName: "helper",
+      text: "hello",
+      enabledFunctions: [],
+      signal: controller.signal
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+
+    const requestSignal = fetchImpl.mock.calls[0]?.[1]?.signal;
+    controller.abort();
+    const requestWasAborted = requestSignal?.aborted;
+    resolveFetch?.(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"action":"deny"}' } }] }), {
+        status: 200
+      })
+    );
+    await pending;
+
+    expect(requestWasAborted).toBe(true);
+  });
+
   it("sends controlled text requests without JSON response formatting", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ choices: [{ message: { content: "我在。" } }] }), {

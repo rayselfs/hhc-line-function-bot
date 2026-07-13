@@ -82,16 +82,20 @@ describe("provider runtime", () => {
       providers: { ollama, deepseek },
       role: "primary"
     });
+    const controller = new AbortController();
 
     await expect(
       runtime.completeJson({
         profileName: "helper",
         prompt: "route",
         text: "hello",
-        enabledFunctions: []
+        enabledFunctions: [],
+        signal: controller.signal
       })
     ).resolves.toBe("deepseek");
-    expect(deepseek.completeJson).toHaveBeenCalledOnce();
+    expect(deepseek.completeJson).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal })
+    );
     expect(ollama.completeJson).not.toHaveBeenCalled();
   });
 

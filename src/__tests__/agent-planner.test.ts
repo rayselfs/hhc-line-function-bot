@@ -32,9 +32,21 @@ const scheduleCandidate = {
   score: 300
 };
 
+const scheduleCandidateWithContract: AgentPlannerCandidate = {
+  ...scheduleCandidate,
+  contract: {
+    intents: ["查服事"],
+    candidateHints: ["服事"],
+    entityTypes: ["role"],
+    refinableFields: ["role"],
+    operations: ["continue", "refine"],
+    ambiguity: "clarify"
+  }
+};
+
 function provider(
   providerName: ModelProviderName,
-  implementation: () => Promise<string>
+  implementation: ChatProvider["completeJson"]
 ): ChatProvider {
   return {
     providerName,
@@ -59,12 +71,31 @@ describe("constrained semantic planner", () => {
     const primary = provider("deepseek", async () => response());
     const fallback = provider("ollama", async () => response());
     const planner = createAgentPlanner({ primary, fallback });
+    const sensitiveTask: ActiveTaskContext = {
+      ...scheduleTask,
+      anchors: { sourceValue: "notion-source-raw", result: "prior-result-value" },
+      entities: [
+        {
+          type: "role",
+          key: "private-roster.xlsx",
+          label: "王小明",
+          aliases: ["姵穎"]
+        },
+        {
+          type: "selection",
+          key: "source-file-key",
+          label: "主日名單.pdf",
+          aliases: ["private-file-alias"]
+        }
+      ],
+      references: { sourceId: "private-source-id", url: "https://private.example.test/link" }
+    };
 
     const result = await planner.propose({
       profileName: "helper",
       text: "前攝影 https://private.example.test www.hidden.example sk-proj-secretsecretsecretsecret",
-      candidates: [scheduleCandidate],
-      activeTask: scheduleTask
+      candidates: [scheduleCandidateWithContract],
+      activeTask: sensitiveTask
     });
 
     expect(result).toMatchObject({
@@ -101,15 +132,63 @@ describe("constrained semantic planner", () => {
       "Write actions are unavailable unless deterministic candidates include them"
     );
     expect(request?.prompt).toContain('"capability":"query_schedule"');
-    expect(request?.prompt).toContain('"label":"前攝影"');
-    expect(request?.prompt).not.toContain("rawResult");
-    expect(request?.prompt).not.toContain("不應送給 planner 的人名");
-    expect(request?.prompt).not.toContain("sharing-link");
+    expect(request?.prompt).toContain('"ref":"entity-1","type":"role"');
+    expect(request?.prompt).toContain('"supportedOperations":["continue","refine"]');
+    for (const sensitiveValue of [
+      "private-roster.xlsx",
+      "王小明",
+      "姵穎",
+      "source-file-key",
+      "主日名單.pdf",
+      "private-file-alias",
+      "notion-source-raw",
+      "prior-result-value",
+      "private-source-id",
+      "private.example.test"
+    ]) {
+      expect(request?.prompt).not.toContain(sensitiveValue);
+    }
+  });
+
+  it("omits active-task entities and operations when the candidate has no declarations", async () => {
+    const primary = provider("deepseek", async () => response());
+    const fallback = provider("ollama", async () => response());
+    const planner = createAgentPlanner({ primary, fallback });
+
+    await planner.propose({
+      profileName: "helper",
+      text: "前攝影",
+      candidates: [scheduleCandidate],
+      activeTask: scheduleTask
+    });
+
+    const prompt = vi.mocked(primary.completeJson).mock.calls[0]?.[0].prompt;
+    expect(prompt).toContain('Active-task summary: {"version":1,"capability":"query_schedule"}');
+    expect(prompt).not.toContain("supportedOperations");
+    expect(prompt).not.toContain("entities");
+    expect(prompt).not.toContain("front-camera");
+    expect(prompt).not.toContain("前攝影");
   });
 
   it("falls back from a bounded primary timeout to Ollama exactly once", async () => {
-    const primary = provider("deepseek", () => new Promise(() => undefined));
-    const fallback = provider("ollama", async () => response({ disposition: "refine" }));
+    let primarySignal: AbortSignal | undefined;
+    let fallbackObservedAbort = false;
+    const primary = provider(
+      "deepseek",
+      (request) =>
+        new Promise((_resolve, reject) => {
+          primarySignal = request.signal;
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true }
+          );
+        })
+    );
+    const fallback = provider("ollama", async () => {
+      fallbackObservedAbort = primarySignal?.aborted === true;
+      return response({ disposition: "refine" });
+    });
     const planner = createAgentPlanner({ primary, fallback, timeoutMs: 5 });
 
     await expect(
@@ -135,6 +214,8 @@ describe("constrained semantic planner", () => {
     });
     expect(primary.completeJson).toHaveBeenCalledOnce();
     expect(fallback.completeJson).toHaveBeenCalledOnce();
+    expect(primarySignal?.aborted).toBe(true);
+    expect(fallbackObservedAbort).toBe(true);
   });
 
   it("keeps every bounded candidate and active-task summary complete within the prompt limit", async () => {
@@ -288,6 +369,37 @@ describe("constrained semantic planner", () => {
     });
     expect(primary.completeJson).toHaveBeenCalledOnce();
     expect(fallback.completeJson).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["arguments", "__proto__"],
+    ["references", "Constructor"],
+    ["arguments", "ＰＲＯＴＯＴＹＰＥ"]
+  ] as const)("rejects reserved %s key %s before proposal acceptance", async (record, key) => {
+    const argumentsJson = record === "arguments" ? `{"${key}":"hostile"}` : "{}";
+    const referencesJson = record === "references" ? `,"references":{"${key}":"hostile"}` : "";
+    const primary = provider(
+      "deepseek",
+      async () =>
+        `{"version":1,"disposition":"continue","capability":"query_schedule","arguments":${argumentsJson}${referencesJson},"confidence":0.95}`
+    );
+    const fallback = provider("ollama", async () => response());
+    const planner = createAgentPlanner({ primary, fallback });
+
+    await expect(
+      planner.propose({
+        profileName: "helper",
+        text: "前攝影",
+        candidates: [scheduleCandidate]
+      })
+    ).resolves.toMatchObject({
+      status: "proposed",
+      provider: "ollama",
+      attempts: [
+        { provider: "deepseek", status: "invalid_output", reason: "invalid_schema" },
+        { provider: "ollama", status: "accepted" }
+      ]
+    });
   });
 
   it("returns a proposed clarification without invoking the fallback", async () => {

@@ -28,18 +28,24 @@ export function createDeepSeekProvider(
     capabilities: providerCapabilities.deepseek,
 
     async completeJson(request: ChatProviderRequest): Promise<string> {
-      return completeChat(fetchImpl, baseUrl, options, {
-        model: options.model,
-        stream: false,
-        temperature: 0,
-        max_tokens: options.routeMaxOutputTokens,
-        thinking: { type: "disabled" },
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: request.prompt },
-          { role: "user", content: request.text }
-        ]
-      });
+      return completeChat(
+        fetchImpl,
+        baseUrl,
+        options,
+        {
+          model: options.model,
+          stream: false,
+          temperature: 0,
+          max_tokens: options.routeMaxOutputTokens,
+          thinking: { type: "disabled" },
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: request.prompt },
+            { role: "user", content: request.text }
+          ]
+        },
+        request.signal
+      );
     },
 
     async completeText(request: TextGenerationRequest): Promise<string> {
@@ -62,13 +68,17 @@ async function completeChat(
   fetchImpl: typeof fetch,
   baseUrl: string,
   options: DeepSeekProviderOptions,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  externalSignal?: AbortSignal
 ): Promise<string> {
   if (!options.apiKey) {
     throw new ProviderResponseError("deepseek_missing_api_key");
   }
 
   const controller = new AbortController();
+  const signal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
@@ -77,7 +87,7 @@ async function completeChat(
         "content-type": "application/json",
         authorization: `Bearer ${options.apiKey}`
       },
-      signal: controller.signal,
+      signal,
       body: JSON.stringify(body)
     });
 

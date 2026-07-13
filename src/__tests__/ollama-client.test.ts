@@ -56,6 +56,41 @@ describe("Ollama client", () => {
     expect(body.keep_alive).toBe(-1);
   });
 
+  it("combines an external JSON-request abort signal with its internal timeout", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchImpl = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    const provider = createOllamaProvider({
+      baseUrl: "http://ollama.local:11434",
+      model: "qwen3:4b-instruct",
+      timeoutMs: 8000
+    });
+    const controller = new AbortController();
+    const pending = provider.completeJson({
+      prompt: "Return JSON.",
+      profileName: "helper",
+      text: "hello",
+      enabledFunctions: [],
+      signal: controller.signal
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+
+    const requestSignal = fetchImpl.mock.calls[0]?.[1]?.signal;
+    controller.abort();
+    const requestWasAborted = requestSignal?.aborted;
+    resolveFetch?.(
+      new Response(JSON.stringify({ message: { content: '{"action":"deny"}' } }), { status: 200 })
+    );
+    await pending;
+
+    expect(requestWasAborted).toBe(true);
+  });
+
   it("generates controlled text without JSON response formatting", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ message: { content: "我在，謝謝你關心。" } }), {

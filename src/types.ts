@@ -532,6 +532,7 @@ export interface ChatProviderRequest {
   profileName: string;
   text: string;
   enabledFunctions: FunctionName[];
+  signal?: AbortSignal;
 }
 
 export interface ChatProvider {

@@ -28,9 +28,8 @@ const LIMITS = {
   arrayStringCharacters: 200,
   metadataItems: 6,
   metadataCharacters: 60,
+  activeTaskEntityScan: 20,
   activeTaskEntities: 6,
-  activeTaskAliases: 3,
-  activeTaskLabelCharacters: 200,
   timeoutMs: 8_000,
   maxTimeoutMs: 30_000,
   maxDiagnosticDurationMs: 60_000
@@ -42,6 +41,7 @@ const candidateReasonSchema = z.enum([
   "knowledge_metadata",
   "capability_hint"
 ]);
+const RESERVED_RECORD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const boundedNumberSchema = z.number().finite().min(-1_000_000_000).max(1_000_000_000);
 const boundedPrimitiveSchema = z.union([
   z.string().max(LIMITS.stringCharacters),
@@ -216,8 +216,13 @@ async function attemptProvider(input: {
   timeoutMs: number;
 }): Promise<ProviderAttempt> {
   const startedAt = performance.now();
+  const controller = new AbortController();
   try {
-    const raw = await withTimeout(input.provider.completeJson(input.request), input.timeoutMs);
+    const raw = await withTimeout(
+      input.provider.completeJson({ ...input.request, signal: controller.signal }),
+      input.timeoutMs,
+      controller
+    );
     const parsed = parseProposal(raw, input.candidateNames);
     return {
       diagnostic: diagnostic(
@@ -253,6 +258,9 @@ function parseProposal(
   } catch {
     return { reason: "invalid_json" };
   }
+  if (hasReservedPlannerRecordKey(json)) {
+    return { reason: "invalid_schema" };
+  }
   const parsed = proposalSchema.safeParse(json);
   if (!parsed.success) {
     return { reason: "invalid_schema" };
@@ -261,6 +269,21 @@ function parseProposal(
     return { reason: "candidate_not_allowed" };
   }
   return { proposal: parsed.data as AgentPlanProposal };
+}
+
+function hasReservedPlannerRecordKey(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proposal = value as Record<string, unknown>;
+  return [proposal.arguments, proposal.references].some(
+    (record) =>
+      record !== undefined &&
+      record !== null &&
+      typeof record === "object" &&
+      !Array.isArray(record) &&
+      Object.keys(record).some((key) =>
+        RESERVED_RECORD_KEYS.has(key.normalize("NFKC").toLocaleLowerCase("en-US"))
+      )
+  );
 }
 
 function diagnostic(
@@ -282,9 +305,17 @@ function diagnostic(
   };
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  controller: AbortController
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new PlannerTimeoutError()), timeoutMs);
+    const timeout = setTimeout(() => {
+      const error = new PlannerTimeoutError();
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timeout);
@@ -359,35 +390,72 @@ function summarizeMetadata(values: readonly string[] | undefined): string[] {
 
 function summarizeActiveTask(
   activeTask: ActiveTaskContext | undefined,
-  candidateNames: ReadonlySet<FunctionName>
+  candidates: readonly CandidateSummary[]
 ): unknown {
-  if (!activeTask || !candidateNames.has(activeTask.capability)) return undefined;
-  return {
+  if (!activeTask) return undefined;
+  const candidate = candidates.find(({ capability }) => capability === activeTask.capability);
+  if (!candidate) return undefined;
+
+  const summary: {
+    version: 1;
+    capability: FunctionName;
+    supportedOperations?: string[];
+    entities?: Array<{ ref: string; type: string }>;
+  } = {
     version: activeTask.version,
-    capability: activeTask.capability,
-    supportedOperations: summarizeMetadata(activeTask.supportedOperations),
-    entities: activeTask.entities.slice(0, LIMITS.activeTaskEntities).map((entity) => ({
-      type: sanitizeText(entity.type, LIMITS.metadataCharacters),
-      key: sanitizeText(entity.key, LIMITS.metadataCharacters),
-      label: sanitizeText(entity.label, LIMITS.activeTaskLabelCharacters),
-      ...(entity.aliases
-        ? {
-            aliases: entity.aliases
-              .slice(0, LIMITS.activeTaskAliases)
-              .map((alias) => sanitizeText(alias, LIMITS.metadataCharacters))
-              .filter(Boolean)
-          }
-        : {})
-    }))
+    capability: activeTask.capability
   };
+  const declaredOperations = declaredCategoricalValues(candidate.contract?.operations);
+  const supportedOperations = uniqueDeclaredMatches(
+    activeTask.supportedOperations,
+    declaredOperations
+  );
+  if (supportedOperations.length > 0) summary.supportedOperations = supportedOperations;
+
+  const declaredEntityTypes = declaredCategoricalValues(candidate.contract?.entityTypes);
+  const entities: Array<{ ref: string; type: string }> = [];
+  for (const entity of activeTask.entities.slice(0, LIMITS.activeTaskEntityScan)) {
+    const safeType = declaredEntityTypes.get(normalizeCategoricalValue(entity.type));
+    if (!safeType) continue;
+    entities.push({ ref: `entity-${entities.length + 1}`, type: safeType });
+    if (entities.length >= LIMITS.activeTaskEntities) break;
+  }
+  if (entities.length > 0) summary.entities = entities;
+  return summary;
+}
+
+function declaredCategoricalValues(values: readonly string[] | undefined): Map<string, string> {
+  return new Map(
+    (values ?? [])
+      .slice(0, LIMITS.metadataItems)
+      .map((value) => sanitizeText(value, LIMITS.metadataCharacters))
+      .filter(Boolean)
+      .map((value) => [normalizeCategoricalValue(value), value])
+  );
+}
+
+function uniqueDeclaredMatches(
+  values: readonly string[],
+  declared: ReadonlyMap<string, string>
+): string[] {
+  const matches: string[] = [];
+  for (const value of values) {
+    const safeValue = declared.get(normalizeCategoricalValue(value));
+    if (safeValue && !matches.includes(safeValue)) matches.push(safeValue);
+    if (matches.length >= LIMITS.metadataItems) break;
+  }
+  return matches;
+}
+
+function normalizeCategoricalValue(value: string): string {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }
 
 function buildPrompt(
   candidates: readonly CandidateSummary[],
   activeTask: ActiveTaskContext | undefined
 ): string {
-  const candidateNames = new Set(candidates.map(({ capability }) => capability));
-  const activeTaskSummary = summarizeActiveTask(activeTask, candidateNames);
+  const activeTaskSummary = summarizeActiveTask(activeTask, candidates);
   const prompt = [
     "You are a constrained semantic planner for a restricted LINE bot.",
     "Return exactly one JSON object matching schema version 1. No prose, markdown, code fences, or trailing text.",

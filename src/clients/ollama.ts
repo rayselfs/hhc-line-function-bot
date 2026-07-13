@@ -25,9 +25,12 @@ export function createOllamaProvider(
 
     async completeJson(request: ChatProviderRequest): Promise<string> {
       const controller = new AbortController();
+      const signal = request.signal
+        ? AbortSignal.any([controller.signal, request.signal])
+        : controller.signal;
       const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
       try {
-        return await completeChat(baseUrl, options, controller.signal, {
+        return await completeChat(baseUrl, options, signal, {
           model: options.model,
           stream: false,
           think: false,
