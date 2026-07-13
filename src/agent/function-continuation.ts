@@ -1,5 +1,8 @@
 import { getFunctionDefinition } from "../functions/definitions.js";
-import { refineScheduleQuery } from "../functions/schedule-query-refinement.js";
+import {
+  extractScheduleRoleFocus,
+  refineScheduleQuery
+} from "../functions/schedule-query-refinement.js";
 import type { QueryScheduleArguments } from "../function-arguments.js";
 import type { FunctionName, JsonRecord } from "../types.js";
 import type { FunctionContinuationContext } from "./context-manager.js";
@@ -45,6 +48,7 @@ function prepareCurrentArguments(input: {
   currentText?: string;
   now?: Date;
   timeZone?: string;
+  continuation?: FunctionContinuationContext;
 }): { arguments: JsonRecord; changedArguments: Set<string> } {
   if (input.action !== "query_schedule") {
     return { arguments: input.currentArguments, changedArguments: new Set() };
@@ -54,25 +58,51 @@ function prepareCurrentArguments(input: {
       ? input.currentArguments.query
       : (input.currentText ?? "");
   const refinement = refineScheduleQuery(
-    { ...input.currentArguments, query } as QueryScheduleArguments,
+    { query } as QueryScheduleArguments,
     input.now ?? new Date(),
     input.timeZone ?? "Asia/Taipei"
   );
+  const roleFocus = extractScheduleRoleFocus({
+    query,
+    hasContinuation: true,
+    availableRoles: continuationRoles(input.continuation?.arguments),
+    now: input.now,
+    timeZone: input.timeZone
+  });
   const changedArguments = new Set<string>();
-  const focus = refinement.residualQuery
-    .replace(/^(?:那|那個|再)?/u, "")
-    .replace(/呢$/u, "")
-    .trim();
-  if (!hasValue(refinement.structuredArguments.role) && focus) {
+  if (roleFocus) {
     changedArguments.add("role");
   }
   const structuredArguments = Object.fromEntries(
     Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
   );
+  const trustedArguments = { ...input.currentArguments };
+  for (const argument of [
+    "date",
+    "dateIntent",
+    "specificDate",
+    "meeting",
+    "role",
+    "scheduleType"
+  ]) {
+    delete trustedArguments[argument];
+  }
   return {
-    arguments: { ...input.currentArguments, ...structuredArguments, query },
+    arguments: {
+      ...trustedArguments,
+      ...structuredArguments,
+      ...(roleFocus ? { role: roleFocus } : {}),
+      query
+    },
     changedArguments
   };
+}
+
+function continuationRoles(arguments_: JsonRecord | undefined): string[] | undefined {
+  const roles = arguments_?.availableRoles;
+  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
+    ? roles
+    : undefined;
 }
 
 function hasValue(value: unknown): boolean {
