@@ -624,6 +624,28 @@ describe("config", () => {
     });
   });
 
+  it.each([
+    { field: "maxCandidates", value: 0 },
+    { field: "maxCandidates", value: 6 },
+    { field: "maxCandidates", value: 1.5 },
+    { field: "minPlannerConfidence", value: -0.01 },
+    { field: "minPlannerConfidence", value: 1.01 }
+  ])("rejects invalid controlled agent setting $field=$value", ({ field, value }) => {
+    expect(() =>
+      loadConfigFromEnv({
+        ...profilesEnv([
+          {
+            name: "helper",
+            webhookPath: "/api/line/webhook/helper",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            controlledAgent: { [field]: value }
+          }
+        ])
+      })
+    ).toThrow(field);
+  });
+
   it("allows a DeepSeek-primary controlled planner", async () => {
     await withProfileFile(
       [
