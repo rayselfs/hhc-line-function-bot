@@ -108,6 +108,7 @@ export interface KnowledgeTopPerSourceInput {
   queryEmbedding?: number[];
   embeddingProvider?: string;
   embeddingModel?: string;
+  ordinal?: number;
   sourceIds: string[];
 }
 

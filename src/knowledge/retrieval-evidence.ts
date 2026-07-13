@@ -1,4 +1,4 @@
-import { isConservativeRetrievalEvidenceText } from "../agent/capability-candidates.js";
+import { isConservativeKnowledgeEvidenceText } from "../agent/knowledge-evidence-guard.js";
 import type { RetrievalEvidenceProvider } from "../agent/controlled-agent-router.js";
 import { listKnowledgeRoutingMetadata } from "./routing-metadata.js";
 import type { KnowledgeStore } from "./store.js";
@@ -10,7 +10,7 @@ export function createKnowledgeRetrievalEvidenceProvider(
 ): RetrievalEvidenceProvider {
   return {
     async probe(input) {
-      if (!isConservativeRetrievalEvidenceText(input.text)) return { matched: false, count: 0 };
+      if (!isConservativeKnowledgeEvidenceText(input.text)) return { matched: false, count: 0 };
       const limit = Math.max(0, Math.min(MAX_ELIGIBLE_SOURCES, Math.floor(input.maxSources)));
       if (limit === 0) return { matched: false, count: 0 };
       const [metadata, activeSources] = await Promise.all([

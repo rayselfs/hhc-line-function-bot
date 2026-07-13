@@ -499,6 +499,63 @@ describe("query_knowledge", () => {
     );
   });
 
+  it("uses the requested ordinal while selecting a source for a body-only query", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const sources = [];
+    for (const [sourceKey, ordinal, content] of [
+      ["alpha", 0, "集合地點是辦公室。"],
+      ["beta", 1, "集合地點是禮堂。"]
+    ] as const) {
+      const source = await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `${sourceKey} 手冊`,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      await store.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: `${sourceKey} 文件`,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [{ headingPath: [], ordinal, content, contentHash: `${sourceKey}-${ordinal}-hash` }]
+      });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z"
+      });
+      sources.push(source);
+    }
+    const searchTopPerSource = vi.spyOn(store, "searchTopPerSource");
+
+    const result = await createQueryKnowledgeHandler({ store })(
+      { query: "集合地點", ordinal: 1 },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "user", userId: "u" },
+          message: { type: "text", text: "第二個集合地點" }
+        }
+      }
+    );
+
+    expect(result.replyText).toContain("禮堂");
+    expect(result.replyText).not.toContain("辦公室");
+    expect(result.agentResult).toMatchObject({ status: "success" });
+    expect(searchTopPerSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ordinal: 1,
+        sourceIds: sources.map(({ id }) => id)
+      })
+    );
+  });
+
   it("stores an opaque requester-scoped selection when top evidence ties across sources", async () => {
     const store = new InMemoryKnowledgeStore();
     const fixedNow = () => new Date("2026-07-13T00:00:00Z");
@@ -544,8 +601,9 @@ describe("query_knowledge", () => {
       now: fixedNow
     };
     const handler = createQueryKnowledgeHandler(options);
+    const searchTopPerSource = vi.spyOn(store, "searchTopPerSource");
     const result = await handler(
-      { query: "集合時間" },
+      { query: "集合時間", ordinal: 0 },
       {
         profile,
         event: {
@@ -560,6 +618,7 @@ describe("query_knowledge", () => {
       status: "ambiguous",
       clarification: { choices: ["知識來源 1", "知識來源 2"] }
     });
+    expect(searchTopPerSource).toHaveBeenCalledWith(expect.objectContaining({ ordinal: 0 }));
     expect(result.quickReplies).toEqual([
       expect.objectContaining({ action: expect.objectContaining({ type: "postback" }) }),
       expect.objectContaining({ action: expect.objectContaining({ type: "postback" }) })

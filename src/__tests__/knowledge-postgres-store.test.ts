@@ -177,13 +177,20 @@ describe("PostgresKnowledgeStore routing parity", () => {
       "22222222-2222-4222-8222-222222222222"
     ];
 
-    await store.searchTopPerSource({ profileName: "helper", query: "共同暗號", sourceIds });
+    await store.searchTopPerSource({
+      profileName: "helper",
+      query: "共同暗號",
+      ordinal: 1,
+      sourceIds
+    });
 
     expect(query).toHaveBeenCalledOnce();
     const [sql, values] = query.mock.calls[0]!;
     expect(String(sql)).toMatch(/row_number\(\)\s+over\s*\(\s*partition\s+by\s+source_id/iu);
     expect(String(sql)).toMatch(/source_rank\s*=\s*1/iu);
-    expect(values).toContain(sourceIds);
+    expect(String(sql)).toMatch(/ordinal_score/iu);
+    expect(String(sql)).toMatch(/c\.ordinal\s*=\s*\$6/iu);
+    expect(values).toEqual(["helper", "共同暗號", null, null, null, 1, sourceIds]);
     await expect(
       store.searchTopPerSource({
         profileName: "helper",

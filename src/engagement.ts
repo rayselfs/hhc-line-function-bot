@@ -139,8 +139,8 @@ function isIntroText(text: string): boolean {
   ].includes(value);
 }
 
-function classifySmallTalkCategory(text: string): SmallTalkCategory | undefined {
-  const lower = text.toLowerCase();
+export function classifySmallTalkCategory(text: string): SmallTalkCategory | undefined {
+  const lower = normalizeText(text).toLowerCase();
   if (/你好嗎|還在嗎|在嗎|最近好嗎|好嗎|安好/u.test(lower)) {
     return "wellbeing";
   }

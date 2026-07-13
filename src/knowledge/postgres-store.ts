@@ -492,17 +492,18 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
           s.sync_status, s.sync_error_code,
           case when c.content ilike '%' || $2 || '%' or d.title ilike '%' || $2 || '%' then 2.0
                else ts_rank_cd(c.search_vector, plainto_tsquery('simple',$2)) end lexical_score,
-          case when $3::vector is null then 0.0 else coalesce(1-(e.embedding <=> $3::vector),0.0) end vector_score
+          case when $3::vector is null then 0.0 else coalesce(1-(e.embedding <=> $3::vector),0.0) end vector_score,
+          case when $6::integer is null then 0.0 when c.ordinal=$6 then 2.0 else -0.5 end ordinal_score
         from knowledge_chunks c join knowledge_documents d on d.id=c.document_id
         join knowledge_sources s on s.id=d.source_id
         left join knowledge_embeddings e on e.chunk_id=c.id and e.dimensions=1024
           and ($4::text is null or e.provider=$4) and ($5::text is null or e.model=$5)
         where s.profile_name=$1 and s.enabled=true and s.last_synced_at is not null
           and s.routing_display_name is not null and (s.expires_at is null or s.expires_at>now())
-          and d.deleted_at is null and c.active=true and s.id=any($6::uuid[])
+          and d.deleted_at is null and c.active=true and s.id=any($7::uuid[])
       ), scored as (
-        select *, lexical_score+vector_score score from candidates
-        where lexical_score+vector_score > 0
+        select *, lexical_score+vector_score+ordinal_score score from candidates
+        where lexical_score+vector_score+ordinal_score > 0
       ), ranked as (
         select *, row_number() over (partition by source_id order by score desc, ordinal asc) source_rank
         from scored
@@ -513,6 +514,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         vector,
         input.embeddingProvider ?? null,
         input.embeddingModel ?? null,
+        input.ordinal ?? null,
         input.sourceIds
       ]
     );

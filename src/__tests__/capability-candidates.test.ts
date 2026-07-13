@@ -130,6 +130,88 @@ describe("deterministic capability candidates", () => {
     ).toEqual([]);
   });
 
+  it("retains the write guard for non-knowledge retrieval evidence", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "幫我儲存資料",
+        enabledFunctions: ["query_schedule"],
+        source: "group",
+        knowledgeSources: [],
+        retrievalEvidence: ["query_schedule"],
+        maxCandidates: 3
+      })
+    ).toEqual([]);
+  });
+
+  it.each(["你好", "你好嗎", "在嗎", "辛苦嗎", "你是內向的人嗎", "加油", "說個笑話哈哈"])(
+    "applies one conservative guard to every non-explicit knowledge evidence path: %s",
+    (text) => {
+      const definition = getFunctionDefinition("query_knowledge")!;
+      const originalHints = definition.agentCapability!.candidateHints;
+      definition.agentCapability!.candidateHints = [text];
+      const activeTask: ActiveTaskContext = {
+        ...knowledgeTask,
+        entities: [{ type: "section", key: text, label: text }]
+      };
+      try {
+        expect(
+          buildCapabilityCandidates({
+            text,
+            enabledFunctions: ["query_knowledge"],
+            activeTask,
+            source: "group",
+            knowledgeSources: [{ ...retreatKnowledge, topics: [text] }],
+            retrievalEvidence: ["query_knowledge"],
+            maxCandidates: 3
+          })
+        ).toEqual([]);
+      } finally {
+        definition.agentCapability!.candidateHints = originalHints;
+      }
+    }
+  );
+
+  it.each(["幫我把第一日儲存起來", "幫我把第一日存下來", "請將第一日新增到知識"])(
+    "does not turn rearranged write intent into a knowledge read candidate: %s",
+    (text) => {
+      expect(
+        buildCapabilityCandidates({
+          text,
+          enabledFunctions: ["query_knowledge"],
+          activeTask: {
+            ...knowledgeTask,
+            entities: [{ type: "section", key: "day-one", label: "第一日" }]
+          },
+          source: "group",
+          knowledgeSources: [{ ...retreatKnowledge, topics: ["第一日"] }],
+          retrievalEvidence: ["query_knowledge"],
+          maxCandidates: 3
+        })
+      ).toEqual([]);
+    }
+  );
+
+  it("keeps explicit knowledge intent and ordinary knowledge questions eligible", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "查知識 你好",
+        enabledFunctions: ["query_knowledge"],
+        source: "group",
+        knowledgeSources: [{ ...retreatKnowledge, topics: ["你好"] }],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_knowledge", reason: "explicit_intent" });
+    expect(
+      buildCapabilityCandidates({
+        text: "第一日要去哪裡",
+        enabledFunctions: ["query_knowledge"],
+        source: "group",
+        knowledgeSources: [{ ...retreatKnowledge, topics: ["第一日"] }],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_knowledge", reason: "knowledge_metadata" });
+  });
+
   it("never returns a disabled or write capability", () => {
     expect(
       buildCapabilityCandidates({

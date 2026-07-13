@@ -126,6 +126,7 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
           queryEmbedding,
           embeddingProvider: options.embedding?.provider,
           embeddingModel: options.embedding?.model,
+          ordinal: args.ordinal,
           sourceIds: sourceResolution.sources.map(({ id }) => id)
         });
       } catch {

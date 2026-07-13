@@ -351,6 +351,24 @@ describe("knowledge store", () => {
       store.searchTopPerSource({
         profileName: "helper",
         query: "共同暗號",
+        ordinal: 8,
+        sourceIds
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        score: 4,
+        ordinal: 8,
+        source: expect.objectContaining({ sourceKey: "beta" })
+      }),
+      expect.objectContaining({
+        score: 1.5,
+        source: expect.objectContaining({ sourceKey: "alpha" })
+      })
+    ]);
+    await expect(
+      store.searchTopPerSource({
+        profileName: "helper",
+        query: "共同暗號",
         sourceIds: Array.from({ length: 21 }, (_, index) => `source-${index}`)
       })
     ).rejects.toThrow("knowledge_source_scope_limit");

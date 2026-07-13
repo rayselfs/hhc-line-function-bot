@@ -208,14 +208,24 @@ describe("ControlledAgentRouter", () => {
       now: () => now
     });
 
-    await router.resolve({
-      profileName: "helper",
-      text: "你好",
-      enabledFunctions: ["query_knowledge"],
-      sourceType: "group",
-      maxCandidates: 3,
-      minPlannerConfidence: 0.65
-    });
+    for (const text of [
+      "你好",
+      "你好嗎",
+      "在嗎",
+      "辛苦嗎",
+      "你是內向的人嗎",
+      "加油",
+      "說個笑話哈哈"
+    ]) {
+      await router.resolve({
+        profileName: "helper",
+        text,
+        enabledFunctions: ["query_knowledge"],
+        sourceType: "group",
+        maxCandidates: 3,
+        minPlannerConfidence: 0.65
+      });
+    }
     await router.resolve({
       profileName: "helper",
       text: "急救箱位置",
@@ -227,6 +237,22 @@ describe("ControlledAgentRouter", () => {
     await router.resolve({
       profileName: "helper",
       text: "幫我儲存急救箱位置",
+      enabledFunctions: ["query_knowledge"],
+      sourceType: "group",
+      maxCandidates: 3,
+      minPlannerConfidence: 0.65
+    });
+    await router.resolve({
+      profileName: "helper",
+      text: "幫我把第一日儲存起來",
+      enabledFunctions: ["query_knowledge"],
+      sourceType: "group",
+      maxCandidates: 3,
+      minPlannerConfidence: 0.65
+    });
+    await router.resolve({
+      profileName: "helper",
+      text: "請將第一日新增到知識",
       enabledFunctions: ["query_knowledge"],
       sourceType: "group",
       maxCandidates: 3,
