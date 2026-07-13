@@ -231,4 +231,120 @@ describe("knowledge source admin actions", () => {
       })
     ]);
   });
+
+  it("does not rewrite a successful promotion as failed when success audit persistence fails", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const accessStore = new InMemoryAccessStore();
+    vi.spyOn(accessStore, "recordAudit").mockRejectedValue(new Error("audit unavailable"));
+    const registry = createAdminActionRegistry({
+      accessStore,
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60,
+      knowledgeStore: store,
+      notionKnowledge: {
+        fetchRoot: vi.fn().mockResolvedValue([
+          {
+            externalId: "doc",
+            title: "聚會 SOP",
+            url: "https://www.notion.so/doc",
+            properties: {},
+            nodes: [{ externalId: "p", type: "paragraph", ordinal: 0, text: "關閉設備" }]
+          }
+        ])
+      }
+    });
+
+    await expect(
+      registry.execute({
+        action: "knowledge_source_add",
+        profile,
+        event,
+        arguments: {
+          url: "https://www.notion.so/SOP-0123456789abcdef0123456789abcdef",
+          displayName: "聚會 SOP"
+        }
+      })
+    ).rejects.toThrow("audit unavailable");
+
+    await expect(store.listSources({ profileName: "helper" })).resolves.toEqual([
+      expect.objectContaining({
+        displayName: "聚會 SOP",
+        enabled: true,
+        syncStatus: "ready",
+        syncErrorCode: undefined,
+        lastSyncedAt: expect.any(String)
+      })
+    ]);
+    await expect(store.search({ profileName: "helper", query: "關閉設備" })).resolves.toHaveLength(
+      1
+    );
+  });
+
+  it("keeps successful resync health truthful when the resync audit write fails", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "sop",
+      displayName: "聚會 SOP",
+      adapterType: "notion",
+      externalRootId: "root",
+      rootUrl: "https://example.test/root",
+      enabled: true
+    });
+    await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc",
+      title: "舊 SOP",
+      url: "https://example.test/old",
+      nodes: [],
+      chunks: [{ headingPath: [], ordinal: 0, content: "舊版內容", contentHash: "old" }]
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "sop",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-12T00:00:00Z"
+    });
+    const accessStore = new InMemoryAccessStore();
+    vi.spyOn(accessStore, "recordAudit").mockRejectedValue(new Error("audit unavailable"));
+    const registry = createAdminActionRegistry({
+      accessStore,
+      registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+      registrationInviteCodeTtlMinutes: 60,
+      knowledgeStore: store,
+      notionKnowledge: {
+        fetchRoot: vi.fn().mockResolvedValue([
+          {
+            externalId: "doc",
+            title: "新 SOP",
+            url: "https://example.test/new",
+            properties: {},
+            nodes: [{ externalId: "p", type: "paragraph", ordinal: 0, text: "新版內容" }]
+          }
+        ])
+      }
+    });
+
+    await expect(
+      registry.execute({
+        action: "knowledge_source_sync",
+        profile,
+        event,
+        arguments: { sourceKey: "sop" }
+      })
+    ).rejects.toThrow("audit unavailable");
+
+    await expect(
+      store.listSources({ profileName: "helper", includeDisabled: true })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        syncStatus: "ready",
+        syncErrorCode: undefined,
+        lastSyncedAt: expect.not.stringContaining("2026-07-12")
+      })
+    ]);
+    await expect(store.search({ profileName: "helper", query: "新版內容" })).resolves.toEqual([
+      expect.objectContaining({ content: "新版內容" })
+    ]);
+  });
 });

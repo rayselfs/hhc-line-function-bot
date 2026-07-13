@@ -12,6 +12,13 @@ function sourceRow(overrides: Record<string, unknown> = {}) {
     admin_aliases: [],
     admin_topics: [],
     admin_sample_queries: [],
+    staged_display_name: "青年出隊",
+    staged_adapter_type: "notion",
+    staged_external_root_id: "root",
+    staged_root_url: "https://example.test/root",
+    staged_enabled: true,
+    staged_expires_at: null,
+    staging_revision: "33333333-3333-4333-8333-333333333333",
     aliases: ["出隊"],
     topics: ["集合時間"],
     sample_queries: ["何時集合"],
@@ -62,5 +69,103 @@ describe("PostgresKnowledgeStore routing parity", () => {
     expect(sql.match(/last_synced_at\s+is\s+not\s+null/giu)).toHaveLength(2);
     expect(sql).toMatch(/section_key\s*=\s*\$\d+/iu);
     expect(sql).not.toMatch(/any\s*\(c\.heading_path\)/iu);
+  });
+
+  it("stages an existing source without mutating its live core or lifecycle columns", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [sourceRow()] });
+    const store = new PostgresKnowledgeStore({ query });
+
+    await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "新名稱",
+      adapterType: "notion",
+      externalRootId: "new-root",
+      rootUrl: "https://example.test/new",
+      enabled: true,
+      expiresAt: "2027-01-01T00:00:00Z"
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("staged_display_name");
+    expect(sql).toContain("staged_external_root_id");
+    expect(sql).toContain("staging_revision");
+    const conflictUpdate = sql.split(/on conflict/iu)[1] ?? "";
+    expect(conflictUpdate).not.toMatch(/\bdisplay_name\s*=\s*excluded\.display_name/iu);
+    expect(conflictUpdate).not.toMatch(/\benabled\s*=\s*excluded\.enabled/iu);
+    expect(conflictUpdate).not.toMatch(/\bexpires_at\s*=\s*excluded\.expires_at/iu);
+  });
+
+  it("publishes the entire source snapshot through one checked PostgreSQL transaction", async () => {
+    const clientQuery = vi.fn(async (sql: string) => {
+      if (/select \* from knowledge_sources/iu.test(sql)) return { rows: [sourceRow()] };
+      if (/update knowledge_sources/iu.test(sql)) return { rows: [sourceRow()] };
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    const poolQuery = vi.fn();
+    const connect = vi.fn().mockResolvedValue({ query: clientQuery, release });
+    const store = new PostgresKnowledgeStore({ query: poolQuery, connect } as never);
+
+    await (
+      store as unknown as {
+        publishSourceSnapshot(input: Record<string, unknown>): Promise<unknown>;
+      }
+    ).publishSourceSnapshot({
+      sourceId: "11111111-1111-4111-8111-111111111111",
+      expectedStagingRevision: "33333333-3333-4333-8333-333333333333",
+      syncedAt: "2026-07-13T00:00:00Z",
+      syncStatus: "ready",
+      routingDisplayName: "青年出隊",
+      aliases: [],
+      topics: [],
+      sampleQueries: [],
+      documents: [],
+      embeddings: []
+    });
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).toEqual(
+      expect.arrayContaining(["begin", "commit"])
+    );
+    expect(clientQuery.mock.calls.map(([sql]) => String(sql)).join("\n")).toMatch(
+      /staging_revision/iu
+    );
+    expect(poolQuery).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back the PostgreSQL snapshot when any publication statement fails", async () => {
+    const clientQuery = vi.fn(async (sql: string) => {
+      if (/select \* from knowledge_sources/iu.test(sql)) return { rows: [sourceRow()] };
+      if (/update knowledge_documents/iu.test(sql)) throw new Error("write failed");
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    const store = new PostgresKnowledgeStore({
+      query: vi.fn(),
+      connect: vi.fn().mockResolvedValue({ query: clientQuery, release })
+    });
+
+    await expect(
+      store.publishSourceSnapshot({
+        sourceId: "11111111-1111-4111-8111-111111111111",
+        expectedStagingRevision: "33333333-3333-4333-8333-333333333333",
+        syncedAt: "2026-07-13T00:00:00Z",
+        syncStatus: "ready",
+        routingDisplayName: "青年出隊",
+        aliases: [],
+        topics: [],
+        sampleQueries: [],
+        documents: [],
+        embeddings: []
+      })
+    ).rejects.toThrow("write failed");
+
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).toEqual(
+      expect.arrayContaining(["begin", "rollback"])
+    );
+    expect(clientQuery.mock.calls.map(([sql]) => sql)).not.toContain("commit");
+    expect(release).toHaveBeenCalledOnce();
   });
 });

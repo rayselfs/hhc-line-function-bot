@@ -8,6 +8,8 @@ import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
 import { createQueryScheduleHandler } from "../functions/query-schedule.js";
 import { createPendingFunctionTextMessageHandler } from "../functions/pending-function.js";
+import { createQueryKnowledgeTextMessageHandler } from "../functions/query-knowledge.js";
+import { InMemoryKnowledgeStore } from "../knowledge/store.js";
 import { InMemoryLastErrorStore } from "../observability/last-error-store.js";
 import { InMemoryLastRouteStore } from "../observability/last-route-store.js";
 import { MemoryInFlightStore } from "../in-flight/in-flight-store.js";
@@ -125,6 +127,86 @@ function createRuntime(options: {
 }
 
 describe("AgentTurnRuntime", () => {
+  it("continues an opaque requester-scoped knowledge source selection from numeric text", async () => {
+    const now = () => new Date("2026-07-08T00:00:00.000Z");
+    const sessionStore = new InMemorySessionStore({ now });
+    const knowledgeStore = new InMemoryKnowledgeStore(now);
+    const sources = [];
+    for (const sourceKey of ["alpha", "beta"]) {
+      const source = await knowledgeStore.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `${sourceKey} 手冊`,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      await knowledgeStore.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: `${sourceKey} 文件`,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [
+          {
+            headingPath: [],
+            ordinal: 0,
+            content: `${sourceKey} 的集合時間是晚上七點。`,
+            contentHash: `${sourceKey}-hash`
+          }
+        ]
+      });
+      await knowledgeStore.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-08T00:00:00Z"
+      });
+      sources.push(source);
+    }
+    await sessionStore.set({
+      id: "knowledge-choice",
+      type: "selection",
+      action: "query_knowledge",
+      profileName: "helper",
+      requesterUserId: "U1",
+      source: { type: "group", groupId: "C1", userId: "U1" },
+      arguments: { query: "集合時間" },
+      items: sources.map(({ id }, index) => ({
+        id,
+        name: `${index === 0 ? "alpha" : "beta"} 手冊`,
+        driveId: id
+      })),
+      expiresAt: "2026-07-08T00:10:00.000Z"
+    });
+    const route = vi.fn<FunctionRouterPort["route"]>();
+    const knowledgeText = createQueryKnowledgeTextMessageHandler({
+      store: knowledgeStore,
+      sessionStore,
+      now
+    });
+    const runtime = createRuntime({
+      router: { route },
+      sessionStore,
+      textMessageHandlers: { knowledge_numeric_selection: knowledgeText }
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_knowledge"]),
+      event: textEvent("2"),
+      requestId: "knowledge-select"
+    });
+
+    expect(result?.replyText).toContain("beta 的集合時間是晚上七點");
+    expect(result?.continuation?.resultReferences).toEqual(
+      expect.objectContaining({ sourceId: sources[1]!.id })
+    );
+    expect(JSON.stringify(result?.agentResult)).not.toMatch(/alpha|beta|手冊/iu);
+    expect(route).not.toHaveBeenCalled();
+    await expect(sessionStore.get("knowledge-choice")).resolves.toBeUndefined();
+  });
+
   it("keeps the legacy router authoritative while controlled routing is disabled", async () => {
     const controlledResolve = vi.fn<ControlledAgentRouter["resolve"]>();
     const legacyRoute = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({

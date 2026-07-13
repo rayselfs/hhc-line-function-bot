@@ -391,6 +391,7 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
     if (expiresAt && !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/u.test(expiresAt))
       return { ok: true, replyText: "到期日請使用 YYYY-MM-DD。" };
     const sourceKey = sourceKeyFor(displayName, externalRootId);
+    let synced: Awaited<ReturnType<typeof syncKnowledgeSource>>;
     try {
       const source = await dependencies.store.upsertSource({
         profileName: input.profile.name,
@@ -409,23 +410,13 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
           "examples"
         ])
       });
-      const synced = await syncKnowledgeSource({
+      synced = await syncKnowledgeSource({
         source,
         store: dependencies.store,
         notion: dependencies.notion,
         embedding: this.options.knowledgeEmbedding,
         batchSize: this.options.knowledgeEmbeddingBatchSize
       });
-      await this.auditKnowledge(input, "knowledge.source.add", sourceKey, { outcome: "success" });
-      return {
-        ok: true,
-        replyText: [
-          `已加入知識來源：${displayName}`,
-          `識別碼：${sourceKey}`,
-          `文件：${synced.documents}，片段：${synced.chunks}`,
-          synced.status === "embedding_pending" ? "語意索引待補，文字查詢已可使用。" : "同步完成。"
-        ].join("\n")
-      };
     } catch {
       await dependencies.store.updateSource({
         profileName: input.profile.name,
@@ -439,6 +430,16 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       });
       return { ok: true, replyText: "無法讀取該頁面，請確認已分享給系統使用的整合服務。" };
     }
+    await this.auditKnowledge(input, "knowledge.source.add", sourceKey, { outcome: "success" });
+    return {
+      ok: true,
+      replyText: [
+        `已加入知識來源：${displayName}`,
+        `識別碼：${sourceKey}`,
+        `文件：${synced.documents}，片段：${synced.chunks}`,
+        synced.status === "embedding_pending" ? "語意索引待補，文字查詢已可使用。" : "同步完成。"
+      ].join("\n")
+    };
   }
 
   private async listKnowledgeSources(
@@ -478,19 +479,15 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       })
     ).find((item) => item.sourceKey === sourceKey);
     if (!source) return { ok: true, replyText: "找不到這個知識來源。" };
+    let synced: Awaited<ReturnType<typeof syncKnowledgeSource>>;
     try {
-      const synced = await syncKnowledgeSource({
+      synced = await syncKnowledgeSource({
         source,
         store: dependencies.store,
         notion: dependencies.notion,
         embedding: this.options.knowledgeEmbedding,
         batchSize: this.options.knowledgeEmbeddingBatchSize
       });
-      await this.auditKnowledge(input, "knowledge.source.sync", sourceKey, { outcome: "success" });
-      return {
-        ok: true,
-        replyText: `同步完成：${synced.documents} 份文件、${synced.chunks} 個片段。`
-      };
     } catch {
       await dependencies.store.updateSource({
         profileName: input.profile.name,
@@ -504,6 +501,11 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       });
       return { ok: true, replyText: "同步失敗，舊版有效內容仍會保留。" };
     }
+    await this.auditKnowledge(input, "knowledge.source.sync", sourceKey, { outcome: "success" });
+    return {
+      ok: true,
+      replyText: `同步完成：${synced.documents} 份文件、${synced.chunks} 個片段。`
+    };
   }
 
   private async setKnowledgeSourceEnabled(

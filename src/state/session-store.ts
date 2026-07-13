@@ -30,6 +30,7 @@ export interface SelectionSession {
   requesterUserId?: string;
   source: LineSource;
   items: SelectionItem[];
+  arguments?: JsonRecord;
   expiresAt: string;
 }
 

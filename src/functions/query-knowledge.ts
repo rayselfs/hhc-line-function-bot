@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { EmbeddingClient } from "../clients/ollama-embedding.js";
 import { queryKnowledgeArgumentsSchema } from "../function-arguments.js";
 import {
@@ -10,7 +12,20 @@ import type {
   KnowledgeSourceRecord,
   KnowledgeStore
 } from "../knowledge/store.js";
-import type { FunctionHandler, TextGenerationProvider } from "../types.js";
+import { buildPostbackQuickReply } from "../line-reply.js";
+import {
+  canCreateRequesterScopedSession,
+  requesterMatchesForSource
+} from "../state/session-safety.js";
+import type { ConversationSession, SessionStore } from "../state/session-store.js";
+import type {
+  FunctionHandler,
+  FunctionHandlerContext,
+  JsonRecord,
+  PostbackHandler,
+  TextGenerationProvider,
+  TextMessageHandler
+} from "../types.js";
 import {
   knowledgeAmbiguousResult,
   knowledgeCitationLines,
@@ -23,7 +38,13 @@ export interface QueryKnowledgeOptions {
   store: KnowledgeStore;
   embedding?: EmbeddingClient;
   textGenerator?: TextGenerationProvider;
+  sessionStore?: SessionStore;
+  now?: () => Date;
+  requestIdFactory?: () => string;
 }
+
+const KNOWLEDGE_SELECTION_ACTION = "select_knowledge_source";
+const KNOWLEDGE_SELECTION_TTL_MS = 10 * 60 * 1000;
 
 export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): FunctionHandler {
   return async (rawArgs, context) => {
@@ -71,12 +92,14 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
     if (sourceResolution.status === "unavailable") return knowledgeUnavailableResult();
     if (sourceResolution.status === "not_found") return knowledgeNotFoundResult();
     if (sourceResolution.status === "ambiguous") {
-      return knowledgeAmbiguousResult(sourceResolution.sources);
+      return createKnowledgeAmbiguity(options, sourceResolution.sources, args, context);
     }
-    const targetSource = sourceResolution.source;
+    const targetSource =
+      sourceResolution.status === "resolved" ? sourceResolution.source : undefined;
     if (
       !anchor &&
       args.documentId &&
+      targetSource &&
       !(await anchorAvailable(options.store, context.profile.name, {
         sourceId: targetSource.id,
         documentId: args.documentId,
@@ -97,7 +120,7 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
 
     const anchored = Boolean(
       anchor &&
-      targetSource.id === anchor.sourceId &&
+      targetSource?.id === anchor.sourceId &&
       !args.sourceKey &&
       !args.sourceId &&
       !args.documentId &&
@@ -114,7 +137,11 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       profileName: context.profile.name,
       query: args.query,
       queryEmbedding,
-      sourceId: targetSource.id,
+      sourceId: targetSource?.id,
+      sourceIds:
+        sourceResolution.status === "search_all"
+          ? sourceResolution.sources.map(({ id }) => id)
+          : undefined,
       scopes,
       limit: Math.min(args.limit ?? 8, 8)
     });
@@ -122,20 +149,29 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
 
     if (results.length === 0) return knowledgeNotFoundResult();
 
+    let groundedResults = results;
+    if (sourceResolution.status === "search_all") {
+      const evidenceSources = highestEvidenceSources(results, sourceResolution.sources);
+      if (evidenceSources.length > 1) {
+        return createKnowledgeAmbiguity(options, evidenceSources, args, context);
+      }
+      groundedResults = results.filter(({ source }) => source.id === evidenceSources[0]?.id);
+    }
+
     const answer = await groundedAnswer(
       options.textGenerator,
       context.profile.name,
       args.query,
-      results
+      groundedResults
     );
-    const sources = knowledgeCitationLines(results);
+    const sources = knowledgeCitationLines(groundedResults);
     const replyText = [
       answer,
       "",
       "來源：",
       ...sources.map((source) => `${source.title}：${source.url}`)
     ].join("\n");
-    const agentResult = knowledgeSuccessEnvelope(results);
+    const agentResult = knowledgeSuccessEnvelope(groundedResults);
     return {
       ok: true,
       executedAction: "query_knowledge",
@@ -146,6 +182,48 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       },
       replyText
     };
+  };
+}
+
+export function createQueryKnowledgePostbackHandler(
+  options: QueryKnowledgeOptions & { sessionStore: SessionStore }
+): PostbackHandler {
+  return async (request, context) => {
+    if (!context.profile.enabledFunctions.includes("query_knowledge")) {
+      return { ok: true, replyText: "這個功能目前沒有開放。" };
+    }
+    const selectedIndex = Number(request.params.index);
+    if (
+      request.action !== KNOWLEDGE_SELECTION_ACTION ||
+      !Number.isInteger(selectedIndex) ||
+      selectedIndex < 0
+    ) {
+      return { ok: true, replyText: "這個選擇已失效，請重新查詢。" };
+    }
+    return selectKnowledgeSource(
+      options,
+      await options.sessionStore.get(request.params.requestId),
+      selectedIndex,
+      context
+    );
+  };
+}
+
+export function createQueryKnowledgeTextMessageHandler(
+  options: QueryKnowledgeOptions & { sessionStore: SessionStore }
+): TextMessageHandler {
+  return {
+    matches: async (request, context) =>
+      context.profile.enabledFunctions.includes("query_knowledge") &&
+      numericSelectionToIndex(request.text) !== undefined &&
+      Boolean(await findKnowledgeSelection(options.sessionStore, context)),
+    handle: async (request, context) => {
+      const selectedIndex = numericSelectionToIndex(request.text);
+      if (selectedIndex === undefined) return undefined;
+      const session = await findKnowledgeSelection(options.sessionStore, context);
+      if (!session) return undefined;
+      return selectKnowledgeSource(options, session, selectedIndex, context);
+    }
   };
 }
 
@@ -191,6 +269,7 @@ async function anchorAvailable(
 
 type SourceResolution =
   | { status: "resolved"; source: KnowledgeSourceRecord }
+  | { status: "search_all"; sources: KnowledgeSourceRecord[] }
   | { status: "ambiguous"; sources: KnowledgeSourceRecord[] }
   | { status: "not_found" }
   | { status: "unavailable" };
@@ -259,7 +338,9 @@ function resolveSource(input: {
   }
   return input.sources.length === 1
     ? { status: "resolved", source: input.sources[0]!.source }
-    : { status: "not_found" };
+    : input.sources.length > 1
+      ? { status: "search_all", sources: input.sources.map(({ source }) => source) }
+      : { status: "not_found" };
 }
 
 interface RetrievalScope {
@@ -304,7 +385,8 @@ async function searchScopes(
     profileName: string;
     query: string;
     queryEmbedding?: number[];
-    sourceId: string;
+    sourceId?: string;
+    sourceIds?: string[];
     scopes: RetrievalScope[];
     limit: number;
   }
@@ -318,6 +400,7 @@ async function searchScopes(
         embeddingProvider: options.embedding?.provider,
         embeddingModel: options.embedding?.model,
         sourceId: input.sourceId,
+        sourceIds: input.sourceIds,
         ...scope,
         limit: input.limit
       });
@@ -327,6 +410,111 @@ async function searchScopes(
   } catch {
     return undefined;
   }
+}
+
+function highestEvidenceSources(
+  results: KnowledgeSearchResult[],
+  eligibleSources: KnowledgeSourceRecord[]
+): KnowledgeSourceRecord[] {
+  const topScore = results[0]?.score;
+  if (topScore === undefined) return [];
+  const topSourceIds = new Set(
+    results.filter(({ score }) => Math.abs(score - topScore) <= 1e-9).map(({ source }) => source.id)
+  );
+  return eligibleSources.filter(({ id }) => topSourceIds.has(id));
+}
+
+async function createKnowledgeAmbiguity(
+  options: QueryKnowledgeOptions,
+  sources: KnowledgeSourceRecord[],
+  args: JsonRecord,
+  context: FunctionHandlerContext
+) {
+  const ordered = [...sources].sort((left, right) => left.sourceKey.localeCompare(right.sourceKey));
+  const result = knowledgeAmbiguousResult(ordered);
+  if (!options.sessionStore || !canCreateRequesterScopedSession(context.event.source))
+    return result;
+  const now = options.now?.() ?? new Date();
+  const requestId = options.requestIdFactory?.() ?? randomUUID();
+  await options.sessionStore.set({
+    id: requestId,
+    type: "selection",
+    action: "query_knowledge",
+    profileName: context.profile.name,
+    requesterUserId: context.event.source.userId,
+    source: context.event.source,
+    arguments: args,
+    items: ordered.map((source) => ({
+      id: source.id,
+      name: source.routingDisplayName ?? source.displayName,
+      driveId: source.id
+    })),
+    expiresAt: new Date(now.getTime() + KNOWLEDGE_SELECTION_TTL_MS).toISOString()
+  });
+  return {
+    ...result,
+    quickReplies: ordered.map((source, index) =>
+      buildPostbackQuickReply(
+        source.routingDisplayName ?? source.displayName,
+        `action=${KNOWLEDGE_SELECTION_ACTION}&requestId=${encodeURIComponent(requestId)}&index=${index}`
+      )
+    )
+  };
+}
+
+async function findKnowledgeSelection(sessionStore: SessionStore, context: FunctionHandlerContext) {
+  return sessionStore.findSelection({
+    action: "query_knowledge",
+    profileName: context.profile.name,
+    source: context.event.source,
+    requesterUserId: context.event.source.userId
+  });
+}
+
+async function selectKnowledgeSource(
+  options: QueryKnowledgeOptions & { sessionStore: SessionStore },
+  session: ConversationSession | undefined,
+  selectedIndex: number,
+  context: FunctionHandlerContext
+) {
+  if (
+    !session ||
+    session.type !== "selection" ||
+    session.action !== "query_knowledge" ||
+    session.profileName !== context.profile.name ||
+    !sameLineSource(session.source, context.event.source) ||
+    !requesterMatchesForSource(
+      context.event.source,
+      session.requesterUserId,
+      context.event.source.userId
+    )
+  ) {
+    return { ok: true, replyText: "這個選擇已失效，請重新查詢。" };
+  }
+  const selected = session.items[selectedIndex];
+  if (!selected) return { ok: true, replyText: "請只回覆清單中的數字，例如：1。" };
+  await options.sessionStore.delete(session.id);
+  return createQueryKnowledgeHandler(options)(
+    { ...(session.arguments ?? {}), sourceId: selected.id },
+    context
+  );
+}
+
+function numericSelectionToIndex(text: string): number | undefined {
+  const match = text.match(/^\s*(\d{1,2})\s*$/u);
+  if (!match) return undefined;
+  const selected = Number(match[1]);
+  return Number.isInteger(selected) && selected >= 1 ? selected - 1 : undefined;
+}
+
+function sameLineSource(
+  left: FunctionHandlerContext["event"]["source"],
+  right: FunctionHandlerContext["event"]["source"]
+) {
+  if (left.type !== right.type) return false;
+  if (left.type === "group" && right.type === "group") return left.groupId === right.groupId;
+  if (left.type === "room" && right.type === "room") return left.roomId === right.roomId;
+  return left.type === "user" && right.type === "user" && left.userId === right.userId;
 }
 
 async function groundedAnswer(

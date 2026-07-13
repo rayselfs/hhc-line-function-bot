@@ -43,7 +43,11 @@ import type { EmbeddingClient } from "../clients/ollama-embedding.js";
 import type { KnowledgeStore } from "../knowledge/store.js";
 import { createResourceBinaryPublisher } from "./resource-binary-publisher.js";
 import { createSaveResourceHandler } from "./save-resource.js";
-import { createQueryKnowledgeHandler } from "./query-knowledge.js";
+import {
+  createQueryKnowledgeHandler,
+  createQueryKnowledgePostbackHandler,
+  createQueryKnowledgeTextMessageHandler
+} from "./query-knowledge.js";
 import {
   createQueryScheduleMemoryHandler,
   createSaveScheduleHandler,
@@ -372,7 +376,30 @@ export const FUNCTION_MODULES: FunctionModule[] = [
               query_knowledge: createQueryKnowledgeHandler({
                 store: clients.knowledgeStore,
                 embedding: clients.embedding,
-                textGenerator: clients.knowledgeTextGenerator
+                textGenerator: clients.knowledgeTextGenerator,
+                sessionStore: clients.sessionStore,
+                now: clients.now,
+                requestIdFactory: clients.requestIdFactory
+              })
+            },
+            postbacks: {
+              select_knowledge_source: createQueryKnowledgePostbackHandler({
+                store: clients.knowledgeStore,
+                embedding: clients.embedding,
+                textGenerator: clients.knowledgeTextGenerator,
+                sessionStore: clients.sessionStore,
+                now: clients.now,
+                requestIdFactory: clients.requestIdFactory
+              })
+            },
+            textMessages: {
+              knowledge_numeric_selection: createQueryKnowledgeTextMessageHandler({
+                store: clients.knowledgeStore,
+                embedding: clients.embedding,
+                textGenerator: clients.knowledgeTextGenerator,
+                sessionStore: clients.sessionStore,
+                now: clients.now,
+                requestIdFactory: clients.requestIdFactory
               })
             }
           }

@@ -7,16 +7,26 @@ import type {
   KnowledgeChunkInput,
   KnowledgeDocumentRecord,
   KnowledgeSearchResult,
+  KnowledgeSnapshotDocumentInput,
   KnowledgeSourceInput,
   KnowledgeSourceRecord,
-  KnowledgeStore
+  KnowledgeStore,
+  PublishKnowledgeSourceSnapshotInput
 } from "./store.js";
 
-export interface PgKnowledgeQueryable {
+export interface PgKnowledgeExecutor {
   query(
     sql: string,
     values?: unknown[]
   ): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+}
+
+export interface PgKnowledgeQueryable extends PgKnowledgeExecutor {
+  connect?(): Promise<PgKnowledgeClient>;
+}
+
+export interface PgKnowledgeClient extends PgKnowledgeExecutor {
+  release(): void;
 }
 
 export class PostgresKnowledgeStore implements KnowledgeStore {
@@ -26,12 +36,19 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     const staged = normalizeKnowledgeSourceRoutingFields(input);
     const result = await this.db.query(
       `insert into knowledge_sources
-       (id, profile_name, source_key, display_name, adapter_type, external_root_id, root_url, enabled, expires_at, admin_aliases, admin_topics, admin_sample_queries)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       (id, profile_name, source_key, display_name, adapter_type, external_root_id, root_url,
+        enabled, expires_at, staged_display_name, staged_adapter_type, staged_external_root_id,
+        staged_root_url, staged_enabled, staged_expires_at, staging_revision,
+        admin_aliases, admin_topics, admin_sample_queries)
+       values ($1,$2,$3,$4,$5,$6,$7,false,null,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        on conflict (profile_name, source_key) do update set
-         display_name=excluded.display_name, adapter_type=excluded.adapter_type,
-         external_root_id=excluded.external_root_id, root_url=excluded.root_url,
-         enabled=excluded.enabled, expires_at=excluded.expires_at,
+         staged_display_name=excluded.staged_display_name,
+         staged_adapter_type=excluded.staged_adapter_type,
+         staged_external_root_id=excluded.staged_external_root_id,
+         staged_root_url=excluded.staged_root_url,
+         staged_enabled=excluded.staged_enabled,
+         staged_expires_at=excluded.staged_expires_at,
+         staging_revision=excluded.staging_revision,
          admin_aliases=excluded.admin_aliases, admin_topics=excluded.admin_topics,
          admin_sample_queries=excluded.admin_sample_queries,
          updated_at=now()
@@ -46,6 +63,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         input.rootUrl,
         input.enabled,
         input.expiresAt ?? null,
+        randomUUID(),
         staged.aliases,
         staged.topics,
         staged.sampleQueries
@@ -86,14 +104,14 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     if (input.lastSyncedAt || input.routingDisplayName) {
       const current = (
         await this.db.query(
-          "select display_name, admin_aliases, admin_topics, admin_sample_queries from knowledge_sources where profile_name=$1 and source_key=$2",
+          "select staged_display_name, admin_aliases, admin_topics, admin_sample_queries from knowledge_sources where profile_name=$1 and source_key=$2",
           [input.profileName, input.sourceKey]
         )
       ).rows[0];
       if (!current) return undefined;
       promoted = normalizeKnowledgeSourceRoutingFields({
         sourceKey: input.sourceKey,
-        displayName: input.routingDisplayName ?? String(current.display_name),
+        displayName: input.routingDisplayName ?? String(current.staged_display_name),
         aliases: input.aliases ?? stringArray(current.admin_aliases),
         topics: input.topics ?? stringArray(current.admin_topics),
         sampleQueries: input.sampleQueries ?? stringArray(current.admin_sample_queries)
@@ -101,15 +119,26 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     }
     const result = await this.db.query(
       `update knowledge_sources set
-         enabled=coalesce($3, enabled),
-         disabled_at=case when $3::boolean=false then coalesce(disabled_at, now()) when $3::boolean=true then null else disabled_at end,
-         purge_after=case when $3::boolean=true then null else purge_after end,
+         display_name=case when $11 then staged_display_name else display_name end,
+         adapter_type=case when $11 then staged_adapter_type else adapter_type end,
+         external_root_id=case when $11 then staged_external_root_id else external_root_id end,
+         root_url=case when $11 then staged_root_url else root_url end,
+         expires_at=case when $11 then staged_expires_at else expires_at end,
+         enabled=case when $3::boolean is not null then $3 when $11 then staged_enabled else enabled end,
+         staged_enabled=coalesce($3, staged_enabled),
+         disabled_at=case
+           when $3::boolean=false then coalesce(disabled_at, now())
+           when $3::boolean=true then null
+           when $11 and staged_enabled=false then coalesce(disabled_at, now())
+           when $11 and staged_enabled=true then null
+           else disabled_at end,
+         purge_after=case when $3::boolean=true or ($11 and staged_enabled=true) then null else purge_after end,
          sync_status=coalesce($4, sync_status),
          sync_error_code=case when $4::text is null then sync_error_code else $5 end,
          last_synced_at=coalesce($6::timestamptz, last_synced_at),
          routing_display_name=coalesce($7::text, routing_display_name),
          aliases=coalesce($8::text[], aliases), topics=coalesce($9::text[], topics),
-         sample_queries=coalesce($10::text[], sample_queries), updated_at=now()
+        sample_queries=coalesce($10::text[], sample_queries), updated_at=now()
        where profile_name=$1 and source_key=$2 returning *`,
       [
         input.profileName,
@@ -121,7 +150,8 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         promoted?.displayName ?? null,
         promoted?.aliases ?? null,
         promoted?.topics ?? null,
-        promoted?.sampleQueries ?? null
+        promoted?.sampleQueries ?? null,
+        Boolean(promoted)
       ]
     );
     return result.rows[0] ? safeMapSource(result.rows[0]) : undefined;
@@ -133,6 +163,84 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
       [input.profileName, input.sourceKey]
     );
     return (result.rowCount ?? result.rows.length) > 0;
+  }
+
+  async publishSourceSnapshot(
+    input: PublishKnowledgeSourceSnapshotInput
+  ): Promise<KnowledgeSourceRecord> {
+    return this.transaction(async (db) => {
+      const locked = await db.query(
+        "select * from knowledge_sources where id=$1 and staging_revision=$2::uuid for update",
+        [input.sourceId, input.expectedStagingRevision]
+      );
+      if (!locked.rows[0]) throw new Error("knowledge_source_staging_changed");
+
+      const chunkIds = new Map<string, string>();
+      for (const document of input.documents) {
+        const documentId = await replaceSnapshotDocument(db, input.sourceId, document, chunkIds);
+        chunkIds.set(`${document.externalId}:document`, documentId);
+      }
+      const liveExternalIds = input.documents.map(({ externalId }) => externalId);
+      await db.query(
+        `update knowledge_documents set deleted_at=$3
+         where source_id=$1 and deleted_at is null and not (external_id=any($2::text[]))`,
+        [input.sourceId, liveExternalIds, input.syncedAt]
+      );
+      await db.query(
+        `delete from knowledge_embeddings e using knowledge_chunks c, knowledge_documents d
+         where e.chunk_id=c.id and c.document_id=d.id and d.source_id=$1
+           and (d.deleted_at is not null or c.active=false)`,
+        [input.sourceId]
+      );
+      for (const embedding of input.embeddings) {
+        validateSnapshotEmbedding(embedding);
+        const chunkId = chunkIds.get(`${embedding.documentExternalId}:${embedding.contentHash}`);
+        if (!chunkId) throw new Error("knowledge_embedding_chunk_missing");
+        await db.query(
+          `insert into knowledge_embeddings (chunk_id,provider,model,dimensions,embedding,content_hash)
+           values ($1,$2,$3,$4,$5::vector,$6)
+           on conflict (chunk_id,provider,model) do update set dimensions=excluded.dimensions,
+           embedding=excluded.embedding, content_hash=excluded.content_hash, embedded_at=now()`,
+          [
+            chunkId,
+            embedding.provider,
+            embedding.model,
+            embedding.dimensions,
+            vectorLiteral(embedding.embedding),
+            embedding.contentHash
+          ]
+        );
+      }
+      const promoted = normalizeKnowledgeSourceRoutingFields({
+        sourceKey: requiredString(locked.rows[0].source_key),
+        displayName: input.routingDisplayName,
+        aliases: input.aliases,
+        topics: input.topics,
+        sampleQueries: input.sampleQueries
+      });
+      const result = await db.query(
+        `update knowledge_sources set
+           display_name=staged_display_name, adapter_type=staged_adapter_type,
+           external_root_id=staged_external_root_id, root_url=staged_root_url,
+           enabled=staged_enabled, expires_at=staged_expires_at,
+           disabled_at=case when staged_enabled then null else coalesce(disabled_at,$3::timestamptz) end,
+           purge_after=case when staged_enabled then null else purge_after end,
+           routing_display_name=$4, aliases=$5, topics=$6, sample_queries=$7,
+           sync_status=$8, sync_error_code=null, last_synced_at=$3, updated_at=now()
+         where id=$1 and staging_revision=$2::uuid returning *`,
+        [
+          input.sourceId,
+          input.expectedStagingRevision,
+          input.syncedAt,
+          promoted.displayName,
+          promoted.aliases,
+          promoted.topics,
+          promoted.sampleQueries,
+          input.syncStatus
+        ]
+      );
+      return requiredSource(result.rows[0]);
+    });
   }
 
   async replaceDocument(input: {
@@ -299,6 +407,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     embeddingProvider?: string;
     embeddingModel?: string;
     sourceId?: string;
+    sourceIds?: string[];
     sourceKey?: string;
     documentId?: string;
     sectionKey?: string;
@@ -327,6 +436,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
           and d.deleted_at is null and c.active=true
           and ($4::uuid is null or s.id=$4) and ($5::text is null or s.source_key=$5)
           and ($6::uuid is null or d.id=$6) and ($11::text is null or c.section_key=$11)
+          and ($12::uuid[] is null or s.id=any($12::uuid[]))
       ) select *, lexical_score+vector_score+ordinal_score score from candidates
         where lexical_score+vector_score+ordinal_score > 0 order by score desc, ordinal asc limit $8`,
       [
@@ -340,7 +450,8 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         input.limit ?? 8,
         input.embeddingProvider ?? null,
         input.embeddingModel ?? null,
-        input.sectionKey ?? null
+        input.sectionKey ?? null,
+        input.sourceIds ?? null
       ]
     );
     return result.rows.flatMap((row) => {
@@ -365,6 +476,102 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     );
     return result.rowCount ?? result.rows.length;
   }
+
+  private async transaction<T>(run: (db: PgKnowledgeQueryable) => Promise<T>): Promise<T> {
+    const client = this.db.connect ? await this.db.connect() : undefined;
+    const db = client ?? this.db;
+    let began = false;
+    try {
+      await db.query("begin");
+      began = true;
+      const result = await run(db);
+      await db.query("commit");
+      return result;
+    } catch (error) {
+      if (began) await db.query("rollback");
+      throw error;
+    } finally {
+      client?.release();
+    }
+  }
+}
+
+async function replaceSnapshotDocument(
+  db: PgKnowledgeQueryable,
+  sourceId: string,
+  input: KnowledgeSnapshotDocumentInput,
+  chunkIds: Map<string, string>
+): Promise<string> {
+  const docResult = await db.query(
+    `insert into knowledge_documents (id, source_id, external_id, title, url, properties)
+     values ($1,$2,$3,$4,$5,$6::jsonb)
+     on conflict (source_id, external_id) do update set title=excluded.title, url=excluded.url,
+     properties=excluded.properties, deleted_at=null, updated_at=now() returning *`,
+    [
+      randomUUID(),
+      sourceId,
+      input.externalId,
+      input.title,
+      input.url,
+      JSON.stringify(input.properties ?? {})
+    ]
+  );
+  const documentId = requiredString(docResult.rows[0]?.id);
+  await db.query("delete from knowledge_nodes where document_id=$1", [documentId]);
+  for (const node of input.nodes) {
+    await db.query(
+      `insert into knowledge_nodes (id,document_id,external_id,parent_external_id,node_type,ordinal,text_content,metadata)
+       values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
+      [
+        randomUUID(),
+        documentId,
+        node.externalId,
+        node.parentExternalId ?? null,
+        node.type,
+        node.ordinal,
+        node.text,
+        JSON.stringify(node.metadata ?? {})
+      ]
+    );
+  }
+  const liveHashes: string[] = [];
+  for (const chunk of input.chunks) {
+    liveHashes.push(chunk.contentHash);
+    const result = await db.query(
+      `insert into knowledge_chunks (id,document_id,heading_path,section_key,ordinal,content,content_hash,metadata,active)
+       values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,true)
+       on conflict (document_id,content_hash) do update set heading_path=excluded.heading_path,
+       section_key=excluded.section_key, ordinal=excluded.ordinal, content=excluded.content,
+       metadata=excluded.metadata, active=true returning *`,
+      [
+        randomUUID(),
+        documentId,
+        chunk.headingPath,
+        knowledgeSectionKey(chunk.headingPath),
+        chunk.ordinal,
+        chunk.content,
+        chunk.contentHash,
+        JSON.stringify(chunk.metadata ?? {})
+      ]
+    );
+    const chunkId = requiredString(result.rows[0]?.id);
+    chunkIds.set(`${input.externalId}:${chunk.contentHash}`, chunkId);
+  }
+  await db.query(
+    "update knowledge_chunks set active=false where document_id=$1 and not (content_hash = any($2::text[]))",
+    [documentId, liveHashes]
+  );
+  return documentId;
+}
+
+function validateSnapshotEmbedding(input: { dimensions: number; embedding: number[] }): void {
+  if (
+    input.dimensions <= 0 ||
+    input.embedding.length !== input.dimensions ||
+    input.embedding.some((value) => !Number.isFinite(value))
+  ) {
+    throw new Error("knowledge_embedding_invalid");
+  }
 }
 
 function vectorLiteral(vector: number[]): string {
@@ -375,7 +582,7 @@ function iso(value: unknown): string | undefined {
 }
 function mapSource(row: Record<string, unknown>): KnowledgeSourceRecord {
   const id = requiredUuid(row.id);
-  const staged = normalizeKnowledgeSourceRoutingFields({
+  const live = normalizeKnowledgeSourceRoutingFields({
     sourceKey: requiredString(row.source_key),
     displayName: requiredString(row.display_name),
     aliases: stringArray(row.admin_aliases),
@@ -385,7 +592,7 @@ function mapSource(row: Record<string, unknown>): KnowledgeSourceRecord {
   const routingDisplayName = optionalString(row.routing_display_name);
   const promoted = routingDisplayName
     ? normalizeKnowledgeSourceRoutingFields({
-        sourceKey: staged.sourceKey,
+        sourceKey: live.sourceKey,
         displayName: routingDisplayName,
         aliases: stringArray(row.aliases),
         topics: stringArray(row.topics),
@@ -395,11 +602,20 @@ function mapSource(row: Record<string, unknown>): KnowledgeSourceRecord {
   return {
     id,
     profileName: requiredString(row.profile_name),
-    sourceKey: staged.sourceKey,
-    displayName: staged.displayName,
-    adminAliases: staged.aliases,
-    adminTopics: staged.topics,
-    adminSampleQueries: staged.sampleQueries,
+    sourceKey: live.sourceKey,
+    displayName: live.displayName,
+    stagedDisplayName: optionalString(row.staged_display_name) ?? live.displayName,
+    stagedAdapterType: "notion",
+    stagedExternalRootId:
+      optionalString(row.staged_external_root_id) ?? requiredString(row.external_root_id),
+    stagedRootUrl: optionalString(row.staged_root_url) ?? requiredString(row.root_url),
+    stagedEnabled:
+      row.staged_enabled === undefined ? Boolean(row.enabled) : Boolean(row.staged_enabled),
+    stagedExpiresAt: iso(row.staged_expires_at),
+    stagingRevision: optionalUuid(row.staging_revision) ?? id,
+    adminAliases: live.aliases,
+    adminTopics: live.topics,
+    adminSampleQueries: live.sampleQueries,
     routingDisplayName: promoted?.displayName,
     aliases: promoted?.aliases ?? [],
     topics: promoted?.topics ?? [],
@@ -444,6 +660,13 @@ function requiredUuid(value: unknown): string {
     throw new Error("knowledge_identity_invalid");
   }
   return candidate;
+}
+function optionalUuid(value: unknown): string | undefined {
+  try {
+    return value === undefined || value === null ? undefined : requiredUuid(value);
+  } catch {
+    return undefined;
+  }
 }
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)

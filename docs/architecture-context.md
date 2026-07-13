@@ -208,18 +208,24 @@ handler:
 
 Dynamic knowledge uses a separate `knowledge_*` read model rather than catalog
 items or schedule rows. Admin direct-chat actions register Notion roots, the sync
-service recursively reads blocks and incrementally embeds changed chunks, and
+service recursively reads blocks and prepares the complete chunk/vector set before publication, and
 `query_knowledge` combines lexical and pgvector retrieval before a grounded LLM
 answer. The dedicated `bge-m3` model runs on the private Ollama host; PostgreSQL
 stores only vectors and version metadata. Bounded routing summaries come only
 from the promoted last-known-good snapshot: staged administrator fields plus
 document titles and headings from the latest successful sync. Failed syncs
-preserve the previous snapshot, and never-successfully-synced rows remain visible
+preserve the previous live content, core/lifecycle fields, and routing snapshot, and never-successfully-synced rows remain visible
 to admins but ineligible for routing, anchors, and retrieval. The controlled
 planner never receives chunks, URLs, or answer content. Successful results persist
 opaque source/document/hashed-section ids with generic labels and ordinals;
 follow-ups fall back section to document to source, never profile-wide, unless the
-same capped metadata provider proves one unique source switch.
+same capped metadata provider proves one unique source switch. Initial body-only
+queries search only that capped eligible source set: unique top-source evidence is
+answered, while a tied cross-source top score creates an existing generic,
+requester-scoped selection session that maps numeric/postback choices to opaque
+source ids. PostgreSQL publishes source documents, tombstones, chunks, embeddings,
+promoted metadata, lifecycle/core fields, and sync health in one transaction; the
+memory store exposes the same one-operation snapshot contract.
 
 Do not use it for unrestricted chat logging. Normal group chatter must not be
 saved. Temporary Graph sharing links must not be saved; store drive/item ids and

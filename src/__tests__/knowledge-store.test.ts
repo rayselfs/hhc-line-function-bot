@@ -113,4 +113,183 @@ describe("knowledge store", () => {
 
     expect(results[0]?.content).toContain("日月潭");
   });
+
+  it("keeps the complete prior live snapshot when snapshot validation fails", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const source = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "sop",
+      displayName: "舊 SOP",
+      adapterType: "notion",
+      externalRootId: "old-root",
+      rootUrl: "https://example.test/old",
+      enabled: true
+    });
+    await store.replaceDocument({
+      sourceId: source.id,
+      externalId: "doc-a",
+      title: "舊文件",
+      url: "https://example.test/old-doc",
+      nodes: [],
+      chunks: [{ headingPath: [], ordinal: 0, content: "舊版關閉設備。", contentHash: "old" }]
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "sop",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-12T00:00:00Z"
+    });
+    await expect(
+      (
+        store as unknown as {
+          publishSourceSnapshot(input: Record<string, unknown>): Promise<unknown>;
+        }
+      ).publishSourceSnapshot({
+        sourceId: source.id,
+        expectedStagingRevision: (source as unknown as { stagingRevision?: string })
+          .stagingRevision,
+        syncedAt: "2026-07-13T00:00:00Z",
+        syncStatus: "ready",
+        routingDisplayName: "新 SOP",
+        aliases: [],
+        topics: [],
+        sampleQueries: [],
+        documents: [
+          {
+            externalId: "doc-a",
+            title: "新文件",
+            url: "https://example.test/new-doc",
+            properties: {},
+            nodes: [],
+            chunks: [{ headingPath: [], ordinal: 0, content: "新版關閉設備。", contentHash: "new" }]
+          }
+        ],
+        embeddings: [
+          {
+            documentExternalId: "doc-a",
+            contentHash: "new",
+            provider: "ollama",
+            model: "bge-m3",
+            dimensions: 3,
+            embedding: [1, 0]
+          }
+        ]
+      })
+    ).rejects.toThrow("knowledge_embedding_invalid");
+
+    await expect(store.search({ profileName: "helper", query: "舊版關閉設備" })).resolves.toEqual([
+      expect.objectContaining({ content: "舊版關閉設備。" })
+    ]);
+    const fuzzyResults = await store.search({ profileName: "helper", query: "新版關閉設備" });
+    expect(fuzzyResults).not.toEqual([]);
+    expect(fuzzyResults.every(({ content }) => content === "舊版關閉設備。")).toBe(true);
+  });
+
+  it("stages a re-added disabled source without changing its live core or lifecycle", async () => {
+    const store = new InMemoryKnowledgeStore();
+    await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "舊名稱",
+      adapterType: "notion",
+      externalRootId: "old-root",
+      rootUrl: "https://example.test/old",
+      enabled: true
+    });
+    await store.updateSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      syncStatus: "ready",
+      lastSyncedAt: "2026-07-12T00:00:00Z"
+    });
+    await store.updateSource({ profileName: "helper", sourceKey: "retreat", enabled: false });
+
+    const restaged = await store.upsertSource({
+      profileName: "helper",
+      sourceKey: "retreat",
+      displayName: "新名稱",
+      adapterType: "notion",
+      externalRootId: "new-root",
+      rootUrl: "https://example.test/new",
+      enabled: true,
+      expiresAt: "2027-01-01T00:00:00Z"
+    });
+
+    expect(restaged).toMatchObject({
+      displayName: "舊名稱",
+      externalRootId: "old-root",
+      rootUrl: "https://example.test/old",
+      enabled: false,
+      stagedDisplayName: "新名稱",
+      stagedExternalRootId: "new-root",
+      stagedRootUrl: "https://example.test/new",
+      stagedEnabled: true,
+      stagedExpiresAt: "2027-01-01T00:00:00Z"
+    });
+  });
+
+  it("publishing one source snapshot preserves embeddings owned by other sources", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const sources = [];
+    for (const sourceKey of ["alpha", "beta"]) {
+      const source = await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: sourceKey,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      const document = await store.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: sourceKey,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [
+          { headingPath: [], ordinal: 0, content: `${sourceKey} content`, contentHash: sourceKey }
+        ]
+      });
+      await store.upsertEmbedding({
+        chunkId: document.chunks[0]!.id,
+        provider: "ollama",
+        model: "bge-m3",
+        dimensions: 3,
+        embedding: [1, 0, 0],
+        contentHash: sourceKey
+      });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z"
+      });
+      sources.push(source);
+    }
+
+    await store.publishSourceSnapshot({
+      sourceId: sources[0]!.id,
+      expectedStagingRevision: sources[0]!.stagingRevision,
+      syncedAt: "2026-07-13T01:00:00Z",
+      syncStatus: "ready",
+      routingDisplayName: "alpha",
+      aliases: [],
+      topics: [],
+      sampleQueries: [],
+      documents: [],
+      embeddings: []
+    });
+
+    await expect(
+      store.search({
+        profileName: "helper",
+        query: "",
+        queryEmbedding: [1, 0, 0],
+        sourceId: sources[1]!.id
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({ source: expect.objectContaining({ sourceKey: "beta" }) })
+    ]);
+  });
 });

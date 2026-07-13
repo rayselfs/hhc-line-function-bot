@@ -212,7 +212,8 @@ describe("knowledge routing metadata", () => {
       })
     ]);
     expect(source).toMatchObject({
-      displayName: "新名稱",
+      displayName: "舊名稱",
+      stagedDisplayName: "新名稱",
       adminAliases: ["新管理別名"],
       adminTopics: ["新管理主題"],
       adminSampleQueries: ["新問題"]
@@ -297,5 +298,28 @@ describe("knowledge routing metadata", () => {
     ).toEqual([
       expect.objectContaining({ capability: "query_knowledge", reason: "knowledge_metadata" })
     ]);
+  });
+
+  it("matches multiword and hyphenated Latin metadata only as contiguous token sequences", () => {
+    const sources = [
+      {
+        sourceKey: "alpha-course-source",
+        displayName: "Alpha Course Handbook",
+        aliases: ["Alpha-Course"],
+        topics: ["Small Group Training"],
+        sampleQueries: []
+      }
+    ];
+
+    expect(matchingKnowledgeRoutingMetadata("When is the alpha course?", sources)).toEqual([
+      sources[0]
+    ]);
+    expect(matchingKnowledgeRoutingMetadata("Read the Alpha-Course handbook", sources)).toEqual([
+      sources[0]
+    ]);
+    expect(matchingKnowledgeRoutingMetadata("Alpha advanced Course", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("al", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("use alpha-course-source here", sources)).toEqual([]);
+    expect(matchingKnowledgeRoutingMetadata("alpha-course-source", sources)).toEqual([sources[0]]);
   });
 });

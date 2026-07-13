@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InMemoryKnowledgeStore } from "../knowledge/store.js";
-import { createQueryKnowledgeHandler } from "../functions/query-knowledge.js";
+import {
+  createQueryKnowledgeHandler,
+  createQueryKnowledgePostbackHandler,
+  createQueryKnowledgeTextMessageHandler
+} from "../functions/query-knowledge.js";
+import { InMemorySessionStore } from "../state/session-store.js";
 import type { BotProfileConfig } from "../types.js";
 
 const profile = { name: "helper", enabledFunctions: ["query_knowledge"] } as BotProfileConfig;
@@ -372,6 +377,185 @@ describe("query_knowledge", () => {
       expect(JSON.stringify(result.agentResult)).not.toMatch(/https?:|集合資料/iu);
       expect(JSON.stringify(result.agentResult)).not.toMatch(/alpha 手冊|beta 手冊/u);
     }
+  });
+
+  it("retrieves a generic body-only query across only the capped eligible sources", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const sources = [];
+    for (const [sourceKey, content] of [
+      ["alpha", "聚會結束後請關閉音控設備。"],
+      ["beta", "兒童教室的玩具要分類收好。"]
+    ] as const) {
+      const source = await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `${sourceKey} 手冊`,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      await store.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: `${sourceKey} 文件`,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [{ headingPath: [], ordinal: 0, content, contentHash: `${sourceKey}-hash` }]
+      });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z"
+      });
+      sources.push(source);
+    }
+    const search = vi.spyOn(store, "search");
+    const result = await createQueryKnowledgeHandler({ store })(
+      { query: "關閉音控設備" },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "user", userId: "u" },
+          message: { type: "text", text: "關閉音控設備" }
+        }
+      }
+    );
+
+    expect(result.replyText).toContain("聚會結束後請關閉音控設備");
+    expect(result.continuation?.resultReferences).toEqual(
+      expect.objectContaining({ sourceId: sources[0]!.id })
+    );
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceIds: sources.map(({ id }) => id) })
+    );
+  });
+
+  it("stores an opaque requester-scoped selection when top evidence ties across sources", async () => {
+    const store = new InMemoryKnowledgeStore();
+    const fixedNow = () => new Date("2026-07-13T00:00:00Z");
+    const sessionStore = new InMemorySessionStore({ now: fixedNow });
+    const sources = [];
+    for (const sourceKey of ["alpha", "beta"]) {
+      const source = await store.upsertSource({
+        profileName: "helper",
+        sourceKey,
+        displayName: `${sourceKey} 手冊`,
+        adapterType: "notion",
+        externalRootId: `${sourceKey}-root`,
+        rootUrl: `https://example.test/${sourceKey}`,
+        enabled: true
+      });
+      await store.replaceDocument({
+        sourceId: source.id,
+        externalId: `${sourceKey}-doc`,
+        title: `${sourceKey} 文件`,
+        url: `https://example.test/${sourceKey}-doc`,
+        nodes: [],
+        chunks: [
+          {
+            headingPath: [],
+            ordinal: 0,
+            content: "集合時間是晚上七點。",
+            contentHash: `${sourceKey}-hash`
+          }
+        ]
+      });
+      await store.updateSource({
+        profileName: "helper",
+        sourceKey,
+        syncStatus: "ready",
+        lastSyncedAt: "2026-07-13T00:00:00Z"
+      });
+      sources.push(source);
+    }
+    const options = {
+      store,
+      sessionStore,
+      requestIdFactory: () => "knowledge-choice",
+      now: fixedNow
+    };
+    const handler = createQueryKnowledgeHandler(options);
+    const result = await handler(
+      { query: "集合時間" },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "group", groupId: "g", userId: "u" },
+          message: { type: "text", text: "集合時間" }
+        }
+      }
+    );
+
+    expect(result.agentResult).toMatchObject({
+      status: "ambiguous",
+      clarification: { choices: ["知識來源 1", "知識來源 2"] }
+    });
+    expect(result.quickReplies).toEqual([
+      expect.objectContaining({ action: expect.objectContaining({ type: "postback" }) }),
+      expect.objectContaining({ action: expect.objectContaining({ type: "postback" }) })
+    ]);
+    await expect(sessionStore.get("knowledge-choice")).resolves.toMatchObject({
+      type: "selection",
+      action: "query_knowledge",
+      profileName: "helper",
+      requesterUserId: "u",
+      source: { type: "group", groupId: "g", userId: "u" },
+      arguments: { query: "集合時間" },
+      items: sources.map(({ id }, index) => ({
+        id,
+        name: `${index === 0 ? "alpha" : "beta"} 手冊`,
+        driveId: id
+      }))
+    });
+    expect(JSON.stringify(result.agentResult)).not.toMatch(/alpha|beta|手冊/iu);
+
+    const selectedByPostback = await createQueryKnowledgePostbackHandler(options)(
+      {
+        action: "select_knowledge_source",
+        params: { requestId: "knowledge-choice", index: "1" }
+      },
+      {
+        profile,
+        event: {
+          type: "postback",
+          source: { type: "group", groupId: "g", userId: "u" },
+          postback: { data: "action=select_knowledge_source" }
+        }
+      }
+    );
+    expect(selectedByPostback.replyText).toContain("集合時間是晚上七點");
+    expect(selectedByPostback.continuation?.resultReferences).toEqual(
+      expect.objectContaining({ sourceId: sources[1]!.id })
+    );
+
+    await handler(
+      { query: "集合時間" },
+      {
+        profile,
+        event: {
+          type: "message",
+          source: { type: "group", groupId: "g", userId: "u" },
+          message: { type: "text", text: "集合時間" }
+        }
+      }
+    );
+    const numeric = createQueryKnowledgeTextMessageHandler(options);
+    const numericContext = {
+      profile,
+      event: {
+        type: "message" as const,
+        source: { type: "group" as const, groupId: "g", userId: "u" },
+        message: { type: "text" as const, text: "1" }
+      }
+    };
+    await expect(numeric.matches({ text: "1" }, numericContext)).resolves.toBe(true);
+    await expect(numeric.handle({ text: "1" }, numericContext)).resolves.toMatchObject({
+      continuation: { resultReferences: { sourceId: sources[0]!.id } }
+    });
   });
 
   it("accepts an explicit safe section anchor and searches only that section", async () => {

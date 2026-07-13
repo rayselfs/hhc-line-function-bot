@@ -19,6 +19,13 @@ describe("knowledge migrations", () => {
     expect(sql).toContain("admin_topics text[] not null default '{}'");
     expect(sql).toContain("admin_sample_queries text[] not null default '{}'");
     expect(sql).toContain("routing_display_name text");
+    expect(sql).toContain("staged_display_name text");
+    expect(sql).toContain("staged_adapter_type text");
+    expect(sql).toContain("staged_external_root_id text");
+    expect(sql).toContain("staged_root_url text");
+    expect(sql).toContain("staged_enabled boolean");
+    expect(sql).toContain("staged_expires_at timestamptz");
+    expect(sql).toContain("staging_revision uuid");
     expect(sql).toContain("section_key text");
     expect(sql).toMatch(/alter table knowledge_sources add column if not exists aliases/iu);
     expect(sql).toMatch(

@@ -24,6 +24,13 @@ export interface KnowledgeSourceRecord extends Omit<
   "aliases" | "topics" | "sampleQueries"
 > {
   id: string;
+  stagedDisplayName: string;
+  stagedAdapterType: KnowledgeAdapterType;
+  stagedExternalRootId: string;
+  stagedRootUrl: string;
+  stagedEnabled: boolean;
+  stagedExpiresAt?: string;
+  stagingRevision: string;
   adminAliases: string[];
   adminTopics: string[];
   adminSampleQueries: string[];
@@ -80,6 +87,37 @@ export interface KnowledgeSearchResult extends KnowledgeChunkRecord {
   source: KnowledgeSourceRecord;
 }
 
+export interface KnowledgeSnapshotDocumentInput {
+  externalId: string;
+  title: string;
+  url: string;
+  properties?: Record<string, unknown>;
+  nodes: KnowledgeNodeInput[];
+  chunks: KnowledgeChunkInput[];
+}
+
+export interface KnowledgeSnapshotEmbeddingInput {
+  documentExternalId: string;
+  contentHash: string;
+  provider: string;
+  model: string;
+  dimensions: number;
+  embedding: number[];
+}
+
+export interface PublishKnowledgeSourceSnapshotInput {
+  sourceId: string;
+  expectedStagingRevision: string;
+  syncedAt: string;
+  syncStatus: "ready" | "embedding_pending";
+  routingDisplayName: string;
+  aliases: string[];
+  topics: string[];
+  sampleQueries: string[];
+  documents: KnowledgeSnapshotDocumentInput[];
+  embeddings: KnowledgeSnapshotEmbeddingInput[];
+}
+
 export interface KnowledgeStore {
   upsertSource(input: KnowledgeSourceInput): Promise<KnowledgeSourceRecord>;
   listSources(input: {
@@ -99,6 +137,7 @@ export interface KnowledgeStore {
     sampleQueries?: string[];
   }): Promise<KnowledgeSourceRecord | undefined>;
   removeSource(input: { profileName: string; sourceKey: string }): Promise<boolean>;
+  publishSourceSnapshot(input: PublishKnowledgeSourceSnapshotInput): Promise<KnowledgeSourceRecord>;
   replaceDocument(input: {
     sourceId: string;
     externalId: string;
@@ -139,6 +178,7 @@ export interface KnowledgeStore {
     embeddingProvider?: string;
     embeddingModel?: string;
     sourceId?: string;
+    sourceIds?: string[];
     sourceKey?: string;
     documentId?: string;
     sectionKey?: string;
@@ -169,20 +209,30 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       (item) => item.profileName === input.profileName && item.sourceKey === input.sourceKey
     );
     const staged = normalizeKnowledgeSourceRoutingFields(input);
+    const stagingRevision = randomUUID();
     const record: KnowledgeSourceRecord = {
-      ...existing,
-      ...input,
-      sourceKey: staged.sourceKey,
-      displayName: staged.displayName,
+      ...(existing ?? {
+        ...input,
+        sourceKey: staged.sourceKey,
+        displayName: staged.displayName,
+        enabled: false,
+        expiresAt: undefined,
+        id: randomUUID(),
+        aliases: [],
+        topics: [],
+        sampleQueries: [],
+        syncStatus: "pending" as const
+      }),
+      stagedDisplayName: staged.displayName,
+      stagedAdapterType: input.adapterType,
+      stagedExternalRootId: input.externalRootId,
+      stagedRootUrl: input.rootUrl,
+      stagedEnabled: input.enabled,
+      stagedExpiresAt: input.expiresAt,
+      stagingRevision,
       adminAliases: staged.aliases,
       adminTopics: staged.topics,
-      adminSampleQueries: staged.sampleQueries,
-      routingDisplayName: existing?.routingDisplayName,
-      aliases: existing?.aliases ?? [],
-      topics: existing?.topics ?? [],
-      sampleQueries: existing?.sampleQueries ?? [],
-      id: existing?.id ?? randomUUID(),
-      syncStatus: existing?.syncStatus ?? "pending"
+      adminSampleQueries: staged.sampleQueries
     };
     this.sources.set(record.id, record);
     return record;
@@ -214,8 +264,8 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       (item) => item.profileName === input.profileName && item.sourceKey === input.sourceKey
     );
     if (!source) return undefined;
-    const enabled = input.enabled ?? source.enabled;
     const shouldPromote = Boolean(input.lastSyncedAt || input.routingDisplayName);
+    const enabled = input.enabled ?? (shouldPromote ? source.stagedEnabled : source.enabled);
     const promoted = shouldPromote
       ? normalizeKnowledgeSourceRoutingFields({
           sourceKey: source.sourceKey,
@@ -227,7 +277,17 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
       : undefined;
     const updated: KnowledgeSourceRecord = {
       ...source,
+      ...(shouldPromote
+        ? {
+            displayName: source.stagedDisplayName,
+            adapterType: source.stagedAdapterType,
+            externalRootId: source.stagedExternalRootId,
+            rootUrl: source.stagedRootUrl,
+            expiresAt: source.stagedExpiresAt
+          }
+        : {}),
       enabled,
+      ...(input.enabled === undefined ? {} : { stagedEnabled: input.enabled }),
       ...(input.syncStatus ? { syncStatus: input.syncStatus } : {}),
       ...(input.syncErrorCode === undefined
         ? input.syncStatus
@@ -248,6 +308,123 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     };
     this.sources.set(updated.id, updated);
     return updated;
+  }
+
+  async publishSourceSnapshot(
+    input: PublishKnowledgeSourceSnapshotInput
+  ): Promise<KnowledgeSourceRecord> {
+    const source = this.sources.get(input.sourceId);
+    if (!source || source.stagingRevision !== input.expectedStagingRevision) {
+      throw new Error("knowledge_source_staging_changed");
+    }
+    const promoted = normalizeKnowledgeSourceRoutingFields({
+      sourceKey: source.sourceKey,
+      displayName: input.routingDisplayName,
+      aliases: input.aliases,
+      topics: input.topics,
+      sampleQueries: input.sampleQueries
+    });
+    for (const embedding of input.embeddings) {
+      if (
+        embedding.dimensions <= 0 ||
+        embedding.embedding.length !== embedding.dimensions ||
+        embedding.embedding.some((value) => !Number.isFinite(value))
+      ) {
+        throw new Error("knowledge_embedding_invalid");
+      }
+    }
+
+    const priorDocuments = Array.from(this.documents.values()).filter(
+      (document) => document.sourceId === source.id
+    );
+    const priorByExternalId = new Map(
+      priorDocuments.map((document) => [document.externalId, document])
+    );
+    const nextDocuments = new Map(this.documents);
+    const nextEmbeddings = new Map(this.embeddings);
+    const liveDocumentIds = new Set<string>();
+    const chunksByIdentity = new Map<string, KnowledgeChunkRecord>();
+
+    for (const document of input.documents) {
+      const existing = priorByExternalId.get(document.externalId);
+      const documentId = existing?.id ?? randomUUID();
+      const oldChunks = new Map(existing?.chunks.map((chunk) => [chunk.contentHash, chunk]) ?? []);
+      const chunks = document.chunks.map((chunk) => ({
+        ...chunk,
+        id: oldChunks.get(chunk.contentHash)?.id ?? randomUUID(),
+        documentId,
+        sectionKey: knowledgeSectionKey(chunk.headingPath)
+      }));
+      const record: KnowledgeDocumentRecord = {
+        id: documentId,
+        sourceId: source.id,
+        externalId: document.externalId,
+        title: document.title,
+        url: document.url,
+        properties: document.properties,
+        nodes: document.nodes.map((node) => ({ ...node, id: randomUUID() })),
+        chunks
+      };
+      nextDocuments.set(documentId, record);
+      liveDocumentIds.add(documentId);
+      for (const chunk of chunks) {
+        chunksByIdentity.set(`${document.externalId}:${chunk.contentHash}`, chunk);
+      }
+    }
+    for (const document of priorDocuments) {
+      if (liveDocumentIds.has(document.id)) continue;
+      nextDocuments.set(document.id, { ...document, deletedAt: input.syncedAt });
+    }
+
+    const liveChunkIds = new Set(Array.from(chunksByIdentity.values()).map(({ id }) => id));
+    const priorSourceChunkIds = new Set(
+      priorDocuments.flatMap((document) => document.chunks.map(({ id }) => id))
+    );
+    for (const [key, embedding] of nextEmbeddings) {
+      if (priorSourceChunkIds.has(embedding.chunkId) && !liveChunkIds.has(embedding.chunkId)) {
+        nextEmbeddings.delete(key);
+      }
+    }
+    for (const embedding of input.embeddings) {
+      const chunk = chunksByIdentity.get(
+        `${embedding.documentExternalId}:${embedding.contentHash}`
+      );
+      if (!chunk) throw new Error("knowledge_embedding_chunk_missing");
+      const record: EmbeddingRecord = {
+        chunkId: chunk.id,
+        provider: embedding.provider,
+        model: embedding.model,
+        dimensions: embedding.dimensions,
+        embedding: embedding.embedding,
+        contentHash: embedding.contentHash
+      };
+      nextEmbeddings.set(`${chunk.id}:${embedding.provider}:${embedding.model}`, record);
+    }
+
+    const promotedSource: KnowledgeSourceRecord = {
+      ...source,
+      displayName: source.stagedDisplayName,
+      adapterType: source.stagedAdapterType,
+      externalRootId: source.stagedExternalRootId,
+      rootUrl: source.stagedRootUrl,
+      enabled: source.stagedEnabled,
+      expiresAt: source.stagedExpiresAt,
+      disabledAt: source.stagedEnabled ? undefined : (source.disabledAt ?? input.syncedAt),
+      purgeAfter: source.stagedEnabled ? undefined : source.purgeAfter,
+      routingDisplayName: promoted.displayName,
+      aliases: promoted.aliases,
+      topics: promoted.topics,
+      sampleQueries: promoted.sampleQueries,
+      syncStatus: input.syncStatus,
+      syncErrorCode: undefined,
+      lastSyncedAt: input.syncedAt
+    };
+    this.documents.clear();
+    for (const [id, document] of nextDocuments) this.documents.set(id, document);
+    this.embeddings.clear();
+    for (const [key, embedding] of nextEmbeddings) this.embeddings.set(key, embedding);
+    this.sources.set(source.id, promotedSource);
+    return promotedSource;
   }
 
   async removeSource(input: { profileName: string; sourceKey: string }): Promise<boolean> {
@@ -344,6 +521,7 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
     embeddingProvider?: string;
     embeddingModel?: string;
     sourceId?: string;
+    sourceIds?: string[];
     sourceKey?: string;
     documentId?: string;
     sectionKey?: string;
@@ -363,6 +541,7 @@ export class InMemoryKnowledgeStore implements KnowledgeStore {
         continue;
       if (input.sourceKey && source.sourceKey !== input.sourceKey) continue;
       if (input.sourceId && source.id !== input.sourceId) continue;
+      if (input.sourceIds && !input.sourceIds.includes(source.id)) continue;
       if (input.documentId && document.id !== input.documentId) continue;
       for (const chunk of document.chunks) {
         if (input.sectionKey && chunk.sectionKey !== input.sectionKey) continue;

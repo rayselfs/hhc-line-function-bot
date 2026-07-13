@@ -157,7 +157,11 @@ function matchesRoutingSource(
   normalizedText: string,
   source: KnowledgeRoutingMetadata
 ): boolean {
-  if (normalizedText === comparable(source.sourceKey)) return true;
+  const normalizedSourceKey = comparable(source.sourceKey);
+  if (normalizedText === normalizedSourceKey) return true;
+  if (containsContiguousTokens(latinTokens(rawText), latinTokens(source.sourceKey))) {
+    return false;
+  }
   return [source.displayName, ...source.aliases, ...source.topics, ...source.sampleQueries].some(
     (term) => matchesConservativeTerm(rawText, normalizedText, term)
   );
@@ -167,9 +171,10 @@ function matchesConservativeTerm(rawText: string, normalizedText: string, term: 
   const normalizedTerm = comparable(term);
   if (!normalizedTerm || !longEnough(normalizedTerm)) return false;
   if (/^[a-z0-9]+$/u.test(normalizedTerm)) {
-    return latinTokens(rawText).some(
-      (token) => token === normalizedTerm || token.includes(normalizedTerm)
-    );
+    const textTokens = latinTokens(rawText);
+    const termTokens = latinTokens(term);
+    if (termTokens.length > 1) return containsContiguousTokens(textTokens, termTokens);
+    return textTokens.some((token) => token === normalizedTerm || token.includes(normalizedTerm));
   }
   return normalizedText.includes(normalizedTerm);
 }
@@ -184,8 +189,13 @@ function latinTokens(text: string): string[] {
     text
       .normalize("NFKC")
       .toLowerCase()
-      .match(/[a-z0-9-]+/gu) ?? []
+      .match(/[a-z0-9]+/gu) ?? []
   );
+}
+
+function containsContiguousTokens(text: string[], phrase: string[]): boolean {
+  if (phrase.length === 0 || phrase.length > text.length) return false;
+  return text.some((_, offset) => phrase.every((token, index) => text[offset + index] === token));
 }
 
 function titleVariants(value: string): string[] {

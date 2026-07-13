@@ -20,67 +20,59 @@ export async function syncKnowledgeSource(input: {
   now?: () => Date;
 }): Promise<KnowledgeSyncResult> {
   const now = input.now ?? (() => new Date());
-  const documents = await input.notion.fetchRoot(input.source.externalRootId);
-  const derivedMetadata = deriveKnowledgeRoutingMetadata(input.source.displayName, documents);
-  const chunks = [];
-  for (const document of documents) {
-    const record = await input.store.replaceDocument({
-      sourceId: input.source.id,
-      externalId: document.externalId,
-      title: document.title,
-      url: document.url,
-      properties: document.properties,
-      nodes: document.nodes,
-      chunks: chunkKnowledgeNodes(document.nodes)
-    });
-    chunks.push(...record.chunks);
-  }
-  await input.store.tombstoneMissingDocuments({
-    sourceId: input.source.id,
-    liveExternalIds: documents.map((document) => document.externalId),
-    deletedAt: now().toISOString()
-  });
+  const documents = await input.notion.fetchRoot(input.source.stagedExternalRootId);
+  const preparedDocuments = documents.map((document) => ({
+    externalId: document.externalId,
+    title: document.title,
+    url: document.url,
+    properties: document.properties,
+    nodes: document.nodes,
+    chunks: chunkKnowledgeNodes(document.nodes)
+  }));
+  const derivedMetadata = deriveKnowledgeRoutingMetadata(input.source.stagedDisplayName, documents);
+  const preparedChunks = preparedDocuments.flatMap((document) =>
+    document.chunks.map((chunk) => ({ documentExternalId: document.externalId, chunk }))
+  );
 
   let embedded = 0;
   let status: KnowledgeSyncResult["status"] = "ready";
+  const embeddings = [];
   if (input.embedding) {
-    const pending = await input.store.listChunksNeedingEmbedding({
-      chunkIds: chunks.map((chunk) => chunk.id),
-      provider: input.embedding.provider,
-      model: input.embedding.model
-    });
     const batchSize = input.batchSize ?? 16;
     try {
-      for (let offset = 0; offset < pending.length; offset += batchSize) {
-        const batch = pending.slice(offset, offset + batchSize);
-        const vectors = await input.embedding.embed(batch.map((chunk) => chunk.content));
+      for (let offset = 0; offset < preparedChunks.length; offset += batchSize) {
+        const batch = preparedChunks.slice(offset, offset + batchSize);
+        const vectors = await input.embedding.embed(batch.map(({ chunk }) => chunk.content));
         for (let index = 0; index < batch.length; index += 1) {
-          const chunk = batch[index]!;
-          await input.store.upsertEmbedding({
-            chunkId: chunk.id,
+          const prepared = batch[index]!;
+          embeddings.push({
+            documentExternalId: prepared.documentExternalId,
+            contentHash: prepared.chunk.contentHash,
             provider: input.embedding.provider,
             model: input.embedding.model,
             dimensions: input.embedding.dimensions,
-            embedding: vectors[index]!,
-            contentHash: chunk.contentHash
+            embedding: vectors[index]!
           });
           embedded += 1;
         }
       }
     } catch {
       status = "embedding_pending";
+      embeddings.length = 0;
+      embedded = 0;
     }
   }
-  await input.store.updateSource({
-    profileName: input.source.profileName,
-    sourceKey: input.source.sourceKey,
+  await input.store.publishSourceSnapshot({
+    sourceId: input.source.id,
+    expectedStagingRevision: input.source.stagingRevision,
+    syncedAt: now().toISOString(),
     syncStatus: status,
-    syncErrorCode: undefined,
-    lastSyncedAt: now().toISOString(),
-    routingDisplayName: input.source.displayName,
+    routingDisplayName: input.source.stagedDisplayName,
     aliases: [...input.source.adminAliases, ...derivedMetadata.aliases],
     topics: [...input.source.adminTopics, ...derivedMetadata.topics],
-    sampleQueries: input.source.adminSampleQueries
+    sampleQueries: input.source.adminSampleQueries,
+    documents: preparedDocuments,
+    embeddings
   });
-  return { documents: documents.length, chunks: chunks.length, embedded, status };
+  return { documents: documents.length, chunks: preparedChunks.length, embedded, status };
 }
