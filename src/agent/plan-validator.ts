@@ -12,6 +12,7 @@ import type { AgentPlanDisposition, FunctionName, JsonRecord } from "../types.js
 import { isFunctionName } from "../types.js";
 import type { ActiveTaskContext } from "./active-task.js";
 import type { CapabilityCandidateReason } from "./capability-candidates.js";
+import { groundPlanRecord, hasActiveEntityTextEvidence, liveActiveTask } from "./plan-evidence.js";
 import { findMissingRequiredSlot } from "./slot-clarification.js";
 
 export interface AgentPlanValidationCandidate {
@@ -80,38 +81,28 @@ export type ValidatedAgentPlan =
         | "candidate_not_allowed"
         | "capability_not_agent_enabled"
         | "function_disabled"
+        | "invalid_policy"
         | "planner_denied"
         | "source_not_allowed"
         | "write_evidence_missing";
     };
 
-interface GroundedRecord {
-  value: JsonRecord;
-  ambiguous: boolean;
-}
-
-const RELATIVE_VALUE_EVIDENCE: Readonly<Record<string, readonly string[]>> = {
-  today: ["今天", "今日"],
-  tomorrow: ["明天", "明日"],
-  day_after_tomorrow: ["後天"],
-  this_week: ["本週", "這週", "本周", "這周"],
-  next_meeting: ["下一場", "下場", "下一次", "下次", "最近一場"],
-  upcoming: ["近期", "接下來"],
-  morning_prayer_family: ["晨更", "晨更家族"],
-  street_sign_service: ["舉牌", "為耶穌舉牌"],
-  custom_service_schedule: ["自訂服事", "其他服事"],
-  ppt_slide: ["投影片", "簡報", "ppt"],
-  sheet_music: ["歌譜", "樂譜"],
-  private: ["私人", "自己"],
-  group: ["群組", "大家", "共用"]
-};
-
 export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
+  if (!validConfidence(input.minConfidence)) {
+    return { disposition: "deny", reasonCode: "invalid_policy" };
+  }
   if (input.proposal.status === "no_plan") {
     return validateNoPlan(input);
   }
 
   const proposal = input.proposal;
+  if (!validConfidence(proposal.confidence)) {
+    return {
+      disposition: "clarify",
+      ...(proposal.capability ? { capability: proposal.capability } : {}),
+      reasonCode: "low_confidence"
+    };
+  }
   if (proposal.disposition === "clarify") {
     return { disposition: "clarify", reasonCode: "planner_clarification" };
   }
@@ -121,33 +112,28 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
 
   const liveTask = liveActiveTask(input.activeTask, input.now ?? new Date());
   const explicitCandidates = revalidatedExplicitCandidates(input);
-  const hasActiveEvidence = revalidatedActiveCandidates(input, liveTask).length > 0;
-
   if (proposal.disposition === "chat") {
-    return explicitCandidates.length === 0 && !hasActiveEvidence
+    return explicitCandidates.length === 0 && !hasAnyActiveEvidence(input, liveTask)
       ? { disposition: "chat", reasonCode: "no_capability_evidence" }
       : { disposition: "clarify", reasonCode: "capability_evidence_unresolved" };
   }
 
-  if (!proposal.capability || !candidateIncludes(input.candidates, proposal.capability)) {
-    return { disposition: "deny", reasonCode: "candidate_not_allowed" };
-  }
-  const capability = proposal.capability;
+  const selected = selectedCandidate(input.candidates, proposal.capability);
+  if (!selected) return { disposition: "deny", reasonCode: "candidate_not_allowed" };
+  const capability = selected.capability;
   const definition = getFunctionDefinition(capability);
-  if (!input.enabledFunctions.includes(capability)) {
-    return { disposition: "deny", reasonCode: "function_disabled" };
-  }
-  if (!definition || !sourceAllowed(definition, input.sourceType)) {
-    return { disposition: "deny", reasonCode: "source_not_allowed" };
-  }
+  const policyFailure = validateCapabilityPolicy(input, definition, capability);
+  if (policyFailure) return policyFailure;
+  const authoritativeDefinition = definition!;
+
   const rawArguments = proposal.arguments ?? {};
   if (
-    definition.sideEffectLevel !== "read" &&
+    authoritativeDefinition.sideEffectLevel !== "read" &&
     !hasExplicitWriteEvidence(input.text, rawArguments)
   ) {
     return { disposition: "deny", reasonCode: "write_evidence_missing" };
   }
-  if (definition.deprecated || !definition.agentCapability) {
+  if (authoritativeDefinition.deprecated || !authoritativeDefinition.agentCapability) {
     return { disposition: "deny", reasonCode: "capability_not_agent_enabled" };
   }
 
@@ -162,6 +148,25 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
       reasonCode: "explicit_switch_required"
     };
   }
+
+  const activeAuthority = selected.reason === "active_task_entity";
+  if (selected.reason === "explicit_intent" && explicitCapability !== capability) {
+    return {
+      disposition: "clarify",
+      capability,
+      reasonCode: "capability_evidence_unresolved"
+    };
+  }
+  if (activeAuthority) {
+    const activeFailure = validateActiveAuthority(
+      input.text,
+      capability,
+      authoritativeDefinition,
+      liveTask,
+      proposal.disposition
+    );
+    if (activeFailure) return activeFailure;
+  }
   if (proposal.disposition === "switch" && explicitCapability !== capability) {
     return {
       disposition: "clarify",
@@ -169,39 +174,25 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
       reasonCode: "capability_evidence_unresolved"
     };
   }
-
-  const activeDisposition = isActiveTaskDisposition(proposal.disposition);
-  if (activeDisposition) {
-    if (!liveTask || liveTask.capability !== capability) {
-      return { disposition: "clarify", capability, reasonCode: "active_task_unavailable" };
-    }
-    if (!operationAllowed(definition, liveTask, proposal.disposition)) {
-      return { disposition: "clarify", capability, reasonCode: "operation_not_allowed" };
-    }
-  }
-
-  if (!Number.isFinite(proposal.confidence) || proposal.confidence < input.minConfidence) {
+  if (proposal.confidence < input.minConfidence) {
     return { disposition: "clarify", capability, reasonCode: "low_confidence" };
   }
 
-  const groundedArguments = groundRecord(
-    rawArguments,
-    input.text,
-    definition,
-    activeDisposition ? liveTask : undefined,
-    false
-  );
+  const groundedArguments = groundPlanRecord({
+    record: rawArguments,
+    text: input.text,
+    rules: authoritativeDefinition.agentCapability.activeEvidence?.arguments,
+    activeTask: activeAuthority ? liveTask : undefined,
+    activeAuthority
+  });
   if (groundedArguments.ambiguous) {
     return { disposition: "clarify", capability, reasonCode: "ambiguous_entity" };
   }
-  const parsedArguments = parseFunctionArguments(capability, groundedArguments.value);
-  if (!parsedArguments) {
-    return { disposition: "clarify", capability, reasonCode: "invalid_arguments" };
-  }
-  const normalizedArguments = normalizeFunctionArguments(capability, parsedArguments, {
-    text: input.text
-  });
-  const validatedArguments = parseFunctionArguments(capability, normalizedArguments);
+  const validatedArguments = parseAndNormalizeArguments(
+    capability,
+    groundedArguments.value,
+    input.text
+  );
   if (!validatedArguments) {
     return { disposition: "clarify", capability, reasonCode: "invalid_arguments" };
   }
@@ -209,14 +200,13 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
     return { disposition: "clarify", capability, reasonCode: "missing_required_slot" };
   }
 
-  const groundedReferences = groundRecord(
-    proposal.references ?? {},
-    input.text,
-    definition,
-    activeDisposition ? liveTask : undefined,
-    true
-  );
-  const reasonCode = executionReason(proposal.disposition, capability, input.activeTask);
+  const groundedReferences = groundPlanRecord({
+    record: proposal.references ?? {},
+    text: input.text,
+    rules: authoritativeDefinition.agentCapability.activeEvidence?.references,
+    activeTask: activeAuthority ? liveTask : undefined,
+    activeAuthority
+  });
   return {
     disposition: "execute",
     capability,
@@ -224,7 +214,7 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
     ...(Object.keys(groundedReferences.value).length > 0
       ? { references: groundedReferences.value }
       : {}),
-    reasonCode
+    reasonCode: executionReason(selected.reason, proposal.disposition)
   };
 }
 
@@ -237,21 +227,11 @@ function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
   }
 
   const capability = explicitCandidates[0];
-  const definition = getFunctionDefinition(capability);
-  if (!definition) {
-    return { disposition: "deny", reasonCode: "candidate_not_allowed" };
-  }
+  const definition = getFunctionDefinition(capability)!;
   const rawArguments = definition.requiredSlots.some(({ argument }) => argument === "query")
     ? { query: input.text }
     : {};
-  const parsedArguments = parseFunctionArguments(capability, rawArguments);
-  if (!parsedArguments) {
-    return { disposition: "clarify", capability, reasonCode: "invalid_arguments" };
-  }
-  const normalizedArguments = normalizeFunctionArguments(capability, parsedArguments, {
-    text: input.text
-  });
-  const validatedArguments = parseFunctionArguments(capability, normalizedArguments);
+  const validatedArguments = parseAndNormalizeArguments(capability, rawArguments, input.text);
   if (!validatedArguments || findMissingRequiredSlot(capability, validatedArguments)) {
     return { disposition: "clarify", capability, reasonCode: "missing_required_slot" };
   }
@@ -261,6 +241,67 @@ function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
     arguments: validatedArguments,
     reasonCode: "deterministic_explicit_intent"
   };
+}
+
+function validateCapabilityPolicy(
+  input: ValidateAgentPlanInput,
+  definition: FunctionDefinition | undefined,
+  capability: FunctionName
+): Extract<ValidatedAgentPlan, { disposition: "deny" }> | undefined {
+  if (!input.enabledFunctions.includes(capability)) {
+    return { disposition: "deny", reasonCode: "function_disabled" };
+  }
+  if (!definition || !sourceAllowed(definition, input.sourceType)) {
+    return { disposition: "deny", reasonCode: "source_not_allowed" };
+  }
+  return undefined;
+}
+
+function validateActiveAuthority(
+  text: string,
+  capability: FunctionName,
+  definition: FunctionDefinition,
+  activeTask: ActiveTaskContext | undefined,
+  disposition: AgentPlanDisposition
+): Extract<ValidatedAgentPlan, { disposition: "clarify" }> | undefined {
+  if (
+    !activeTask ||
+    activeTask.capability !== capability ||
+    !definition.agentCapability ||
+    !hasActiveEntityTextEvidence(text, definition.agentCapability, activeTask)
+  ) {
+    return { disposition: "clarify", capability, reasonCode: "active_task_unavailable" };
+  }
+  const requiredOperation = requiredActiveOperation(disposition);
+  if (requiredOperation && !operationAllowed(definition, activeTask, requiredOperation)) {
+    return { disposition: "clarify", capability, reasonCode: "operation_not_allowed" };
+  }
+  return undefined;
+}
+
+function requiredActiveOperation(
+  disposition: AgentPlanDisposition
+): "continue" | "refine" | "advance" | "select" | undefined {
+  if (disposition === "execute") return "continue";
+  return disposition === "continue" ||
+    disposition === "refine" ||
+    disposition === "advance" ||
+    disposition === "select"
+    ? disposition
+    : undefined;
+}
+
+function parseAndNormalizeArguments(
+  capability: FunctionName,
+  argumentsValue: JsonRecord,
+  text: string
+): JsonRecord | undefined {
+  const parsed = parseFunctionArguments(capability, argumentsValue);
+  if (!parsed) return undefined;
+  return parseFunctionArguments(
+    capability,
+    normalizeFunctionArguments(capability, parsed, { text })
+  );
 }
 
 function revalidatedExplicitCandidates(input: ValidateAgentPlanInput): FunctionName[] {
@@ -279,174 +320,34 @@ function revalidatedExplicitCandidates(input: ValidateAgentPlanInput): FunctionN
   });
 }
 
-function revalidatedActiveCandidates(
+function hasAnyActiveEvidence(
   input: ValidateAgentPlanInput,
   activeTask: ActiveTaskContext | undefined
-): FunctionName[] {
-  if (!activeTask || !candidateIncludes(input.candidates, activeTask.capability)) return [];
+): boolean {
+  if (!activeTask) return false;
+  const candidate = input.candidates.find(
+    ({ capability, reason }) =>
+      capability === activeTask.capability && reason === "active_task_entity"
+  );
   const definition = getFunctionDefinition(activeTask.capability);
-  if (
-    !definition?.agentCapability ||
-    definition.deprecated ||
-    !input.enabledFunctions.includes(activeTask.capability) ||
-    !sourceAllowed(definition, input.sourceType)
-  ) {
-    return [];
-  }
-  const entityTypes = new Set(definition.agentCapability.entityTypes ?? []);
-  return activeTask.entities.some(
-    (entity) =>
-      entityTypes.has(entity.type) &&
-      [entity.key, entity.label, ...(entity.aliases ?? [])].some((term) =>
-        textContains(input.text, term)
-      )
-  )
-    ? [activeTask.capability]
-    : [];
-}
-
-function groundRecord(
-  record: Record<string, unknown>,
-  text: string,
-  definition: FunctionDefinition,
-  activeTask: ActiveTaskContext | undefined,
-  reference: boolean
-): GroundedRecord {
-  const value: JsonRecord = {};
-  for (const [key, proposedValue] of Object.entries(record)) {
-    const grounded = groundValue(key, proposedValue, text, definition, activeTask, reference);
-    if (grounded.ambiguous) return { value: {}, ambiguous: true };
-    if (grounded.value !== undefined) value[key] = grounded.value;
-  }
-  return { value, ambiguous: false };
-}
-
-function groundValue(
-  key: string,
-  value: unknown,
-  text: string,
-  definition: FunctionDefinition,
-  activeTask: ActiveTaskContext | undefined,
-  reference: boolean
-): { value?: unknown; ambiguous: boolean } {
-  if (Array.isArray(value)) {
-    const grounded = value.map((entry) =>
-      groundValue(key, entry, text, definition, activeTask, reference)
-    );
-    if (grounded.some(({ ambiguous }) => ambiguous)) return { ambiguous: true };
-    if (grounded.some((entry) => entry.value === undefined)) return { ambiguous: false };
-    return { value: grounded.map((entry) => entry.value), ambiguous: false };
-  }
-  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-    return { ambiguous: false };
-  }
-
-  const entityMatches = reference ? [] : matchingEntities(key, text, definition, activeTask);
-  if (entityMatches.length > 1) return { ambiguous: true };
-  if (entityMatches.length === 1 && entityContains(entityMatches[0], value)) {
-    return { value: canonicalEntityValue(key, entityMatches[0]), ambiguous: false };
-  }
-  if (scalarHasTextEvidence(text, value)) return { value, ambiguous: false };
-  if (activeTask && activeValueAllowed(key, value, definition, activeTask, reference)) {
-    return { value, ambiguous: false };
-  }
-  return { ambiguous: false };
-}
-
-function matchingEntities(
-  key: string,
-  text: string,
-  definition: FunctionDefinition,
-  activeTask: ActiveTaskContext | undefined
-) {
-  if (!activeTask || !fieldAllowedByContract(key, definition)) return [];
-  const expectedType = entityTypeForField(key);
-  const contractTypes = new Set(definition.agentCapability?.entityTypes ?? []);
-  return activeTask.entities.filter(
-    (entity) =>
-      contractTypes.has(entity.type) &&
-      (!expectedType || entity.type === expectedType) &&
-      [entity.key, entity.label, ...(entity.aliases ?? [])].some((term) => textContains(text, term))
+  return Boolean(
+    candidate &&
+    definition?.agentCapability &&
+    input.enabledFunctions.includes(activeTask.capability) &&
+    sourceAllowed(definition, input.sourceType) &&
+    hasActiveEntityTextEvidence(input.text, definition.agentCapability, activeTask)
   );
 }
 
-function activeValueAllowed(
-  key: string,
-  value: string | number | boolean,
-  definition: FunctionDefinition,
-  activeTask: ActiveTaskContext,
-  reference: boolean
-): boolean {
-  if (reference) {
-    return Object.values(activeTask.references ?? {}).some((candidate) =>
-      valuesEqual(candidate, value)
-    );
-  }
-  if (!fieldAllowedByContract(key, definition)) return false;
-  if (valuesEqual(activeTask.anchors[key], value)) return true;
-  return activeTask.entities.some(
-    (entity) =>
-      (definition.agentCapability?.entityTypes ?? []).includes(entity.type) &&
-      entityContains(entity, value)
-  );
-}
-
-function fieldAllowedByContract(key: string, definition: FunctionDefinition): boolean {
-  const fields = definition.agentCapability?.refinableFields ?? [];
-  return fields.includes(key) || (key === "query" && fields.includes("selection"));
-}
-
-function entityTypeForField(key: string): string | undefined {
-  return {
-    date: "date",
-    specificDate: "date",
-    dateIntent: "date",
-    meeting: "meeting",
-    role: "role",
-    scheduleType: "scheduleType",
-    sourceKey: "source",
-    documentId: "document",
-    ordinal: "ordinal",
-    selection: "selection",
-    query: "selection"
-  }[key];
-}
-
-function entityContains(
-  entity: { key: string; label: string; aliases?: string[] },
-  value: unknown
-): boolean {
-  return (
-    typeof value === "string" &&
-    [entity.key, entity.label, ...(entity.aliases ?? [])].some(
-      (term) => normalize(term) === normalize(value)
-    )
-  );
-}
-
-function canonicalEntityValue(key: string, entity: { key: string; label: string }): string {
-  return key === "sourceKey" || key === "documentId" ? entity.key : entity.label;
-}
-
-function scalarHasTextEvidence(text: string, value: string | number | boolean): boolean {
-  if (typeof value === "boolean") {
-    return value ? /(?:確認|確定|同意|可以保存)/u.test(text) : /(?:取消|不要|先不要)/u.test(text);
-  }
-  const stringValue = String(value);
-  if (textContains(text, stringValue)) return true;
-  if (typeof value === "number") return false;
-  const date = stringValue.match(/^\d{4}-(\d{2})-(\d{2})$/u);
-  if (date && textContains(text, `${Number(date[1])}/${Number(date[2])}`)) return true;
-  return (RELATIVE_VALUE_EVIDENCE[stringValue] ?? []).some((term) => textContains(text, term));
-}
-
-function candidateIncludes(
+function selectedCandidate(
   candidates: readonly AgentPlanValidationCandidate[],
-  capability: FunctionName
-): boolean {
-  return candidates.some(
+  capability: FunctionName | undefined
+): AgentPlanValidationCandidate | undefined {
+  if (!capability || !isFunctionName(capability)) return undefined;
+  const matches = candidates.filter(
     (candidate) => isFunctionName(candidate.capability) && candidate.capability === capability
   );
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function uniqueCapabilities(candidates: readonly AgentPlanValidationCandidate[]): FunctionName[] {
@@ -459,60 +360,31 @@ function uniqueCapabilities(candidates: readonly AgentPlanValidationCandidate[])
   ];
 }
 
+function operationAllowed(
+  definition: FunctionDefinition,
+  activeTask: ActiveTaskContext,
+  operation: "continue" | "refine" | "advance" | "select"
+): boolean {
+  return (
+    (definition.agentCapability?.operations ?? []).includes(operation) &&
+    activeTask.supportedOperations.includes(operation)
+  );
+}
+
+function executionReason(
+  candidateReason: CapabilityCandidateReason,
+  disposition: AgentPlanDisposition
+): "explicit_intent" | "active_task_refinement" | "explicit_capability_switch" {
+  if (candidateReason === "active_task_entity") return "active_task_refinement";
+  return disposition === "switch" ? "explicit_capability_switch" : "explicit_intent";
+}
+
 function sourceAllowed(definition: FunctionDefinition, sourceType: string): boolean {
   return definition.allowedSources.includes(sourceType as FunctionAllowedSource);
 }
 
-function liveActiveTask(
-  activeTask: ActiveTaskContext | undefined,
-  now: Date
-): ActiveTaskContext | undefined {
-  if (!activeTask) return undefined;
-  const createdAt = Date.parse(activeTask.createdAt);
-  const expiresAt = Date.parse(activeTask.expiresAt);
-  return Number.isFinite(createdAt) &&
-    Number.isFinite(expiresAt) &&
-    expiresAt > createdAt &&
-    createdAt <= now.getTime() &&
-    expiresAt > now.getTime()
-    ? activeTask
-    : undefined;
-}
-
-function operationAllowed(
-  definition: FunctionDefinition,
-  activeTask: ActiveTaskContext,
-  disposition: AgentPlanDisposition
-): boolean {
-  return (
-    (definition.agentCapability?.operations ?? []).includes(
-      disposition as "continue" | "refine" | "advance" | "select"
-    ) && activeTask.supportedOperations.includes(disposition)
-  );
-}
-
-function isActiveTaskDisposition(
-  disposition: AgentPlanDisposition
-): disposition is "continue" | "refine" | "advance" | "select" {
-  return ["continue", "refine", "advance", "select"].includes(disposition);
-}
-
-function executionReason(
-  disposition: AgentPlanDisposition,
-  capability: FunctionName,
-  activeTask: ActiveTaskContext | undefined
-): "explicit_intent" | "active_task_refinement" | "explicit_capability_switch" {
-  if (disposition === "switch") return "explicit_capability_switch";
-  return isActiveTaskDisposition(disposition) && activeTask?.capability === capability
-    ? "active_task_refinement"
-    : "explicit_intent";
-}
-
-function valuesEqual(left: unknown, right: unknown): boolean {
-  return (
-    (typeof left === "string" || typeof left === "number" || typeof left === "boolean") &&
-    normalize(String(left)) === normalize(String(right))
-  );
+function validConfidence(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function textContains(text: string, term: string): boolean {

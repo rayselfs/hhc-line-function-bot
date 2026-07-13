@@ -156,6 +156,28 @@ describe("function router", () => {
     expect(result).toMatchObject({ type: "deny", reason: "write_evidence_missing" });
   });
 
+  it("rejects negated and empty write requests before function execution", async () => {
+    for (const testCase of [
+      { text: "不要保存 7/14 晨更", arguments: { content: "7/14 晨更" } },
+      { text: "幫我保存", arguments: {} }
+    ]) {
+      const router = createFunctionRouter({
+        primary: provider(JSON.stringify({ action: "save_memory", arguments: testCase.arguments })),
+        keywordFallback: createKeywordFallbackRouter(),
+        keywordFallbackEnabled: true
+      });
+
+      await expect(
+        router.route({
+          profileName: "helper",
+          text: testCase.text,
+          enabledFunctions: ["save_memory"],
+          source: { type: "user", userId: "U1" }
+        })
+      ).resolves.toMatchObject({ type: "deny", reason: "write_evidence_missing" });
+    }
+  });
+
   it("rejects programming help even when the model mistakes it for small talk", async () => {
     const qwen = provider(
       JSON.stringify({

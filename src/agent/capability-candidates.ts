@@ -296,6 +296,33 @@ function cloneContract(contract: AgentCapabilityContract): AgentCapabilityContra
     ...(contract.entityTypes ? { entityTypes: [...contract.entityTypes] } : {}),
     ...(contract.refinableFields ? { refinableFields: [...contract.refinableFields] } : {}),
     ...(contract.operations ? { operations: [...contract.operations] } : {}),
-    ...(contract.ambiguity ? { ambiguity: contract.ambiguity } : {})
+    ...(contract.ambiguity ? { ambiguity: contract.ambiguity } : {}),
+    ...(contract.activeEvidence
+      ? {
+          activeEvidence: {
+            ...(contract.activeEvidence.arguments
+              ? { arguments: cloneEvidenceRules(contract.activeEvidence.arguments) }
+              : {}),
+            ...(contract.activeEvidence.references
+              ? { references: cloneEvidenceRules(contract.activeEvidence.references) }
+              : {})
+          }
+        }
+      : {})
   };
+}
+
+function cloneEvidenceRules(
+  rules: NonNullable<AgentCapabilityContract["activeEvidence"]>["arguments"]
+) {
+  return Object.fromEntries(
+    Object.entries(rules ?? {}).map(([key, rule]) => [
+      key,
+      {
+        ...(rule.entityTypes ? { entityTypes: [...rule.entityTypes] } : {}),
+        ...(rule.anchorKeys ? { anchorKeys: [...rule.anchorKeys] } : {}),
+        ...(rule.referenceKeys ? { referenceKeys: [...rule.referenceKeys] } : {})
+      }
+    ])
+  );
 }

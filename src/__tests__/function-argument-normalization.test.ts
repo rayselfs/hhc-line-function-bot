@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
+import {
+  hasExplicitWriteEvidence,
+  normalizeFunctionArguments
+} from "../functions/argument-normalization.js";
 
 describe("function argument normalization", () => {
   it("normalizes generic knowledge ordinals without a travel-specific rule", () => {
@@ -195,5 +198,27 @@ describe("function argument normalization", () => {
         { text: "小哈幫我記住服事表" }
       )
     ).toMatchObject({ content: "" });
+  });
+
+  it.each(["不要刪除 7/14 晨更", "不要保存 7/14 晨更", "先別修改 7/14 晨更"])(
+    "does not treat a negated write as positive evidence: %s",
+    (text) => {
+      expect(hasExplicitWriteEvidence(text, { content: "7/14 晨更" })).toBe(false);
+    }
+  );
+
+  it("does not authorize writes from an empty or entirely non-evidence argument set", () => {
+    expect(hasExplicitWriteEvidence("幫我保存", {})).toBe(false);
+    expect(
+      hasExplicitWriteEvidence("幫我保存", {
+        operation: "replace",
+        confirm: true,
+        query: "幫我保存"
+      })
+    ).toBe(false);
+  });
+
+  it("keeps positive write evidence when the payload is present in current text", () => {
+    expect(hasExplicitWriteEvidence("幫我保存 7/14 晨更", { content: "7/14 晨更" })).toBe(true);
   });
 });

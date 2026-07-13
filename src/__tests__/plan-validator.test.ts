@@ -23,6 +23,20 @@ const scheduleTask: ActiveTaskContext = {
   expiresAt: "2026-07-13T00:01:00.000Z"
 };
 
+const knowledgeTask: ActiveTaskContext = {
+  version: 1,
+  capability: "query_knowledge",
+  anchors: { sourceKey: "retreat" },
+  entities: [
+    { type: "source", key: "retreat", label: "青年出隊", aliases: ["出隊"] },
+    { type: "document", key: "runbook-1", label: "出隊手冊" }
+  ],
+  references: { documentId: "doc-1" },
+  supportedOperations: ["continue", "refine", "advance", "select"],
+  createdAt: "2026-07-13T00:00:00.000Z",
+  expiresAt: "2026-07-13T00:01:00.000Z"
+};
+
 function input(overrides: Partial<ValidateAgentPlanInput> = {}): ValidateAgentPlanInput {
   return {
     text: "查主日服事",
@@ -78,6 +92,70 @@ describe("deterministic agent plan validation", () => {
       });
     }
   );
+
+  it("derives active-task authority from the candidate when execute relabels an expired continuation", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "前攝影",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "execute",
+            capability: "query_schedule",
+            arguments: { role: "前攝影" },
+            confidence: 0.95
+          },
+          activeTask: { ...scheduleTask, expiresAt: "2026-07-13T00:00:20.000Z" }
+        })
+      )
+    ).toEqual({
+      disposition: "clarify",
+      capability: "query_schedule",
+      reasonCode: "active_task_unavailable"
+    });
+  });
+
+  it("requires continue support when active evidence is relabeled as execute", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "前攝影",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "execute",
+            capability: "query_schedule",
+            arguments: { role: "前攝影" },
+            confidence: 0.95
+          },
+          activeTask: { ...scheduleTask, supportedOperations: ["refine"] }
+        })
+      )
+    ).toEqual({
+      disposition: "clarify",
+      capability: "query_schedule",
+      reasonCode: "operation_not_allowed"
+    });
+  });
+
+  it("does not require active-task authority when an explicit candidate is mislabeled continue", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          proposal: {
+            disposition: "continue",
+            capability: "query_schedule",
+            arguments: { query: "主日服事" },
+            confidence: 0.95
+          },
+          activeTask: undefined
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      reasonCode: "explicit_intent"
+    });
+  });
 
   it("rejects a capability absent from the deterministic candidate set", () => {
     expect(
@@ -163,6 +241,149 @@ describe("deterministic agent plan validation", () => {
       arguments: { role: "前攝影" },
       reasonCode: "active_task_refinement"
     });
+  });
+
+  it("does not let text for entity A ground an injected entity B", () => {
+    const result = validateAgentPlan(
+      input({
+        text: "前攝影",
+        candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+        proposal: {
+          disposition: "execute",
+          capability: "query_schedule",
+          arguments: { role: "後攝影" },
+          confidence: 0.95
+        },
+        activeTask: {
+          ...scheduleTask,
+          entities: [
+            ...scheduleTask.entities,
+            { type: "role", key: "rear-camera", label: "後攝影" }
+          ]
+        }
+      })
+    );
+
+    expect(result).toMatchObject({ disposition: "execute", capability: "query_schedule" });
+    expect(result).not.toHaveProperty("arguments.role");
+  });
+
+  it("does not let a matched meeting entity ground the role field", () => {
+    const result = validateAgentPlan(
+      input({
+        text: "晨更",
+        candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+        proposal: {
+          disposition: "execute",
+          capability: "query_schedule",
+          arguments: { role: "晨更" },
+          confidence: 0.95
+        },
+        activeTask: {
+          ...scheduleTask,
+          entities: [
+            ...scheduleTask.entities,
+            { type: "meeting", key: "morning-prayer", label: "晨更" }
+          ]
+        }
+      })
+    );
+
+    expect(result).toMatchObject({ disposition: "execute", capability: "query_schedule" });
+    expect(result).not.toHaveProperty("arguments.role");
+  });
+
+  it("inherits only declaratively bound schedule anchors", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "前攝影",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "execute",
+            capability: "query_schedule",
+            arguments: { role: "前攝影", specificDate: "2026-07-14", meeting: "晨更" },
+            confidence: 0.95
+          },
+          activeTask: scheduleTask
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      arguments: { role: "前攝影", specificDate: "2026-07-14", meeting: "晨更" },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
+  it("accepts a declared date entity with explicit relative-date normalization", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "明天",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "execute",
+            capability: "query_schedule",
+            arguments: { dateIntent: "tomorrow" },
+            confidence: 0.95
+          },
+          activeTask: {
+            ...scheduleTask,
+            entities: [{ type: "date", key: "2026-07-14", label: "明天" }]
+          }
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      arguments: { dateIntent: "tomorrow" },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
+  it("inherits knowledge source and document values only from their declared keys", () => {
+    expect(
+      validateAgentPlan({
+        text: "出隊",
+        enabledFunctions: ["query_knowledge"],
+        candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
+        proposal: {
+          disposition: "execute",
+          capability: "query_knowledge",
+          arguments: { query: "出隊", sourceKey: "retreat", documentId: "doc-1" },
+          confidence: 0.95
+        },
+        activeTask: knowledgeTask,
+        minConfidence: 0.65,
+        sourceType: "user",
+        now
+      })
+    ).toMatchObject({
+      disposition: "execute",
+      arguments: { sourceKey: "retreat", documentId: "doc-1" },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
+  it("strips a spoofed proposal reference key even when its value exists in the task", () => {
+    const result = validateAgentPlan({
+      text: "出隊",
+      enabledFunctions: ["query_knowledge"],
+      candidates: [{ capability: "query_knowledge", reason: "active_task_entity", score: 300 }],
+      proposal: {
+        disposition: "continue",
+        capability: "query_knowledge",
+        arguments: { query: "出隊" },
+        references: { sourceId: "doc-1" },
+        confidence: 0.95
+      },
+      activeTask: knowledgeTask,
+      minConfidence: 0.65,
+      sourceType: "user",
+      now
+    });
+
+    expect(result).toMatchObject({ disposition: "execute" });
+    expect(result).not.toHaveProperty("references.sourceId");
   });
 
   it("clarifies an active-task alias matching multiple entities", () => {
@@ -358,6 +579,57 @@ describe("deterministic agent plan validation", () => {
       )
     ).toEqual({ disposition: "clarify", reasonCode: "planner_unavailable" });
   });
+
+  it("does not ground ordinal 1 from the numeric substring in 第10個", () => {
+    expect(
+      validateAgentPlan({
+        text: "查知識 第10個",
+        enabledFunctions: ["query_knowledge"],
+        candidates: [{ capability: "query_knowledge", reason: "explicit_intent", score: 400 }],
+        proposal: {
+          disposition: "execute",
+          capability: "query_knowledge",
+          arguments: { query: "查知識 第10個", ordinal: 1 },
+          confidence: 0.95
+        },
+        minConfidence: 0.65,
+        sourceType: "user",
+        now
+      })
+    ).toMatchObject({ disposition: "execute", arguments: { ordinal: 9 } });
+  });
+
+  it.each([Number.NaN, -0.01, 1.01, Number.POSITIVE_INFINITY])(
+    "fails closed for invalid proposal confidence %s",
+    (confidence) => {
+      expect(
+        validateAgentPlan(
+          input({
+            proposal: {
+              disposition: "execute",
+              capability: "query_schedule",
+              arguments: { query: "主日服事" },
+              confidence
+            }
+          })
+        )
+      ).toEqual({
+        disposition: "clarify",
+        capability: "query_schedule",
+        reasonCode: "low_confidence"
+      });
+    }
+  );
+
+  it.each([Number.NaN, -0.01, 1.01, Number.POSITIVE_INFINITY])(
+    "denies an invalid confidence policy threshold %s",
+    (minConfidence) => {
+      expect(validateAgentPlan(input({ minConfidence }))).toEqual({
+        disposition: "deny",
+        reasonCode: "invalid_policy"
+      });
+    }
+  );
 
   it("fails closed when the function is disabled or the source is unsupported", () => {
     expect(validateAgentPlan(input({ enabledFunctions: [] }))).toEqual({

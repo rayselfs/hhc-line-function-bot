@@ -62,6 +62,18 @@ export interface AgentCapabilityContract {
   refinableFields?: string[];
   operations?: Array<"continue" | "refine" | "advance" | "select">;
   ambiguity?: "clarify";
+  activeEvidence?: AgentActiveEvidenceContract;
+}
+
+export interface AgentActiveEvidenceRule {
+  entityTypes?: string[];
+  anchorKeys?: string[];
+  referenceKeys?: string[];
+}
+
+export interface AgentActiveEvidenceContract {
+  arguments?: Record<string, AgentActiveEvidenceRule>;
+  references?: Record<string, AgentActiveEvidenceRule>;
 }
 
 export interface FunctionDefinition {
@@ -112,7 +124,10 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
       operations: ["continue", "refine", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: { query: { entityTypes: ["selection"] } }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -165,9 +180,25 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       intents: ["查服事", "查服事表", "找服事", "下一場服事", "本週服事", "主日服事"],
       candidateHints: ["服事", "服事表", "服事安排", "聚會服事"],
       entityTypes: ["date", "meeting", "role", "scheduleType"],
-      refinableFields: ["date", "meeting", "role", "scheduleType"],
+      refinableFields: ["date", "specificDate", "dateIntent", "meeting", "role", "scheduleType"],
       operations: ["continue", "refine", "advance", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: {
+          date: { entityTypes: ["date"], anchorKeys: ["date"] },
+          specificDate: {
+            entityTypes: ["date"],
+            anchorKeys: ["specificDate", "date"]
+          },
+          dateIntent: { entityTypes: ["date"], anchorKeys: ["dateIntent"] },
+          meeting: { entityTypes: ["meeting"], anchorKeys: ["meeting"] },
+          role: { entityTypes: ["role"], anchorKeys: ["role"] },
+          scheduleType: {
+            entityTypes: ["scheduleType"],
+            anchorKeys: ["scheduleType"]
+          }
+        }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -228,9 +259,23 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       intents: ["查知識", "知識查詢", "找知識"],
       candidateHints: ["知識", "sop", "計畫", "流程"],
       entityTypes: ["source", "document", "section", "ordinal"],
-      refinableFields: ["source", "document", "section", "ordinal"],
+      refinableFields: ["sourceKey", "documentId", "section", "ordinal"],
       operations: ["continue", "refine", "advance", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: {
+          sourceKey: { entityTypes: ["source"], anchorKeys: ["sourceKey"] },
+          documentId: {
+            entityTypes: ["document"],
+            anchorKeys: ["documentId"],
+            referenceKeys: ["documentId"]
+          },
+          ordinal: { entityTypes: ["ordinal"], anchorKeys: ["ordinal"] }
+        },
+        references: {
+          documentId: { referenceKeys: ["documentId"] }
+        }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -360,7 +405,10 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
       operations: ["continue", "refine", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: { query: { entityTypes: ["selection"] } }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -517,7 +565,10 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       entityTypes: ["selection"],
       refinableFields: ["query", "type", "selection"],
       operations: ["continue", "refine", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: { query: { entityTypes: ["selection"] } }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -597,9 +648,12 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       intents: ["查維基百科", "找維基百科", "查wiki", "查wikipedia"],
       candidateHints: ["維基百科", "wiki", "wikipedia"],
       entityTypes: ["topic"],
-      refinableFields: ["topic"],
+      refinableFields: ["query"],
       operations: ["continue", "refine", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: { query: { entityTypes: ["topic"] } }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [
@@ -729,7 +783,10 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       entityTypes: ["selection"],
       refinableFields: ["query", "selection"],
       operations: ["continue", "refine", "select"],
-      ambiguity: "clarify"
+      ambiguity: "clarify",
+      activeEvidence: {
+        arguments: { query: { entityTypes: ["selection"] } }
+      }
     },
     allowedSources: ["user", "group"],
     requiredSlots: [

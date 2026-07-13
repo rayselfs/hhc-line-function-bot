@@ -60,10 +60,24 @@ export function normalizeFunctionArguments(
 
 export function hasExplicitWriteEvidence(text: string, args: JsonRecord): boolean {
   const normalized = text.normalize("NFKC");
-  if (!/(?:記住|保存|儲存|新增|修改|改|刪除|移除)/u.test(normalized)) {
-    return false;
+  const evidence = writeEvidenceStrings(args);
+  return (
+    hasUnnegatedWriteAction(normalized) &&
+    evidence.length > 0 &&
+    evidence.every((value) => stringHasEvidence(normalized, value))
+  );
+}
+
+const writeActionPattern = /記住|保存|儲存|新增|修改|改|刪除|移除/gu;
+const negatedActionPrefixPattern = /(?:不要|不用|不必|先不要|先別|別|不)(?:再)?$/u;
+
+function hasUnnegatedWriteAction(text: string): boolean {
+  const normalized = text.replace(/[\p{P}\p{S}\s]+/gu, "");
+  for (const match of normalized.matchAll(writeActionPattern)) {
+    const prefix = normalized.slice(Math.max(0, match.index - 5), match.index);
+    if (!negatedActionPrefixPattern.test(prefix)) return true;
   }
-  return writeEvidenceStrings(args).every((value) => stringHasEvidence(normalized, value));
+  return false;
 }
 
 const nonEvidenceArgumentKeys = new Set([
