@@ -17,6 +17,7 @@ import type {
   FunctionRouterPort,
   GraphDriveClient,
   LineEvent,
+  NotionDatabaseClient,
   TextGenerationProvider
 } from "../types.js";
 
@@ -46,6 +47,24 @@ function textEvent(text: string): LineEvent {
     replyToken: "reply-token",
     source: { type: "group", groupId: "C1", userId: "U1" },
     message: { type: "text", text }
+  };
+}
+
+function notionSchedulePage(
+  id: string,
+  date: string,
+  meeting: string,
+  role: string,
+  person: string
+) {
+  return {
+    id,
+    properties: {
+      日期: { type: "date", date: { start: date } },
+      聚會: { type: "rich_text", rich_text: [{ plain_text: meeting }] },
+      角色: { type: "rich_text", rich_text: [{ plain_text: role }] },
+      同工: { type: "rich_text", rich_text: [{ plain_text: person }] }
+    }
   };
 }
 
@@ -93,6 +112,118 @@ function createRuntime(options: {
 }
 
 describe("AgentTurnRuntime", () => {
+  it("keeps production live Notion roster follow-ups on their originating source", async () => {
+    const now = () => new Date("2026-07-13T00:00:00.000Z");
+    const schedules = new InMemoryScheduleStore();
+    for (const [role, assignee] of [
+      ["導播", "錯誤導播"],
+      ["音控", "錯誤音控"],
+      ["前攝影", "錯誤攝影"]
+    ]) {
+      await schedules.upsertItem({
+        profileName: "helper",
+        sourceKey: "other_team_schedule",
+        origin: "notion",
+        externalId: `conflict-${role}`,
+        serviceDate: "2026-07-14",
+        meeting: "7月14日(二) 晨更",
+        role,
+        assignee
+      });
+    }
+    const notion: NotionDatabaseClient = {
+      queryDatabase: vi
+        .fn()
+        .mockResolvedValue([
+          notionSchedulePage(
+            "page-live-roster",
+            "2026-07-14",
+            "7月14日(二) 晨更",
+            "",
+            ["音控: 資恆", "導播: 莘凌", "前攝影: 姵穎"].join("\n")
+          )
+        ])
+    };
+    const conversationWindowStore = new InMemoryConversationWindowStore({ now });
+    const route = vi
+      .fn<FunctionRouterPort["route"]>()
+      .mockResolvedValueOnce({
+        type: "execute",
+        action: "query_schedule",
+        arguments: { query: "下一場影視團隊服事表", dateIntent: "next_meeting" },
+        provider: "ollama"
+      })
+      .mockResolvedValueOnce({
+        type: "execute",
+        action: "query_schedule",
+        arguments: { query: "導播是誰", role: "導播" },
+        provider: "ollama"
+      })
+      .mockResolvedValueOnce({
+        type: "execute",
+        action: "query_schedule",
+        arguments: { query: "音控是誰", role: "音控" },
+        provider: "ollama"
+      })
+      .mockResolvedValueOnce({
+        type: "respond",
+        action: "small_talk",
+        arguments: { category: "persona" },
+        provider: "ollama"
+      });
+    const runtime = createRuntime({
+      router: { route },
+      functionRegistry: {
+        query_schedule: createQueryScheduleHandler({
+          memoryStore: new InMemoryAgentMemoryStore({ now }),
+          scheduleStore: schedules,
+          notion,
+          databaseId: "database-1",
+          properties: { date: "日期", meeting: "聚會", role: "角色", person: "同工" },
+          now,
+          timeZone: "Asia/Taipei"
+        })
+      },
+      conversationWindowStore
+    });
+    const botProfile = profile(["query_schedule"], {
+      generalAgent: { enabled: true, conversationWindowSeconds: 60 }
+    });
+
+    const replies = [];
+    for (const [index, text] of [
+      "下一場影視團隊服事表",
+      "導播是誰",
+      "音控是誰",
+      "前攝影"
+    ].entries()) {
+      replies.push(
+        await runtime.handleTextTurn({
+          profile: botProfile,
+          event: textEvent(text),
+          requestId: `req-live-origin-${index}`
+        })
+      );
+    }
+
+    expect(replies[0]?.continuation).toMatchObject({
+      arguments: {
+        scheduleRoute: "live_notion",
+        sourceKeys: ["media_team_service_schedule"]
+      },
+      resultReferences: {
+        kind: "notion_schedule",
+        sourceKeys: ["media_team_service_schedule"]
+      }
+    });
+    expect(replies[1]?.replyText).toContain("導播：莘凌");
+    expect(replies[2]?.replyText).toContain("音控：資恆");
+    expect(replies[3]?.replyText).toContain("前攝影：姵穎");
+    for (const reply of replies.slice(1)) {
+      expect(reply?.replyText).not.toContain("錯誤");
+    }
+  });
+
   it("executes a real two-turn media schedule follow-up without leaking another source", async () => {
     const now = () => new Date("2026-07-08T00:00:00.000Z");
     const schedules = new InMemoryScheduleStore();

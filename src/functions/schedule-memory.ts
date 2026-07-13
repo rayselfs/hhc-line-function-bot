@@ -622,11 +622,22 @@ function applyScheduleDateIntent(
   const today = toDateKey(now);
   switch (args.dateIntent) {
     case "next_meeting": {
-      const upcoming = entries.filter(
-        (entry) => entry.serviceDate >= today && (!afterDate || entry.serviceDate > afterDate)
-      );
-      const firstDate = upcoming[0]?.serviceDate;
-      return firstDate ? upcoming.filter((entry) => entry.serviceDate === firstDate) : [];
+      const upcoming = entries
+        .filter(
+          (entry) => entry.serviceDate >= today && (!afterDate || entry.serviceDate > afterDate)
+        )
+        .sort(
+          (left, right) =>
+            left.serviceDate.localeCompare(right.serviceDate) ||
+            left.meetingName.localeCompare(right.meetingName, "zh-Hant")
+        );
+      const first = upcoming[0];
+      return first
+        ? upcoming.filter(
+            (entry) =>
+              entry.serviceDate === first.serviceDate && entry.meetingName === first.meetingName
+          )
+        : [];
     }
     case "upcoming":
       return entries.filter((entry) => entry.serviceDate >= today);

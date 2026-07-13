@@ -26,7 +26,11 @@ import {
   MEDIA_TEAM_SCHEDULE_SOURCE_KEYS,
   refineScheduleQuery
 } from "./schedule-query-refinement.js";
-import { resolveScheduleResultRows, scheduleResultEnvelope } from "./schedule-result.js";
+import {
+  aggregateScheduleResultEnvelopes,
+  resolveScheduleResultRows,
+  scheduleResultEnvelope
+} from "./schedule-result.js";
 
 export interface QueryScheduleFunctionOptions {
   memoryStore: AgentMemoryStore;
@@ -61,7 +65,8 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
           timeZone: options.timeZone,
           sessionStore: options.sessionStore,
           now,
-          requestIdFactory: options.requestIdFactory
+          requestIdFactory: options.requestIdFactory,
+          sourceKeys: [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS]
         })
       : undefined;
 
@@ -156,10 +161,38 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
     if (found.length === 1) {
       return found[0];
     }
+    const replyText = ["我找到這些服事安排：", ...found.map((result) => result.replyText)].join(
+      "\n\n"
+    );
+    const agentResult = aggregateScheduleResultEnvelopes(
+      found.flatMap((result) => (result.agentResult ? [result.agentResult] : [])),
+      { replyText, role: refinedArgs.role }
+    );
     return {
       ok: true,
-      replyText: ["我找到這些服事安排：", ...found.map((result) => result.replyText)].join("\n\n")
+      replyText: agentResult.replyText,
+      agentResult,
+      continuation: aggregateScheduleContinuation(agentResult)
     };
+  };
+}
+
+function aggregateScheduleContinuation(
+  result: NonNullable<FunctionExecutionResult["agentResult"]>
+): FunctionExecutionResult["continuation"] | undefined {
+  const date = result.anchors?.date;
+  const meeting = result.anchors?.meeting;
+  if (typeof date !== "string" || typeof meeting !== "string") return undefined;
+  const availableRoles = Array.from(
+    new Set(
+      (result.entities ?? [])
+        .filter((entity) => entity.type === "role")
+        .map((entity) => entity.label)
+    )
+  );
+  return {
+    arguments: { date, meeting, availableRoles },
+    resultReferences: { kind: "schedule_aggregate" }
   };
 }
 
@@ -174,7 +207,11 @@ function continuationRoles(arguments_: unknown): string[] | undefined {
 function scheduleReadModelSourceKeys(references: unknown): string[] | undefined {
   if (!references || typeof references !== "object") return undefined;
   const record = references as Record<string, unknown>;
-  if (record.kind !== "schedule_read_model" || !Array.isArray(record.sourceKeys)) return undefined;
+  if (
+    (record.kind !== "schedule_read_model" && record.kind !== "notion_schedule") ||
+    !Array.isArray(record.sourceKeys)
+  )
+    return undefined;
   const sourceKeys = record.sourceKeys.filter(
     (value): value is string => typeof value === "string"
   );
@@ -315,16 +352,28 @@ function scheduleItemToServiceRow(item: {
   };
 }
 
-function limitToFirstReadModelGroup<T extends { serviceDate: string }>(
+function limitToFirstReadModelGroup<T extends { serviceDate: string; meeting: string }>(
   rows: T[],
   now: Date,
   timeZone: string
 ): T[] {
-  const firstFutureDate = rows
-    .map((row) => row.serviceDate)
-    .filter((date) => date >= toDateKey(now, timeZone))
-    .sort()[0];
-  return firstFutureDate ? rows.filter((row) => row.serviceDate === firstFutureDate) : [];
+  const first = rows
+    .filter((row) => row.serviceDate >= toDateKey(now, timeZone))
+    .sort(compareScheduleGroup)[0];
+  if (!first) return [];
+  return rows.filter(
+    (row) => row.serviceDate === first.serviceDate && row.meeting === first.meeting
+  );
+}
+
+function compareScheduleGroup<T extends { serviceDate: string; meeting: string }>(
+  left: T,
+  right: T
+): number {
+  return (
+    left.serviceDate.localeCompare(right.serviceDate) ||
+    left.meeting.localeCompare(right.meeting, "zh-Hant")
+  );
 }
 
 function toDateKey(date: Date, timeZone: string): string {

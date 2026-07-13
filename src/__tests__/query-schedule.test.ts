@@ -173,9 +173,14 @@ describe("query_schedule", () => {
       arguments: {
         date: "2026-07-14",
         meeting: "晨更",
-        availableRoles: ["音控", "導播"]
+        availableRoles: ["音控", "導播"],
+        scheduleRoute: "live_notion",
+        sourceKeys: ["media_team_service_schedule"]
       },
-      resultReferences: { kind: "notion_schedule" }
+      resultReferences: {
+        kind: "notion_schedule",
+        sourceKeys: ["media_team_service_schedule"]
+      }
     });
   });
 
@@ -212,16 +217,22 @@ describe("query_schedule", () => {
       arguments: {
         date: "2026-07-14",
         meeting: "7月14日(二) 晨更",
-        availableRoles: ["音控", "導播", "前攝影"]
+        availableRoles: ["音控", "導播", "前攝影"],
+        scheduleRoute: "live_notion",
+        sourceKeys: ["media_team_service_schedule"]
       },
-      resultReferences: { kind: "notion_schedule" }
+      resultReferences: {
+        kind: "notion_schedule",
+        sourceKeys: ["media_team_service_schedule"]
+      }
     });
     expect(result.agentResult).toEqual({
       status: "success",
       replyText: result.replyText,
       anchors: {
         date: "2026-07-14",
-        meeting: "7月14日(二) 晨更"
+        meeting: "7月14日(二) 晨更",
+        sourceKeys: ["media_team_service_schedule"]
       },
       entities: expect.arrayContaining([
         expect.objectContaining({ type: "role", label: "前攝影" }),
@@ -390,6 +401,48 @@ describe("query_schedule", () => {
     expect(next.replyText).toContain("7月25日");
     expect(next.replyText).toContain("Next Ray");
     expect(next.replyText).not.toContain("7月18日");
+  });
+
+  it("limits next-meeting results to one meeting when two meetings share a date", async () => {
+    const schedules = new InMemoryScheduleStore();
+    for (const [meeting, role, assignee] of [
+      ["A 晨更", "音控", "資恆"],
+      ["B 晨更", "導播", "不應出現"]
+    ]) {
+      await schedules.upsertItem({
+        profileName: "helper",
+        sourceKey: "media_team_service_schedule",
+        origin: "notion",
+        externalId: `page-${meeting}`,
+        serviceDate: "2026-07-14",
+        meeting,
+        role,
+        assignee
+      });
+    }
+    const query = createQueryScheduleHandler({
+      memoryStore: new InMemoryAgentMemoryStore(),
+      scheduleStore: schedules,
+      now: () => new Date("2026-07-13T00:00:00.000Z"),
+      timeZone: "Asia/Taipei"
+    });
+
+    const result = await query(
+      { query: "下一場影視團隊服事表", dateIntent: "next_meeting" },
+      context("下一場影視團隊服事表")
+    );
+
+    expect(result.replyText).toContain("【A 晨更】");
+    expect(result.replyText).toContain("音控：資恆");
+    expect(result.replyText).not.toContain("B 晨更");
+    expect(result.replyText).not.toContain("不應出現");
+    expect(result.continuation).toMatchObject({
+      arguments: {
+        date: "2026-07-14",
+        meeting: "A 晨更",
+        availableRoles: ["音控"]
+      }
+    });
   });
 
   it("treats a complete next-meeting role question as current, not an advance", async () => {
@@ -688,5 +741,110 @@ describe("query_schedule", () => {
       quickReplies: result.quickReplies
     });
     expect(result.quickReplies?.map((item) => item.label)).toEqual(["下一場", "本週", "主日"]);
+  });
+
+  it("aggregates saved and synchronized schedule results into one structured continuation", async () => {
+    const now = () => new Date("2026-07-13T00:00:00.000Z");
+    const memoryStore = new InMemoryAgentMemoryStore({ now });
+    await memoryStore.saveScheduleMemory({
+      profileName: "helper",
+      source: { type: "group", groupId: "C1", userId: "U1" },
+      createdBy: "U1",
+      visibility: "profile",
+      scheduleType: "custom_service_schedule",
+      title: "主日接待",
+      originalText: "7/19 主日接待",
+      entries: [
+        {
+          serviceDate: "2026-07-19",
+          meetingName: "主日",
+          role: "招待",
+          assignee: "保存同工"
+        }
+      ],
+      expiresAt: "2027-07-13T00:00:00.000Z"
+    });
+    const schedules = new InMemoryScheduleStore();
+    await schedules.upsertItem({
+      profileName: "helper",
+      sourceKey: "media_team_service_schedule",
+      origin: "notion",
+      externalId: "page-combined",
+      serviceDate: "2026-07-19",
+      meeting: "主日",
+      role: "音控",
+      assignee: "同步同工"
+    });
+    const query = createQueryScheduleHandler({ memoryStore, scheduleStore: schedules, now });
+
+    const result = await query(
+      { query: "", date: "2026-07-19", meeting: "主日" },
+      context("查7月19日主日服事")
+    );
+
+    expect(result.replyText).toContain("主日：保存同工");
+    expect(result.replyText).toContain("音控：同步同工");
+    expect(result.agentResult).toMatchObject({
+      status: "success",
+      entities: expect.arrayContaining([
+        expect.objectContaining({ type: "role", label: "招待" }),
+        expect.objectContaining({ type: "role", label: "音控" })
+      ]),
+      supportedOperations: ["continue", "refine", "advance"]
+    });
+    expect(result.continuation).toMatchObject({
+      arguments: {
+        date: "2026-07-19",
+        meeting: "主日",
+        availableRoles: expect.arrayContaining(["招待", "音控"])
+      }
+    });
+  });
+
+  it("preserves ambiguity when partial role candidates come from different schedule sources", async () => {
+    const now = () => new Date("2026-07-13T00:00:00.000Z");
+    const memoryStore = new InMemoryAgentMemoryStore({ now });
+    await memoryStore.saveScheduleMemory({
+      profileName: "helper",
+      source: { type: "group", groupId: "C1", userId: "U1" },
+      createdBy: "U1",
+      visibility: "profile",
+      scheduleType: "custom_service_schedule",
+      title: "攝影服事",
+      originalText: "7/19 攝影服事",
+      entries: [
+        {
+          serviceDate: "2026-07-19",
+          meetingName: "主日",
+          role: "前攝影",
+          assignee: "前方同工"
+        }
+      ],
+      expiresAt: "2027-07-13T00:00:00.000Z"
+    });
+    const schedules = new InMemoryScheduleStore();
+    await schedules.upsertItem({
+      profileName: "helper",
+      sourceKey: "media_team_service_schedule",
+      origin: "notion",
+      externalId: "page-back-camera",
+      serviceDate: "2026-07-19",
+      meeting: "主日",
+      role: "後攝影",
+      assignee: "後方同工"
+    });
+    const query = createQueryScheduleHandler({ memoryStore, scheduleStore: schedules, now });
+
+    const result = await query(
+      { query: "攝影是誰", date: "2026-07-19", meeting: "主日" },
+      context("攝影是誰")
+    );
+
+    expect(result.agentResult).toMatchObject({
+      status: "ambiguous",
+      clarification: { choices: ["前攝影", "後攝影"] }
+    });
+    expect(result.replyText).not.toContain("前方同工");
+    expect(result.replyText).not.toContain("後方同工");
   });
 });

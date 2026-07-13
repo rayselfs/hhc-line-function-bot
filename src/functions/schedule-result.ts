@@ -60,6 +60,33 @@ export function scheduleResultEnvelope(
   };
 }
 
+export function aggregateScheduleResultEnvelopes(
+  envelopes: AgentResultEnvelope[],
+  filters: Pick<ScheduleResultFilters, "replyText" | "role">
+): AgentResultEnvelope {
+  const sourceKeys = unique(
+    envelopes.flatMap((envelope) => stringArrayAnchor(envelope, "sourceKeys"))
+  );
+  const rows = envelopes.flatMap((envelope) => {
+    const date = stringAnchor(envelope, "date");
+    const meeting = stringAnchor(envelope, "meeting");
+    const roles = (envelope.entities ?? []).filter((entity) => entity.type === "role");
+    if (roles.length === 0) {
+      return date || meeting ? [{ date, meeting }] : [];
+    }
+    return roles.map((entity) => ({ date, meeting, role: entity.label }));
+  });
+  if (rows.length === 0) {
+    return {
+      status: "success",
+      replyText: filters.replyText,
+      entities: mergeEntities(envelopes),
+      supportedOperations: [...SCHEDULE_OPERATIONS]
+    };
+  }
+  return scheduleResultEnvelope(rows, { ...filters, sourceKeys });
+}
+
 export function resolveScheduleResultRows<T extends ScheduleResultRow>(
   rows: T[],
   requestedRole?: string
@@ -183,4 +210,22 @@ function extractDateKey(value: string): string {
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values));
+}
+
+function stringAnchor(envelope: AgentResultEnvelope, key: string): string | undefined {
+  const value = envelope.anchors?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function stringArrayAnchor(envelope: AgentResultEnvelope, key: string): string[] {
+  const value = envelope.anchors?.[key];
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
+}
+
+function mergeEntities(envelopes: AgentResultEnvelope[]): AgentEntity[] {
+  const entities = new Map<string, AgentEntity>();
+  for (const entity of envelopes.flatMap((envelope) => envelope.entities ?? [])) {
+    entities.set(`${entity.type}:${entity.key}`, entity);
+  }
+  return Array.from(entities.values());
 }

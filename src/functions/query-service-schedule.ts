@@ -30,6 +30,7 @@ export interface QueryServiceScheduleOptions {
   timeZone?: string;
   sessionStore?: SessionStore;
   requestIdFactory?: () => string;
+  sourceKeys?: string[];
 }
 
 export interface ServiceRow {
@@ -164,14 +165,16 @@ export function createQueryServiceScheduleHandler(
     const replyText = formatServiceScheduleReply(filtered, args, derivedFilters);
     const agentResult = scheduleResultEnvelope(filtered, {
       replyText,
-      role: derivedFilters.role
+      role: derivedFilters.role,
+      sourceKeys: options.sourceKeys
     });
     return {
       ok: true,
       continuation: liveScheduleContinuation(
         filtered,
         derivedFilters.role,
-        continuationRoles(context.continuation?.arguments)
+        continuationRoles(context.continuation?.arguments),
+        options.sourceKeys
       ),
       replyText: agentResult.replyText,
       agentResult
@@ -182,7 +185,8 @@ export function createQueryServiceScheduleHandler(
 function liveScheduleContinuation(
   rows: ServiceRow[],
   role?: string,
-  previousRoles: string[] = []
+  previousRoles: string[] = [],
+  sourceKeys: string[] = []
 ): FunctionExecutionResult["continuation"] | undefined {
   const dates = Array.from(new Set(rows.map((row) => extractDateKey(row.date)).filter(Boolean)));
   const meetings = Array.from(new Set(rows.map((row) => row.meeting).filter(Boolean)));
@@ -194,9 +198,15 @@ function liveScheduleContinuation(
       availableRoles: Array.from(
         new Set([...previousRoles, ...rows.map((row) => row.role).filter(Boolean)])
       ),
+      ...(sourceKeys.length > 0
+        ? { scheduleRoute: "live_notion", sourceKeys: Array.from(new Set(sourceKeys)) }
+        : {}),
       ...(role ? { role } : {})
     },
-    resultReferences: { kind: "notion_schedule" }
+    resultReferences: {
+      kind: "notion_schedule",
+      ...(sourceKeys.length > 0 ? { sourceKeys: Array.from(new Set(sourceKeys)) } : {})
+    }
   };
 }
 
