@@ -2,9 +2,9 @@ import type { FunctionContinuationState, FunctionName, JsonRecord } from "../typ
 import {
   cloneActiveTask,
   decodeActiveTask,
-  prepareActiveTaskForStorage,
-  type ActiveTaskContext
-} from "./active-task.js";
+  prepareActiveTaskForStorage
+} from "./active-task-codec.js";
+import type { ActiveTaskContext } from "./active-task.js";
 
 export interface ConversationWindowScope {
   profileName: string;

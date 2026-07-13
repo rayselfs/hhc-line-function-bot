@@ -315,7 +315,7 @@ describe("structured result active tasks", () => {
             label: `角色 ${index}`
           }))
         ],
-        references: { id: "r".repeat(600), nested: { raw: "drop" } },
+        references: { resourceId: "r".repeat(600) },
         supportedOperations: Array.from(
           { length: 10 },
           (_, index) => `operation-${index}-${"o".repeat(210)}`
@@ -334,8 +334,7 @@ describe("structured result active tasks", () => {
     expect(task?.entities[0]?.label).toHaveLength(500);
     expect(task?.entities[0]?.aliases).toHaveLength(10);
     expect(task?.entities[0]?.aliases?.[0]).toHaveLength(200);
-    expect(task?.references?.id).toHaveLength(500);
-    expect(task?.references?.nested).toBeUndefined();
+    expect(task?.references?.resourceId).toHaveLength(500);
     expect(task?.supportedOperations).toHaveLength(8);
     expect(task?.supportedOperations[0]).toHaveLength(200);
   });
@@ -370,6 +369,67 @@ describe("structured result active tasks", () => {
         await backend.store.recordActiveTask({ scope, task, ttlMs: 60_000 });
         await expect(backend.store.activeTask(scope), backend.name).resolves.toBeUndefined();
       }
+    }
+  });
+
+  it.each([
+    ["Chinese password key", { anchors: { 密碼: "ordinary-looking-value" } }],
+    ["full-width API key", { anchors: { ＡＰＩ＿ＫＥＹ: "ordinary-looking-value" } }],
+    ["GitHub token", { anchors: { note: `ghp_${"a".repeat(36)}` } }],
+    ["fine-grained GitHub token", { anchors: { note: `github_pat_${"a".repeat(30)}` } }],
+    ["Slack bot token", { anchors: { note: "xoxb-1234567890-abcdefghijklmnop" } }],
+    ["Slack user token", { anchors: { note: "xoxp-1234567890-abcdefghijklmnop" } }],
+    ["AWS access key", { anchors: { note: "AKIAIOSFODNN7EXAMPLE" } }],
+    ["generic API key", { anchors: { note: "api_key_abcdefghijklmnop123456" } }]
+  ])("rejects normalized sensitive metadata: %s", async (_name, override) => {
+    for (const backend of activeTaskBackends()) {
+      const task = { ...previousTask, ...override };
+      await backend.store.recordActiveTask({ scope, task, ttlMs: 60_000 });
+      await expect(backend.store.activeTask(scope), backend.name).resolves.toBeUndefined();
+    }
+  });
+
+  it.each([
+    "https://user:password@example.org/reference",
+    "https://example.org/reference?sig=secret-signature",
+    "https://blob.core.windows.net/file.pdf?sv=2024-01-01&sp=r&sig=secret",
+    "https://example.org/reference#access_token=secret",
+    "https://example.org/share/temporary-result",
+    "https://example.org/reference?redirect=https%3A%2F%2F1drv.ms%2Fabc"
+  ])("rejects secret-bearing or generated evidence URL: %s", async (url) => {
+    for (const backend of activeTaskBackends()) {
+      await backend.store.recordActiveTask({
+        scope,
+        task: { ...previousTask, references: { url } },
+        ttlMs: 60_000
+      });
+      await expect(backend.store.activeTask(scope), backend.name).resolves.toBeUndefined();
+    }
+  });
+
+  it("accepts benign Chinese anchors and a stable public evidence URL", async () => {
+    const task: ActiveTaskContext = {
+      ...previousTask,
+      anchors: { 日期: "2026-07-14", 聚會: "晨更", 角色: ["前攝影", "音控"] },
+      references: {
+        pageId: "fastify",
+        url: "https://en.wikipedia.org/wiki/Fastify?uselang=zh#Overview"
+      }
+    };
+    for (const backend of activeTaskBackends()) {
+      await backend.store.recordActiveTask({ scope, task, ttlMs: 60_000 });
+      await expect(backend.store.activeTask(scope), backend.name).resolves.toEqual(task);
+    }
+  });
+
+  it("fails closed for unknown evidence reference keys", async () => {
+    for (const backend of activeTaskBackends()) {
+      await backend.store.recordActiveTask({
+        scope,
+        task: { ...previousTask, references: { unexpectedId: "value" } },
+        ttlMs: 60_000
+      });
+      await expect(backend.store.activeTask(scope), backend.name).resolves.toBeUndefined();
     }
   });
 
