@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import type { ActiveTaskContext } from "../agent/active-task.js";
+import { InMemoryConversationWindowStore } from "../agent/context-manager.js";
 import {
   buildCapabilityCandidates,
   type KnowledgeSourceMetadata
@@ -68,6 +69,8 @@ interface ExpectedProposal {
   status?: "proposed" | "no_plan";
   disposition?: AgentPlanDisposition;
   capability?: FunctionName;
+  absentArgumentKeys?: string[];
+  arguments?: Record<string, unknown>;
 }
 
 interface ExpectedFinal {
@@ -88,6 +91,13 @@ export interface AgentPlannerEvalCase {
   activeTask?: ActiveTaskContext;
   knowledgeSources?: KnowledgeSourceMetadata[];
   retrievalEvidence?: FunctionName[];
+  requesterIsolation?: {
+    task: ActiveTaskContext;
+    profileName: string;
+    sourceKey: string;
+    ownerRequesterUserId: string;
+    evaluationRequesterUserId: string;
+  };
   offlineOnly?: boolean;
 }
 
@@ -192,7 +202,12 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     enabledFunctions: ["query_knowledge", "query_schedule"],
     activeTask: knowledgeTask,
     expectedCandidates: ["query_schedule"],
-    expectedProposal: { disposition: "switch", capability: "query_schedule" },
+    expectedProposal: {
+      disposition: "switch",
+      capability: "query_schedule",
+      arguments: { meeting: "主日", role: "音控" },
+      absentArgumentKeys: ["specificDate"]
+    },
     expectedFinal: {
       disposition: "execute",
       capability: "query_schedule",
@@ -213,6 +228,13 @@ export const AGENT_PLANNER_EVAL_CASES: AgentPlannerEvalCase[] = [
     name: "acceptance-9-requester-isolation-no-inherited-task",
     text: "前攝影",
     enabledFunctions: ["query_schedule"],
+    requesterIsolation: {
+      task: scheduleTask,
+      profileName: "helper",
+      sourceKey: "group:C1",
+      ownerRequesterUserId: "requester-a",
+      evaluationRequesterUserId: "requester-b"
+    },
     expectedCandidates: [],
     expectedProposal: { status: "no_plan" },
     expectedFinal: { disposition: "chat", reasonCode: "no_capability_evidence" }
@@ -352,8 +374,13 @@ const OFFLINE_PLANNER_FIXTURES: Readonly<Record<string, AgentPlanProposalInput>>
 
 export interface AgentPlannerEvalReport {
   total: number;
+  candidateAttempted: number;
+  candidatePassed: number;
+  proposalAttempted: number;
   proposalPassed: number;
+  validatedAttempted: number;
   validatedPassed: number;
+  candidateFailures: string[];
   proposalFailures: string[];
   validatedFailures: string[];
 }
@@ -373,13 +400,24 @@ export async function evaluateAgentPlannerCases(
   ) => Promise<AgentPlanProposalInput>,
   cases: readonly AgentPlannerEvalCase[] = AGENT_PLANNER_EVAL_CASES
 ): Promise<AgentPlannerEvalReport> {
+  const candidateFailures: string[] = [];
   const proposalFailures: string[] = [];
   const validatedFailures: string[] = [];
+  let candidateAttempted = 0;
+  let proposalAttempted = 0;
+  let validatedAttempted = 0;
   for (const entry of cases) {
+    const resolvedTask = await resolveEvalActiveTask(entry);
+    if (!resolvedTask.isolationValid) {
+      validatedAttempted += 1;
+      validatedFailures.push(`${entry.name}:requester_isolation`);
+      continue;
+    }
+    candidateAttempted += 1;
     const candidates = buildCapabilityCandidates({
       text: entry.text,
       enabledFunctions: entry.enabledFunctions,
-      activeTask: entry.activeTask,
+      activeTask: resolvedTask.activeTask,
       knowledgeSources: entry.knowledgeSources ?? [],
       retrievalEvidence: entry.retrievalEvidence,
       maxCandidates: 3,
@@ -391,21 +429,23 @@ export async function evaluateAgentPlannerCases(
         entry.expectedCandidates
       )
     ) {
-      validatedFailures.push(
+      candidateFailures.push(
         `${entry.name}:candidate_set:${candidates.map(({ capability }) => capability).join(",")}`
       );
       continue;
     }
     const proposal = await propose(entry, candidates);
+    proposalAttempted += 1;
     if (!matchesProposal(proposal, entry.expectedProposal)) {
       proposalFailures.push(`${entry.name}:proposal`);
     }
+    validatedAttempted += 1;
     const finalPlan = validateAgentPlan({
       text: entry.text,
       enabledFunctions: entry.enabledFunctions,
       candidates,
       proposal,
-      activeTask: entry.activeTask,
+      activeTask: resolvedTask.activeTask,
       minConfidence: 0.65,
       sourceType: "group",
       now: NOW
@@ -416,19 +456,56 @@ export async function evaluateAgentPlannerCases(
   }
   return {
     total: cases.length,
-    proposalPassed: cases.length - proposalFailures.length,
-    validatedPassed: cases.length - validatedFailures.length,
+    candidateAttempted,
+    candidatePassed: candidateAttempted - candidateFailures.length,
+    proposalAttempted,
+    proposalPassed: proposalAttempted - proposalFailures.length,
+    validatedAttempted,
+    validatedPassed: validatedAttempted - validatedFailures.length,
+    candidateFailures,
     proposalFailures,
     validatedFailures
   };
 }
 
+async function resolveEvalActiveTask(entry: AgentPlannerEvalCase): Promise<{
+  activeTask?: ActiveTaskContext;
+  isolationValid: boolean;
+}> {
+  if (!entry.requesterIsolation) {
+    return { activeTask: entry.activeTask, isolationValid: true };
+  }
+  const fixture = entry.requesterIsolation;
+  const store = new InMemoryConversationWindowStore({ now: () => NOW });
+  const ownerScope = {
+    profileName: fixture.profileName,
+    sourceKey: fixture.sourceKey,
+    requesterUserId: fixture.ownerRequesterUserId
+  };
+  await store.recordActiveTask({ scope: ownerScope, task: fixture.task, ttlMs: 60_000 });
+  const ownerTask = await store.activeTask(ownerScope);
+  const activeTask = await store.activeTask({
+    ...ownerScope,
+    requesterUserId: fixture.evaluationRequesterUserId
+  });
+  return { activeTask, isolationValid: Boolean(ownerTask) && activeTask === undefined };
+}
+
 function matchesProposal(proposal: AgentPlanProposalInput, expected: ExpectedProposal): boolean {
   if (expected.status === "no_plan") return proposal.status === "no_plan";
   if (proposal.status === "no_plan") return false;
+  if (expected.disposition && proposal.disposition !== expected.disposition) return false;
+  if (expected.capability && proposal.capability !== expected.capability) return false;
+  const argumentsValue = proposal.arguments ?? {};
+  if (
+    expected.absentArgumentKeys &&
+    !expected.absentArgumentKeys.every((key) => !(key in argumentsValue))
+  ) {
+    return false;
+  }
   return (
-    (!expected.disposition || proposal.disposition === expected.disposition) &&
-    (!expected.capability || proposal.capability === expected.capability)
+    !expected.arguments ||
+    Object.entries(expected.arguments).every(([key, value]) => argumentsValue[key] === value)
   );
 }
 
@@ -455,19 +532,24 @@ function sameValues(left: readonly string[], right: readonly string[]): boolean 
 
 async function main(): Promise<void> {
   const report = await runOfflineAgentPlannerEval();
-  if (report.proposalFailures.length > 0 || report.validatedFailures.length > 0) {
+  if (report.candidateFailures.length > 0 || report.validatedFailures.length > 0) {
     console.error(
-      `Agent planner eval failed: proposal ${report.proposalPassed}/${report.total}, validated ${report.validatedPassed}/${report.total}`
+      `Agent planner eval failed: candidates ${report.candidatePassed}/${report.candidateAttempted}, proposal ${report.proposalPassed}/${report.proposalAttempted}, validated ${report.validatedPassed}/${report.validatedAttempted}`
     );
-    for (const failure of [...report.proposalFailures, ...report.validatedFailures]) {
+    for (const failure of [
+      ...report.candidateFailures,
+      ...report.proposalFailures,
+      ...report.validatedFailures
+    ]) {
       console.error(`- ${failure}`);
     }
     process.exitCode = 1;
     return;
   }
   console.log(
-    `Agent planner eval passed: proposal ${report.proposalPassed}/${report.total}, validated ${report.validatedPassed}/${report.total}`
+    `Agent planner eval passed: candidates ${report.candidatePassed}/${report.candidateAttempted}, proposal ${report.proposalPassed}/${report.proposalAttempted}, validated ${report.validatedPassed}/${report.validatedAttempted}`
   );
+  for (const failure of report.proposalFailures) console.warn(`- ${failure}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

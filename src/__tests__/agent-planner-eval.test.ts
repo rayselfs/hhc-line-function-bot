@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AGENT_PLANNER_EVAL_CASES,
+  evaluateAgentPlannerCases,
+  type AgentPlannerEvalCase,
   runOfflineAgentPlannerEval
 } from "../tools/eval-agent-planner.js";
 
@@ -32,17 +34,93 @@ describe("controlled agent planner eval corpus", () => {
       arguments: { meeting: "主日", role: "音控" },
       absentArgumentKeys: ["specificDate"]
     });
+    expect(
+      AGENT_PLANNER_EVAL_CASES.find(
+        ({ name }) => name === "acceptance-9-requester-isolation-no-inherited-task"
+      )
+    ).toHaveProperty("requesterIsolation");
   });
 
   it("passes deterministic stub proposals through the real validator", async () => {
     const report = await runOfflineAgentPlannerEval();
 
     expect(report.total).toBe(AGENT_PLANNER_EVAL_CASES.length);
-    expect(report.proposalFailures).toEqual([]);
+    expect(report.candidateFailures).toEqual([]);
+    expect(report.proposalAttempted).toBe(report.total);
+    expect(report.proposalFailures).toContain(
+      "acceptance-7-explicit-cross-function-switch:proposal"
+    );
     expect(report.validatedFailures).toEqual([]);
     expect(report.validatedPassed).toBe(report.total);
     expect(JSON.stringify(report)).not.toMatch(
       /王小明|example\.invalid|主日服事表\.xlsx|private evidence|secret-token/u
     );
+  });
+
+  it("scores proposal arguments before deterministic validation repairs them", async () => {
+    const base = AGENT_PLANNER_EVAL_CASES.find(
+      ({ name }) => name === "acceptance-7-explicit-cross-function-switch"
+    )!;
+    const expectedProposal = {
+      disposition: "switch" as const,
+      capability: "query_schedule" as const,
+      arguments: { meeting: "主日", role: "音控" },
+      absentArgumentKeys: ["specificDate"]
+    };
+    const wrongArguments = {
+      ...base,
+      name: "proposal-wrong-arguments",
+      expectedProposal
+    } as AgentPlannerEvalCase;
+    const injectedArgument = {
+      ...base,
+      name: "proposal-injected-argument",
+      expectedProposal
+    } as AgentPlannerEvalCase;
+    const report = await evaluateAgentPlannerCases(
+      async (entry) => ({
+        status: "proposed",
+        disposition: "switch",
+        capability: "query_schedule",
+        arguments:
+          entry.name === wrongArguments.name
+            ? { query: entry.text, meeting: "晨更", role: "導播" }
+            : {
+                query: entry.text,
+                meeting: "主日",
+                role: "音控",
+                specificDate: "2027-07-14"
+              },
+        confidence: 0.96
+      }),
+      [wrongArguments, injectedArgument]
+    );
+
+    expect(report).toMatchObject({
+      proposalAttempted: 2,
+      proposalPassed: 0,
+      proposalFailures: [`${wrongArguments.name}:proposal`, `${injectedArgument.name}:proposal`],
+      validatedAttempted: 2,
+      validatedPassed: 2,
+      validatedFailures: []
+    });
+  });
+
+  it("reports candidate failures separately and skips proposal scoring", async () => {
+    const base = AGENT_PLANNER_EVAL_CASES[0]!;
+    const entry = { ...base, expectedCandidates: ["query_knowledge"] } as AgentPlannerEvalCase;
+    const propose = vi.fn();
+    const report = await evaluateAgentPlannerCases(propose, [entry]);
+
+    expect(propose).not.toHaveBeenCalled();
+    expect(report).toMatchObject({
+      candidatePassed: 0,
+      candidateAttempted: 1,
+      candidateFailures: [expect.stringContaining(`${entry.name}:candidate_set:`)],
+      proposalAttempted: 0,
+      proposalPassed: 0,
+      validatedAttempted: 0,
+      validatedPassed: 0
+    });
   });
 });

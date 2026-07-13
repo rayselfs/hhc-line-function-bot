@@ -39,9 +39,13 @@ export function isInterpersonalOrSmallTalkText(text: string): boolean {
   const addressedText = stripBotAddress(text);
   if (classifySmallTalkCategory(addressedText)) return true;
   const normalized = normalizeIntentText(addressedText);
-  return /^(?:那|所以|請問|想問)?(?:你|妳|您)(?:是誰|叫什麼|名字是什麼|是什麼|會什麼|能做什麼|可以做什麼)$/u.test(
-    normalized
-  );
+  const hasSecondPerson = /(?:你|妳|您)/u.test(normalized);
+  if (!hasSecondPerson) return false;
+  const hasQuestionStructure =
+    /(?:誰|什麼|甚麼|啥|哪(?:裡|邊|個|位)?|幾|怎麼|如何|為什麼|何時|多久|多少|名字|姓名|嗎|嘛|呢|啊|呀)/u.test(
+      normalized
+    );
+  return hasQuestionStructure;
 }
 
 function stripBotAddress(text: string): string {

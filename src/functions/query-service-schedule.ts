@@ -410,13 +410,21 @@ function cleanOptionalText(value: string | undefined): string | undefined {
 
 export function extractKnownScheduleRole(query: string): string | undefined {
   const knownRoles = [
+    "投影電腦",
+    "手機拍照",
+    "前攝影",
+    "後攝影",
     "司會",
     "主席",
+    "主持",
     "領詩",
     "敬拜",
+    "信息",
     "司琴",
     "招待",
     "音控",
+    "導播",
+    "攝影",
     "投影",
     "兒童",
     "講員"

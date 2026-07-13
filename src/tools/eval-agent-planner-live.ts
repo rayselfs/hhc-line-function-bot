@@ -152,14 +152,18 @@ async function main(): Promise<void> {
   const forcedFallback = await evaluateForcedOllamaFallback(providers.ollama, profileName);
 
   console.log(`Agent planner live providers: primary=${primaryName} fallback=${fallbackName}`);
-  console.log(`Proposal accuracy: ${report.proposalPassed}/${report.total}`);
-  console.log(`Final validated accuracy: ${report.validatedPassed}/${report.total}`);
+  console.log(`Candidate accuracy: ${report.candidatePassed}/${report.candidateAttempted}`);
+  console.log(`Proposal accuracy: ${report.proposalPassed}/${report.proposalAttempted}`);
+  console.log(`Final validated accuracy: ${report.validatedPassed}/${report.validatedAttempted}`);
   console.log(
     `Forced fallback: provider=${forcedFallback.provider} primary=${forcedFallback.primaryStatus} final=${forcedFallback.finalDisposition}`
   );
+  for (const failure of report.candidateFailures) console.error(`candidate: ${failure}`);
   for (const failure of report.proposalFailures) console.error(`proposal: ${failure}`);
   for (const failure of report.validatedFailures) console.error(`validated: ${failure}`);
-  if (report.validatedFailures.length > 0) process.exitCode = 1;
+  if (report.candidateFailures.length > 0 || report.validatedFailures.length > 0) {
+    process.exitCode = 1;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

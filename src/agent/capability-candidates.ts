@@ -12,7 +12,11 @@ import {
   resolveKnowledgeRoutingMetadata,
   type KnowledgeRoutingMetadata
 } from "../knowledge/routing-metadata.js";
-import { hasWriteIntent, isConservativeKnowledgeEvidenceText } from "./knowledge-evidence-guard.js";
+import {
+  hasWriteIntent,
+  isConservativeKnowledgeEvidenceText,
+  isInterpersonalOrSmallTalkText
+} from "./knowledge-evidence-guard.js";
 import { hasEllipticalActiveTaskReference } from "./plan-evidence.js";
 
 export interface KnowledgeSourceMetadata extends Omit<KnowledgeRoutingMetadata, "sampleQueries"> {
@@ -124,6 +128,7 @@ function strongestReason(
 ): CapabilityCandidateReason | undefined {
   const contract = definition.agentCapability!;
   if (matchesAnyExact(input.text, contract.intents)) return "explicit_intent";
+  if (isInterpersonalOrSmallTalkText(input.text)) return undefined;
   if (!hasWriteIntent(input.text) && hasDeclarativeArgumentEvidence(definition, input.text)) {
     return "argument_evidence";
   }

@@ -37,6 +37,15 @@ describe("plan evidence scalar grounding", () => {
 
   it("distinguishes informational ellipsis from interpersonal chat", () => {
     expect(hasEllipticalActiveTaskReference("那幾點集合？")).toBe(true);
-    expect(hasEllipticalActiveTaskReference("那你是誰？")).toBe(false);
+    for (const text of [
+      "那你是誰？",
+      "那你叫什麼名字",
+      "那你是誰啊",
+      "你的名字叫什麼？",
+      "名字呢，你叫什麼？"
+    ]) {
+      expect(hasEllipticalActiveTaskReference(text)).toBe(false);
+    }
+    expect(hasEllipticalActiveTaskReference("那第一天叫什麼名字？")).toBe(true);
   });
 });

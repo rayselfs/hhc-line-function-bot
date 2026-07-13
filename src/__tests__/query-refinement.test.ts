@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { buildResidualQuery } from "../functions/query-refinement.js";
-import { refineScheduleQuery } from "../functions/schedule-query-refinement.js";
+import {
+  extractScheduleRoleFocus,
+  refineScheduleQuery
+} from "../functions/schedule-query-refinement.js";
 
 describe("query refinement", () => {
   it("removes consumed phrases while preserving unknown search text", () => {
@@ -53,5 +56,22 @@ describe("query refinement", () => {
     expect(
       refineScheduleQuery(args, new Date("2026-07-12T00:00:00.000Z"), "Asia/Taipei")
     ).toMatchObject(expected);
+  });
+
+  it("trusts only known, continuation-metadata, or explicit service-syntax roles", () => {
+    expect(
+      extractScheduleRoleFocus({ query: "主日午餐呢", hasContinuation: false })
+    ).toBeUndefined();
+    expect(extractScheduleRoleFocus({ query: "主日主持呢", hasContinuation: false })).toBe("主持");
+    expect(extractScheduleRoleFocus({ query: "主日燈光服事是誰", hasContinuation: false })).toBe(
+      "燈光"
+    );
+    expect(
+      extractScheduleRoleFocus({
+        query: "燈光呢",
+        hasContinuation: true,
+        availableRoles: ["燈光"]
+      })
+    ).toBe("燈光");
   });
 });

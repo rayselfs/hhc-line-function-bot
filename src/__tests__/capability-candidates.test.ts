@@ -69,17 +69,33 @@ describe("deterministic capability candidates", () => {
     ]);
   });
 
-  it("keeps interpersonal questions out of active-task continuation", () => {
+  it.each(["那你是誰？", "那你叫什麼名字", "那你是誰啊", "你的名字叫什麼？", "名字呢，你叫什麼？"])(
+    "keeps structural interpersonal questions out of active-task continuation: %s",
+    (text) => {
+      expect(
+        buildCapabilityCandidates({
+          text,
+          enabledFunctions: ["query_knowledge"],
+          activeTask: knowledgeTask,
+          source: "group",
+          knowledgeSources: [],
+          maxCandidates: 3
+        })
+      ).toEqual([]);
+    }
+  );
+
+  it("still routes an explicit function request that addresses the bot", () => {
     expect(
       buildCapabilityCandidates({
-        text: "那你是誰？",
-        enabledFunctions: ["query_knowledge"],
+        text: "你可以幫我查主日服事嗎？",
+        enabledFunctions: ["query_schedule"],
         activeTask: knowledgeTask,
         source: "group",
         knowledgeSources: [],
         maxCandidates: 3
-      })
-    ).toEqual([]);
+      })[0]
+    ).toMatchObject({ capability: "query_schedule", reason: "explicit_intent" });
   });
 
   it.each([
@@ -111,6 +127,46 @@ describe("deterministic capability candidates", () => {
     const intents = getFunctionDefinition("query_schedule")!.agentCapability!.intents;
 
     expect(intents).not.toEqual(expect.arrayContaining(["主日音控", "主日導播", "主日攝影"]));
+  });
+
+  it("does not treat an arbitrary short residual as a schedule role", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "主日午餐呢",
+        enabledFunctions: ["query_schedule"],
+        activeTask: knowledgeTask,
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })
+    ).toEqual([]);
+  });
+
+  it.each(["主日主持呢", "明天前攝影是誰"])(
+    "accepts a known schedule role without explicit service syntax: %s",
+    (text) => {
+      expect(
+        buildCapabilityCandidates({
+          text,
+          enabledFunctions: ["query_schedule"],
+          source: "group",
+          knowledgeSources: [],
+          maxCandidates: 3
+        })[0]
+      ).toMatchObject({ capability: "query_schedule", reason: "argument_evidence" });
+    }
+  );
+
+  it("accepts a future role only with explicit service-role syntax", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "主日燈光服事是誰",
+        enabledFunctions: ["query_schedule"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })[0]
+    ).toMatchObject({ capability: "query_schedule", reason: "argument_evidence" });
   });
 
   it("uses bounded dynamic knowledge metadata without returning matched text", () => {

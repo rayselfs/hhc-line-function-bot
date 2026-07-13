@@ -243,7 +243,7 @@ describe("deterministic agent plan validation", () => {
     });
   });
 
-  it("does not let text for entity A ground an injected entity B", () => {
+  it("repairs an injected entity B to the trusted current-text entity A", () => {
     const result = validateAgentPlan(
       input({
         text: "前攝影",
@@ -264,11 +264,15 @@ describe("deterministic agent plan validation", () => {
       })
     );
 
-    expect(result).toMatchObject({ disposition: "execute", capability: "query_schedule" });
-    expect(result).not.toHaveProperty("arguments.role");
+    expect(result).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: { role: "前攝影" }
+    });
+    expect(result).not.toHaveProperty("arguments.role", "後攝影");
   });
 
-  it("does not let an explicit role A mention inherit a stored role B anchor", () => {
+  it("prefers an explicit trusted role A over a stored role B anchor", () => {
     const result = validateAgentPlan(
       input({
         text: "前攝影",
@@ -286,8 +290,12 @@ describe("deterministic agent plan validation", () => {
       })
     );
 
-    expect(result).toMatchObject({ disposition: "execute", capability: "query_schedule" });
-    expect(result).not.toHaveProperty("arguments.role");
+    expect(result).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: { role: "前攝影" }
+    });
+    expect(result).not.toHaveProperty("arguments.role", "後攝影");
   });
 
   it("does not let a matched meeting entity ground the role field", () => {

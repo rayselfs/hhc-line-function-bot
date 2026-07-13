@@ -150,15 +150,17 @@ export function extractScheduleRoleFocus(input: {
   }
   const focus = refinement.residualQuery.trim();
   if (!focus || Array.from(focus).length > 12) return undefined;
+  const availableRole = input.hasContinuation
+    ? input.availableRoles?.find((role) => normalizeRoleFocus(role) === normalizeRoleFocus(focus))
+    : undefined;
+  if (availableRole) return availableRole;
   const explicitRoleQuestion = /(?:是誰|誰|哪一位|哪位|呢)[？?]?$/u.test(input.query.trim());
-  if (explicitRoleQuestion) return focus;
-  if (!input.hasContinuation) return undefined;
+  const explicitServiceContext = /(?:服事表|服事安排|服事人員|服事)/u.test(input.query);
+  if (explicitRoleQuestion && explicitServiceContext) return focus;
   if (/^(?:你好|嗨|哈囉|謝謝|感謝|辛苦了|早安|晚安|在嗎|好嗎)$/u.test(focus)) {
     return undefined;
   }
-  return input.availableRoles?.find(
-    (role) => normalizeRoleFocus(role) === normalizeRoleFocus(focus)
-  );
+  return undefined;
 }
 
 export function isScheduleAdvanceFollowUp(query: string): boolean {
