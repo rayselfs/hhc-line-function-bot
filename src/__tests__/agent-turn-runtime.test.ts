@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createAgentRuntime } from "../agent/agent-runtime.js";
 import type { ControlledAgentRouter } from "../agent/controlled-agent-router.js";
-import { InMemoryConversationWindowStore } from "../agent/context-manager.js";
+import { InMemoryConversationWindowStore, type ContextManager } from "../agent/context-manager.js";
 import { createAgentTurnRuntime } from "../agent/turn-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { InMemoryAgentTraceStore } from "../agent/trace-store.js";
@@ -87,6 +87,7 @@ function createRuntime(options: {
     disposition: string;
     reasonCode?: string;
   }) => void | Promise<void>;
+  contextManager?: ContextManager;
 }) {
   const now = () => new Date("2026-07-08T00:00:00.000Z");
   const memoryStore = options.memoryStore ?? new InMemoryAgentMemoryStore({ now });
@@ -116,6 +117,7 @@ function createRuntime(options: {
     textGenerator: options.textGenerator,
     textFallbackGenerator: options.textFallbackGenerator,
     conversationWindowStore: options.conversationWindowStore,
+    contextManager: options.contextManager,
     controlledAgentRouter: options.controlledAgentRouter,
     controlledShadowObserver: options.controlledShadowObserver,
     now
@@ -180,6 +182,62 @@ describe("AgentTurnRuntime", () => {
 
     expect(result?.replyText).toBe("請再告訴我想查哪個功能，以及要找的名稱、日期或主題。");
     expect(legacyRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not read or build legacy runtime context for enabled controlled routing", async () => {
+    const store = new InMemoryConversationWindowStore();
+    const recentTurns = vi
+      .spyOn(store, "recentTurns")
+      .mockRejectedValue(new Error("legacy recent turns must not be read"));
+    const functionContext = vi
+      .spyOn(store, "functionContext")
+      .mockRejectedValue(new Error("legacy continuation must not be read"));
+    const contextManager: ContextManager = {
+      build: vi.fn(() => {
+        throw new Error("legacy prompt must not be built");
+      })
+    };
+    const controlledResolve = vi.fn<ControlledAgentRouter["resolve"]>().mockResolvedValue({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: { query: "主日服事" },
+      reasonCode: "explicit_intent"
+    });
+    const runtime = createRuntime({
+      conversationWindowStore: store,
+      contextManager,
+      controlledAgentRouter: { resolve: controlledResolve },
+      functionRegistry: {
+        query_schedule: vi.fn().mockResolvedValue({ ok: true, replyText: "controlled" })
+      }
+    });
+
+    const result = await runtime.handleTextTurn({
+      profile: profile(["query_schedule"], {
+        controlledAgent: {
+          enabled: true,
+          shadow: false,
+          maxCandidates: 3,
+          minPlannerConfidence: 0.65
+        }
+      }),
+      event: textEvent("查主日服事"),
+      requestId: "req-controlled-no-legacy-context"
+    });
+
+    expect(result?.replyText).toBe("controlled");
+    expect(recentTurns).not.toHaveBeenCalled();
+    expect(functionContext).not.toHaveBeenCalled();
+    expect(contextManager.build).not.toHaveBeenCalled();
+    expect(controlledResolve).toHaveBeenCalledWith({
+      profileName: "helper",
+      text: "查主日服事",
+      enabledFunctions: ["query_schedule"],
+      sourceType: "group",
+      activeTask: undefined,
+      maxCandidates: 3,
+      minPlannerConfidence: 0.65
+    });
   });
 
   it("runs shadow routing without changing legacy execution or controlled state", async () => {

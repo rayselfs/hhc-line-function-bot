@@ -82,3 +82,11 @@ Addressed the four independent-review blockers in a separate corrective change.
 - `pnpm test`: passed, 74 files / 776 tests.
 - `git diff --check`: passed.
 - Whole-repo `pnpm format:check` reports only the same 12 pre-existing `.superpowers/sdd` control files; corrective product source/tests pass Prettier.
+
+## Enabled Runtime-Context Isolation Correction
+
+- RED: the focused runtime suite failed exactly 1 new regression because enabled controlled routing read legacy `recentTurns` before reaching the planner; the other 41 tests passed.
+- Computes controlled mode before context construction and skips `buildRuntimeContext()` entirely when enabled. Disabled and shadow legacy-authoritative modes retain their existing context behavior.
+- Regression makes legacy recent-turn, continuation, and prompt-building dependencies throw if called, verifies controlled execution still succeeds, and checks the planner input contains only the scoped controlled fields with no legacy prompt/history.
+- GREEN: focused runtime suite passed 42 tests; full suite passed 74 files / 777 tests.
+- Targeted Prettier, typecheck, lint, build, 66 router evals, and `git diff --check` passed.

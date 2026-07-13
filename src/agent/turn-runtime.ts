@@ -264,7 +264,9 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, adminActionResult);
       }
 
-      const runtimeContext = await buildRuntimeContext(options, input, text);
+      const controlledMode = controlledRoutingMode(input.profile);
+      const runtimeContext =
+        controlledMode === "enabled" ? undefined : await buildRuntimeContext(options, input, text);
       if (runtimeContext) {
         steps.push({
           phase: "context",
@@ -273,7 +275,6 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       }
 
       const routeStartedAt = Date.now();
-      const controlledMode = controlledRoutingMode(input.profile);
       const continuation =
         controlledMode === "enabled" ? undefined : await readFunctionContinuation(options, input);
       let activeTask: ActiveTaskContext | undefined;
