@@ -6,6 +6,7 @@ import { createFunctionRegistries } from "../functions/registry.js";
 import { signLineBody } from "../line-signature.js";
 import { createApp } from "../server.js";
 import { InMemorySessionStore } from "../state/session-store.js";
+import type { ControlledAgentRouter } from "../agent/controlled-agent-router.js";
 import type {
   AppConfig,
   FunctionRouterPort,
@@ -34,7 +35,7 @@ function testConfig(): AppConfig {
         groupRequireWakeWord: true,
         wakeKeywords: ["小哈"],
         acceptMention: true,
-        enabledFunctions: ["find_ppt_slides", "find_pop_sheet_music"],
+        enabledFunctions: ["find_ppt_slides", "find_sheet_music"],
         directAccessPolicy: "managed",
         groupAccessPolicy: "managed"
       }
@@ -45,8 +46,7 @@ function testConfig(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     },
     graph: {
       tenantId: "tenant",
@@ -121,6 +121,34 @@ function accessStore(): InMemoryAccessStore {
   });
 }
 
+function controlledRouterFromLegacy(route: FunctionRouterPort["route"]): ControlledAgentRouter {
+  return {
+    async resolve(input) {
+      const result = await route({
+        profileName: input.profileName,
+        text: input.text,
+        enabledFunctions: [...input.enabledFunctions],
+        source:
+          input.sourceType === "group"
+            ? { type: "group", groupId: "test-group", userId: "test-user" }
+            : { type: "user", userId: "test-user" }
+      });
+      if (result.type === "deny") {
+        return { disposition: "deny", reasonCode: "planner_denied" };
+      }
+      if (result.type === "respond") {
+        return { disposition: "chat", reasonCode: "no_capability_evidence" };
+      }
+      return {
+        disposition: "execute",
+        capability: result.action,
+        arguments: result.arguments,
+        reasonCode: "explicit_intent"
+      };
+    }
+  };
+}
+
 describe("clarification flow", () => {
   it("asks for a missing PPT keyword and uses the next group reply without a wake word", async () => {
     const graph: GraphDriveClient = {
@@ -148,7 +176,7 @@ describe("clarification flow", () => {
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
-      router: { route },
+      controlledAgentRouter: controlledRouterFromLegacy(route),
       accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
@@ -230,7 +258,7 @@ describe("clarification flow", () => {
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
-      router: { route },
+      controlledAgentRouter: controlledRouterFromLegacy(route),
       accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
@@ -291,13 +319,13 @@ describe("clarification flow", () => {
     });
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "execute",
-      action: "find_pop_sheet_music",
+      action: "find_sheet_music",
       arguments: { query: "" },
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
-      router: { route },
+      controlledAgentRouter: controlledRouterFromLegacy(route),
       accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
@@ -364,13 +392,13 @@ describe("clarification flow", () => {
     });
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "execute",
-      action: "find_pop_sheet_music",
+      action: "find_sheet_music",
       arguments: { query: "" },
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
-      router: { route },
+      controlledAgentRouter: controlledRouterFromLegacy(route),
       accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,
@@ -443,7 +471,7 @@ describe("clarification flow", () => {
       ])
     };
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     config.notion = {
       token: "notion-token",
       databaseId: "notion-db",
@@ -464,13 +492,13 @@ describe("clarification flow", () => {
     });
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "execute",
-      action: "query_service_schedule",
+      action: "query_schedule",
       arguments: { query: "服事表" },
       provider: "ollama"
     });
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createApp(config, {
-      router: { route },
+      controlledAgentRouter: controlledRouterFromLegacy(route),
       accessStore: accessStore(),
       functionRegistry: registries.functions,
       postbackHandlers: registries.postbacks,

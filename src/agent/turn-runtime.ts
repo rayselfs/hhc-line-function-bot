@@ -5,15 +5,17 @@ import {
   matchesGroupScopedNaturalLanguageAdminActionHint,
   matchesNaturalLanguageAdminActionHint
 } from "../actions/catalog.js";
-import { guardSystemRouteWithFunctionIntent } from "./function-intent-guard.js";
-import { mergeFunctionContinuationArguments } from "./function-continuation.js";
 import { createSlotClarificationResult } from "./slot-clarification.js";
 import type { ActiveTaskContext } from "./active-task.js";
 import { applyActiveTaskTransition } from "./active-task-transition.js";
 import type { ControlledAgentRouter } from "./controlled-agent-router.js";
 import type { ValidatedAgentPlan } from "./plan-validator.js";
 import { messages } from "../messages.js";
-import { createControlledSmallTalkReply, smallTalkCategoryFromArguments } from "../small-talk.js";
+import {
+  createControlledSmallTalkReply,
+  smallTalkCategoryFromArguments,
+  smallTalkCategoryFromText
+} from "../small-talk.js";
 import { createIntroReply } from "../intro.js";
 import { createQueryClarificationReply } from "../query-clarification.js";
 import { sanitizeActionTelemetryEvent } from "../observability/action-telemetry.js";
@@ -24,20 +26,14 @@ import { getFunctionDefinition } from "../functions/definitions.js";
 import { withRequesterDisplayName } from "../requester-personalization.js";
 import type { SessionStore } from "../state/session-store.js";
 import type { InFlightKey, InFlightStore } from "../in-flight/in-flight-store.js";
-import type {
-  ContextManager,
-  ConversationWindowScope,
-  ConversationWindowStore
-} from "./context-manager.js";
+import type { ConversationWindowScope, ConversationWindowStore } from "./context-manager.js";
 import type {
   AdminActionRouterPort,
   BotProfileConfig,
   FunctionExecutionResult,
-  FunctionContinuationState,
   FunctionHandlerContext,
   FunctionName,
   FunctionRegistry,
-  FunctionRouterPort,
   JsonRecord,
   LineEvent,
   ModelProviderLane,
@@ -58,7 +54,6 @@ import {
 } from "./trace-store.js";
 
 export interface AgentTurnRuntimeOptions {
-  router: FunctionRouterPort;
   functionRegistry: FunctionRegistry;
   textMessageHandlers: TextMessageHandlerRegistry;
   adminActionRouter?: AdminActionRouterPort;
@@ -73,23 +68,11 @@ export interface AgentTurnRuntimeOptions {
   routeObserver?: RouteObserver;
   textGenerator?: TextGenerationProvider;
   textFallbackGenerator?: TextGenerationProvider;
-  contextManager?: ContextManager;
   conversationWindowStore?: ConversationWindowStore;
   controlledAgentRouter?: ControlledAgentRouter;
-  controlledShadowObserver?: ControlledShadowObserver;
   timeZone?: string;
   now?: () => Date;
 }
-
-export interface ControlledShadowObservation {
-  disposition: ValidatedAgentPlan["disposition"];
-  capability?: FunctionName;
-  reasonCode?: string;
-}
-
-export type ControlledShadowObserver = (
-  observation: ControlledShadowObservation
-) => void | Promise<void>;
 
 export interface AgentTextTurnInput {
   profile: BotProfileConfig;
@@ -109,9 +92,7 @@ const IN_FLIGHT_TTL_MS = 120_000;
 const IN_FLIGHT_FUNCTIONS = new Set<FunctionName>([
   "find_ppt_slides",
   "find_sheet_music",
-  "find_pop_sheet_music",
-  "query_schedule",
-  "query_service_schedule"
+  "query_schedule"
 ]);
 
 export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentTurnRuntime {
@@ -178,6 +159,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         input.profile,
         options.textMessageHandlers,
         input.requesterDisplayName,
+
         input.requesterIsAdmin
       );
       if (textMessageHandler) {
@@ -222,7 +204,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
             context.profile.enabledFunctions
           );
           const transitionFunctionName = result.executedAction ?? textHandlerFunctionName;
-          if (transitionFunctionName && controlledRoutingMode(input.profile) === "enabled") {
+          if (transitionFunctionName) {
             const previousTask = await readActiveTask(options, input, true);
             if (options.traceStore) {
               steps.push({
@@ -287,85 +269,36 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, adminActionResult);
       }
 
-      const controlledMode = controlledRoutingMode(input.profile);
-      const runtimeContext =
-        controlledMode === "enabled" ? undefined : await buildRuntimeContext(options, input, text);
-      if (runtimeContext) {
-        steps.push({
-          phase: "context",
-          outcome: runtimeContext.compressed ? "compressed" : "full"
-        });
-      }
-
       const routeStartedAt = Date.now();
-      const continuation =
-        controlledMode === "enabled" ? undefined : await readFunctionContinuation(options, input);
       let activeTask: ActiveTaskContext | undefined;
-      let controlledContinuationAuthorized = false;
-      let route: RouteResult;
-
-      if (controlledMode === "enabled") {
-        let plan: ValidatedAgentPlan;
-        try {
-          activeTask = await readActiveTask(options, input, true);
-          if (options.traceStore) {
-            steps.push({
-              phase: "active_task",
-              outcome: activeTask ? "present" : "missing",
-              action: activeTask?.capability,
-              lifecycleOutcome: activeTask ? "read" : "missing"
-            });
-          }
-          plan = await resolveControlledPlan(
-            options.controlledAgentRouter,
-            input,
-            text,
-            activeTask,
-            options.traceStore ? steps : undefined
-          );
-        } catch {
-          plan = { disposition: "clarify", reasonCode: "planner_unavailable" };
-        }
-        steps.push(controlledTraceStep(plan));
-        if (plan.disposition === "clarify") {
-          return finish(input, steps, controlledClarificationResult(plan, context));
-        }
-        controlledContinuationAuthorized =
-          plan.disposition === "execute" && plan.reasonCode === "active_task_refinement";
-        route = controlledPlanToRoute(plan, input);
-      } else {
-        if (controlledMode === "shadow") {
-          startShadowObservation(options, input, text, options.controlledShadowObserver);
-        }
-        try {
-          route = await options.router.route({
-            profileName: input.profile.name,
-            text,
-            enabledFunctions: input.profile.enabledFunctions,
-            source: input.event.source,
-            runtimeContext: runtimeContext?.prompt
-          });
-        } catch (error) {
-          await recordRuntimeError({
-            store: options.lastErrorStore,
-            input,
-            phase: "router",
-            error
-          });
+      let plan: ValidatedAgentPlan;
+      try {
+        activeTask = await readActiveTask(options, input, true);
+        if (options.traceStore) {
           steps.push({
-            phase: "function_error",
-            outcome: "router",
-            errorName: error instanceof Error ? error.name : typeof error
+            phase: "active_task",
+            outcome: activeTask ? "present" : "missing",
+            action: activeTask?.capability,
+            lifecycleOutcome: activeTask ? "read" : "missing"
           });
-          return finish(input, steps, { ok: false, replyText: messages.requestFailed });
         }
-        route = guardSystemRouteWithFunctionIntent(
-          route,
+        plan = await resolveControlledPlan(
+          options.controlledAgentRouter,
+          input,
           text,
-          input.profile.enabledFunctions,
-          continuation
+          activeTask,
+          options.traceStore ? steps : undefined
         );
+      } catch {
+        plan = { disposition: "clarify", reasonCode: "planner_unavailable" };
       }
+      steps.push(controlledTraceStep(plan));
+      if (plan.disposition === "clarify") {
+        return finish(input, steps, controlledClarificationResult(plan, context));
+      }
+      const controlledContinuationAuthorized =
+        plan.disposition === "execute" && plan.reasonCode === "active_task_refinement";
+      const route = controlledPlanToRoute(plan, input, text);
 
       const routeDurationMs = elapsedMs(routeStartedAt);
       steps.push({
@@ -439,18 +372,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         return finish(input, steps, { ok: true, replyText: messages.unsupported });
       }
 
-      const mergedArguments =
-        controlledMode === "enabled"
-          ? route.arguments
-          : mergeFunctionContinuationArguments({
-              action: route.action,
-              currentArguments: route.arguments,
-              currentText: text,
-              now: now(),
-              timeZone: options.timeZone,
-              continuation
-            });
-      const normalizedArguments = normalizeFunctionArguments(route.action, mergedArguments, {
+      const normalizedArguments = normalizeFunctionArguments(route.action, route.arguments, {
         text
       });
       const handler = options.functionRegistry[route.action];
@@ -538,6 +460,7 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         steps.push({
           phase: "in_flight",
           outcome: "started",
+
           action: route.action,
           dedup: "started"
         });
@@ -547,16 +470,9 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
       try {
         const result = await handler(normalizedArguments, {
           ...context,
-          continuation:
-            controlledMode === "enabled"
-              ? controlledContinuationAuthorized
-                ? activeTaskContinuation(route.action, activeTask)
-                : undefined
-              : continuation?.functionName === route.action
-                ? continuation
-                : undefined
+          activeTask: controlledContinuationAuthorized ? activeTaskView(activeTask) : undefined
         });
-        if (controlledMode === "enabled") {
+        {
           const lifecycleOutcome = await applyActiveTaskTransition({
             store: options.conversationWindowStore,
             scope: activeTaskScope(options.conversationWindowStore, input),
@@ -587,15 +503,6 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           arguments: normalizedArguments,
           result
         });
-        if (controlledMode !== "enabled") {
-          await recordFunctionContinuation(
-            options.conversationWindowStore,
-            input,
-            route.action,
-            result,
-            continuation
-          );
-        }
         const durationMs = elapsedMs(functionStartedAt);
         steps.push({
           phase: "function",
@@ -718,6 +625,7 @@ async function handleNaturalLanguageAdminAction(input: {
   if (!matchesNaturalLanguageAdminActionHint(input.text) || !input.accessStore) {
     return undefined;
   }
+
   if (!(await isAdminUser(input.profile, input.event.source.userId, input.accessStore))) {
     return undefined;
   }
@@ -832,47 +740,6 @@ async function isAdminUser(
   );
 }
 
-async function buildRuntimeContext(
-  options: AgentTurnRuntimeOptions,
-  input: AgentTextTurnInput,
-  text: string
-) {
-  if (!options.contextManager) {
-    return undefined;
-  }
-  const scope = {
-    profileName: input.profile.name,
-    sourceKey: sourceKey(input.event.source),
-    requesterUserId: input.event.source.userId
-  };
-  const recentTurns = await options.conversationWindowStore?.recentTurns(scope, 6);
-  const functionContinuation = await options.conversationWindowStore?.functionContext(scope);
-  const adminAllowed =
-    options.accessStore && input.event.source.userId
-      ? await isAdminUser(input.profile, input.event.source.userId, options.accessStore)
-      : false;
-  return options.contextManager.build({
-    safety: {
-      profileName: input.profile.name,
-      sourceKey: scope.sourceKey,
-      requesterUserId: input.event.source.userId,
-      enabledFunctions: input.profile.enabledFunctions,
-      adminAllowed,
-      webAllowlistDecision: "not_requested"
-    },
-    currentMessage: text,
-    recentTurns,
-    functionContinuation
-  });
-}
-
-type ControlledRoutingMode = "disabled" | "shadow" | "enabled";
-
-function controlledRoutingMode(profile: BotProfileConfig): ControlledRoutingMode {
-  if (profile.controlledAgent?.enabled) return "enabled";
-  return profile.controlledAgent?.shadow ? "shadow" : "disabled";
-}
-
 async function resolveControlledPlan(
   router: ControlledAgentRouter | undefined,
   input: AgentTextTurnInput,
@@ -888,8 +755,8 @@ async function resolveControlledPlan(
       enabledFunctions: input.profile.enabledFunctions,
       sourceType: input.event.source.type,
       activeTask,
-      maxCandidates: input.profile.controlledAgent.maxCandidates,
-      minPlannerConfidence: input.profile.controlledAgent.minPlannerConfidence
+      maxCandidates: input.profile.controlledAgent?.maxCandidates ?? 3,
+      minPlannerConfidence: input.profile.controlledAgent?.minPlannerConfidence ?? 0.65
     };
     return steps
       ? await router.resolve(routerInput, (step) => steps.push(step))
@@ -909,70 +776,7 @@ function resultEnvelopeTraceStep(result: FunctionExecutionResult): AgentTurnTrac
   };
 }
 
-async function resolveShadowPlan(
-  options: AgentTurnRuntimeOptions,
-  input: AgentTextTurnInput,
-  text: string,
-  steps?: AgentTurnTraceStep[]
-): Promise<ValidatedAgentPlan> {
-  try {
-    const activeTask = await readActiveTask(options, input, false);
-    if (steps) {
-      steps.push({
-        phase: "active_task",
-        outcome: activeTask ? "present" : "missing",
-        action: activeTask?.capability,
-        lifecycleOutcome: activeTask ? "read" : "missing"
-      });
-    }
-    return await resolveControlledPlan(
-      options.controlledAgentRouter,
-      input,
-      text,
-      activeTask,
-      steps
-    );
-  } catch {
-    return { disposition: "clarify", reasonCode: "planner_unavailable" };
-  }
-}
-
-function startShadowObservation(
-  options: AgentTurnRuntimeOptions,
-  input: AgentTextTurnInput,
-  text: string,
-  observer: ControlledShadowObserver | undefined
-): void {
-  const steps: AgentTurnTraceStep[] | undefined = options.traceStore ? [] : undefined;
-  void Promise.resolve()
-    .then(() => resolveShadowPlan(options, input, text, steps))
-    .then(async (plan) => {
-      const observation = {
-        disposition: plan.disposition,
-        capability:
-          plan.disposition === "execute" || plan.disposition === "clarify"
-            ? plan.capability
-            : undefined,
-        reasonCode: plan.reasonCode
-      } satisfies ControlledShadowObservation;
-      if (steps)
-        await options.traceStore?.record({
-          requestId: input.requestId,
-          occurredAt: (options.now ?? (() => new Date()))().toISOString(),
-          profileName: input.profile.name,
-          sourceType: input.event.source.type,
-          steps: [...steps, controlledTraceStep(observation)]
-        });
-      if (observer) {
-        void Promise.resolve()
-          .then(() => observer(observation))
-          .catch(() => undefined);
-      }
-    })
-    .catch(() => undefined);
-}
-
-function controlledTraceStep(plan: ControlledShadowObservation): AgentTurnTraceStep {
+function controlledTraceStep(plan: ValidatedAgentPlan): AgentTurnTraceStep {
   return {
     phase: "controlled_route",
     outcome: plan.disposition,
@@ -986,13 +790,14 @@ function controlledTraceStep(plan: ControlledShadowObservation): AgentTurnTraceS
 
 function controlledPlanToRoute(
   plan: Exclude<ValidatedAgentPlan, { disposition: "clarify" }>,
-  input: AgentTextTurnInput
+  input: AgentTextTurnInput,
+  text: string
 ): RouteResult {
   if (plan.disposition === "chat") {
     return {
       type: "respond",
       action: "small_talk",
-      arguments: {},
+      arguments: { category: smallTalkCategoryFromText(text) },
       provider: "router",
       lane: "function_routing"
     };
@@ -1083,65 +888,20 @@ function activeTaskTtlMs(profile: BotProfileConfig): number {
   return Math.max(1, profile.generalAgent?.conversationWindowSeconds ?? 60) * 1000;
 }
 
-function activeTaskContinuation(
-  capability: FunctionName,
+function activeTaskView(
   activeTask: ActiveTaskContext | undefined
-): FunctionContinuationState | undefined {
-  const operations = getFunctionDefinition(capability)?.agentCapability?.operations ?? [];
-  if (
-    activeTask?.capability !== capability ||
-    !operations.some((operation) => activeTask.supportedOperations.includes(operation))
-  ) {
-    return undefined;
-  }
+): FunctionHandlerContext["activeTask"] {
+  if (!activeTask) return undefined;
   return {
-    functionName: capability,
-    arguments: { ...activeTask.anchors },
-    resultReferences: { ...activeTask.anchors, ...(activeTask.references ?? {}) },
-    createdAt: activeTask.createdAt,
-    expiresAt: activeTask.expiresAt
+    capability: activeTask.capability,
+    anchors: { ...activeTask.anchors },
+    references: activeTask.references ? { ...activeTask.references } : undefined,
+    entities: activeTask.entities.map((entity) => ({
+      ...entity,
+      ...(entity.aliases ? { aliases: [...entity.aliases] } : {})
+    })),
+    supportedOperations: [...activeTask.supportedOperations]
   };
-}
-
-async function readFunctionContinuation(
-  options: AgentTurnRuntimeOptions,
-  input: AgentTextTurnInput
-) {
-  const source = sourceKey(input.event.source);
-  const requesterUserId = input.event.source.userId;
-  if (!options.conversationWindowStore || !source || !requesterUserId) return undefined;
-  return options.conversationWindowStore.functionContext({
-    profileName: input.profile.name,
-    sourceKey: source,
-    requesterUserId
-  });
-}
-
-async function recordFunctionContinuation(
-  store: ConversationWindowStore | undefined,
-  input: AgentTextTurnInput,
-  functionName: FunctionName,
-  result: FunctionExecutionResult,
-  previous: Awaited<ReturnType<ConversationWindowStore["functionContext"]>>
-): Promise<void> {
-  const ttlMs = (input.profile.generalAgent?.conversationWindowSeconds ?? 0) * 1000;
-  const source = sourceKey(input.event.source);
-  const requesterUserId = input.event.source.userId;
-  if (!store || !result.ok || !ttlMs || !source || !requesterUserId) return;
-  const scope = { profileName: input.profile.name, sourceKey: source, requesterUserId };
-  if (!result.continuation) {
-    if (previous && previous.functionName !== functionName) {
-      await store.clearFunctionContext(scope);
-    }
-    return;
-  }
-  await store.recordFunctionContext({
-    scope,
-    functionName,
-    arguments: result.continuation.arguments ?? {},
-    resultReferences: result.continuation.resultReferences,
-    ttlMs
-  });
 }
 
 async function matchingTextMessageHandler(
@@ -1257,9 +1017,7 @@ function functionNameForAgentResource(
     case "ppt_slide":
       return "find_ppt_slides";
     case "sheet_music":
-      return enabledFunctions.includes("find_sheet_music")
-        ? "find_sheet_music"
-        : "find_pop_sheet_music";
+      return enabledFunctions.includes("find_sheet_music") ? "find_sheet_music" : undefined;
     default:
       return undefined;
   }

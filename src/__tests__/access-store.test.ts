@@ -50,24 +50,22 @@ describe("access store", () => {
     await store.addUserFunctionGrant({
       profileName: "helper",
       userId: "U1",
-      functionName: "save_schedule_memory",
+      functionName: "save_schedule",
       createdBy: "Uadmin"
     });
 
-    await expect(store.listUserFunctionGrants("helper", "U1")).resolves.toEqual([
-      "save_schedule_memory"
-    ]);
+    await expect(store.listUserFunctionGrants("helper", "U1")).resolves.toEqual(["save_schedule"]);
     await expect(store.listUserFunctionGrants("main", "U1")).resolves.toEqual([]);
     await expect(store.listUserFunctionGrants("helper", "U2")).resolves.toEqual([]);
     await expect(store.listAllUserFunctionGrants("helper")).resolves.toMatchObject([
-      { profileName: "helper", userId: "U1", functionName: "save_schedule_memory" }
+      { profileName: "helper", userId: "U1", functionName: "save_schedule" }
     ]);
 
     await expect(
       store.disableUserFunctionGrant({
         profileName: "helper",
         userId: "U1",
-        functionName: "save_schedule_memory",
+        functionName: "save_schedule",
         disabledBy: "Uadmin"
       })
     ).resolves.toBe(true);

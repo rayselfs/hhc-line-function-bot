@@ -1,4 +1,4 @@
-import { ProviderResponseError } from "../router.js";
+import { ProviderResponseError } from "./provider-response.js";
 import { providerCapabilities } from "./provider-metadata.js";
 import type {
   AppConfig,

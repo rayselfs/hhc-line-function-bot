@@ -45,7 +45,7 @@ export function createLlmStatusAdminHandler(
         `endpoint: ${endpoint.scheme}:${endpoint.port}`,
         `host: ${endpoint.hostClass}`,
         `model: ${config.ollamaModel}`,
-        `fallback: ${config.keywordFallbackEnabled ? "keyword" : "disabled"}`,
+        `fallbackProvider: ${config.fallbackProvider ?? config.provider ?? "ollama"}`,
         ...formatProfileProviderPolicy(context.profile),
         formatTags(tags),
         `modelPresent: ${tags.modelPresent ?? "unknown"}`,

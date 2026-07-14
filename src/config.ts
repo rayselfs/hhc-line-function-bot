@@ -7,6 +7,7 @@ import { readTimeZone } from "./time-zone.js";
 import { providerCapabilities } from "./llm/provider-metadata.js";
 import { normalizeProviderPolicy } from "./llm/provider-policy.js";
 import { FUNCTION_NAMES, MODEL_PROVIDER_LANE_NAMES, MODEL_PROVIDER_NAMES } from "./types.js";
+import { DEFAULT_MEETING_WINDOWS } from "./schedules/occurrence-policy.js";
 import type {
   AppConfig,
   FunctionName,
@@ -27,6 +28,49 @@ const smallTalkPromptingSchema = z.object({
   safetyRulesPrompt: z.string().trim().min(1).max(2000).optional(),
   formatRulesPrompt: z.string().trim().min(1).max(2000).optional()
 });
+
+const timeOfDaySchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+const meetingWindowSchema = z
+  .object({
+    key: z.string().trim().min(1).max(80),
+    aliases: z.array(z.string().trim().min(1).max(100)).min(1),
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
+    start: timeOfDaySchema,
+    end: timeOfDaySchema
+  })
+  .refine(({ start, end }) => start < end, {
+    message: "Meeting window end must be after start"
+  });
+
+const schedulePolicySchema = z
+  .object({
+    meetingWindows: z.array(meetingWindowSchema).min(1)
+  })
+  .superRefine(({ meetingWindows }, ctx) => {
+    const keys = new Set<string>();
+    const aliases = new Set<string>();
+    for (const [index, window] of meetingWindows.entries()) {
+      if (keys.has(window.key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["meetingWindows", index, "key"],
+          message: "Duplicate meeting window key"
+        });
+      }
+      keys.add(window.key);
+      for (const alias of window.aliases) {
+        const normalized = alias.normalize("NFKC").trim().toLocaleLowerCase("zh-TW");
+        if (aliases.has(normalized)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["meetingWindows", index, "aliases"],
+            message: "Duplicate meeting window alias"
+          });
+        }
+        aliases.add(normalized);
+      }
+    }
+  });
 
 const profileSchema = z.object({
   name: z
@@ -72,17 +116,16 @@ const profileSchema = z.object({
     .optional(),
   controlledAgent: z
     .object({
-      enabled: z.boolean().default(false),
-      shadow: z.boolean().default(false),
       maxCandidates: z.number().int().min(1).max(5).default(3),
       minPlannerConfidence: z.number().min(0).max(1).default(0.65)
     })
     .default({
-      enabled: false,
-      shadow: false,
       maxCandidates: 3,
       minPlannerConfidence: 0.65
     }),
+  schedulePolicy: schedulePolicySchema.default({
+    meetingWindows: DEFAULT_MEETING_WINDOWS
+  }),
   generalAgent: z
     .object({
       enabled: z.boolean().default(false),
@@ -162,8 +205,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       ),
       generalMaxOutputTokens: readInt(env.LLM_GENERAL_MAX_OUTPUT_TOKENS, 512),
       routeMaxOutputTokens: readInt(env.LLM_ROUTE_MAX_OUTPUT_TOKENS, 256),
-      timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000),
-      keywordFallbackEnabled: readBool(env.KEYWORD_FALLBACK_ENABLED, true)
+      timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000)
     },
     knowledge: env.NOTION_TOKEN
       ? {
@@ -457,6 +499,19 @@ function assertNoLegacyProfileFields(parsedProfiles: unknown): void {
     ) {
       throw new Error(
         "registration.inviteCodeRequired is no longer supported; use /registry invite codes"
+      );
+    }
+    if (
+      profile &&
+      typeof profile === "object" &&
+      "controlledAgent" in profile &&
+      profile.controlledAgent &&
+      typeof profile.controlledAgent === "object" &&
+      (Object.prototype.hasOwnProperty.call(profile.controlledAgent, "enabled") ||
+        Object.prototype.hasOwnProperty.call(profile.controlledAgent, "shadow"))
+    ) {
+      throw new Error(
+        "controlledAgent.enabled and controlledAgent.shadow are no longer supported; controlled routing is always authoritative"
       );
     }
   }

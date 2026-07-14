@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { getNaturalLanguageAdminActions } from "./actions/catalog.js";
-import { coerceFunctionArguments, ProviderResponseError } from "./router.js";
+import { coerceFunctionArguments, ProviderResponseError } from "./llm/provider-response.js";
 import { isAdminActionName } from "./types.js";
 import type {
   AdminActionRouteInput,

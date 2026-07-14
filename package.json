@@ -11,8 +11,6 @@
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "eval:router": "tsx src/tools/eval-router.ts",
-    "eval:router:ollama": "tsx src/tools/eval-router-ollama.ts",
     "eval:admin": "tsx src/tools/eval-admin-actions.ts",
     "eval:agent": "tsx src/tools/eval-agent-planner.ts",
     "eval:agent:live": "tsx src/tools/eval-agent-planner-live.ts",

@@ -29,7 +29,6 @@ import {
   createFindPopSheetMusicPostbackHandler,
   createFindPopSheetMusicTextMessageHandler
 } from "./find-pop-sheet-music.js";
-import { createQueryServiceScheduleHandler } from "./query-service-schedule.js";
 import { createQueryScheduleHandler } from "./query-schedule.js";
 import { createWikipediaLookupHandler, type WikipediaSummarizer } from "../wikipedia/lookup.js";
 import type { WikipediaClient } from "../wikipedia/client.js";
@@ -48,11 +47,7 @@ import {
   createQueryKnowledgePostbackHandler,
   createQueryKnowledgeTextMessageHandler
 } from "./query-knowledge.js";
-import {
-  createQueryScheduleMemoryHandler,
-  createSaveScheduleHandler,
-  createSaveScheduleMemoryHandler
-} from "./schedule-memory.js";
+import { createSaveScheduleHandler } from "./schedule-memory.js";
 
 export interface FunctionModuleContext {
   config: AppConfig;
@@ -178,6 +173,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
             memoryStore: clients.memoryStore,
             sessionStore: clients.sessionStore,
             now: clients.now,
+
             requestIdFactory: clients.requestIdFactory
           })
         },
@@ -358,6 +354,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         text: "小哈 下一場服事表",
         expected: {
           type: "execute",
+
           action: "query_schedule",
           arguments: { query: "下一場服事表", dateIntent: "next_meeting" }
         }
@@ -465,86 +462,6 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         functions: {
           save_schedule: createSaveScheduleHandler({
             memoryStore: clients.memoryStore,
-            sessionStore: clients.sessionStore,
-            now: clients.now,
-            requestIdFactory: clients.requestIdFactory
-          })
-        }
-      };
-    }
-  },
-  {
-    name: "query_service_schedule",
-    definition: requiredDefinition("query_service_schedule"),
-    routerEvalCases: [
-      {
-        kind: "positive",
-        text: "小哈 下一場聚會服事表",
-        expected: {
-          type: "execute",
-          action: "query_service_schedule",
-          arguments: { query: "下一場聚會服事表", dateIntent: "next_meeting" }
-        }
-      },
-      {
-        kind: "missing_slot",
-        text: "小哈 查服事表",
-        expected: {
-          type: "execute",
-          action: "query_service_schedule",
-          arguments: { query: "" }
-        }
-      },
-      {
-        kind: "typo",
-        text: "小哈 明天聚會服事仁員",
-        expected: {
-          type: "execute",
-          action: "query_service_schedule",
-          arguments: { query: "明天聚會服事仁員" }
-        }
-      },
-      {
-        kind: "positive",
-        text: "小哈 明天聚會服事人員",
-        expected: {
-          type: "execute",
-          action: "query_service_schedule",
-          arguments: { query: "明天聚會服事人員" }
-        }
-      },
-      {
-        kind: "negative",
-        text: "小哈 幫我訂便當",
-        expected: { type: "deny", reason: "keyword_no_match" }
-      },
-      {
-        kind: "disabled",
-        text: "小哈 下一場聚會服事表",
-        enabledFunctions: withoutFunction("query_service_schedule"),
-        expected: { type: "deny", reason: "function_disabled" }
-      },
-      {
-        kind: "cross_function",
-        text: "小哈 查投影片 主日報告",
-        expected: {
-          type: "execute",
-          action: "find_ppt_slides",
-          arguments: { query: "主日報告", matchMode: "fuzzy" }
-        }
-      }
-    ],
-    register: ({ config, clients }) => {
-      if (!config.notion || !clients.notion) {
-        return {};
-      }
-      return {
-        functions: {
-          query_service_schedule: createQueryServiceScheduleHandler({
-            notion: clients.notion,
-            databaseId: config.notion.databaseId,
-            properties: config.notion.properties,
-            timeZone: config.timeZone,
             sessionStore: clients.sessionStore,
             now: clients.now,
             requestIdFactory: clients.requestIdFactory
@@ -663,276 +580,6 @@ export const FUNCTION_MODULES: FunctionModule[] = [
                     maxRedirects: config.externalResources?.maxRedirects ?? 3
                   }
                 : undefined,
-            now: clients.now
-          })
-        }
-      };
-    }
-  },
-  {
-    name: "find_pop_sheet_music",
-    definition: requiredDefinition("find_pop_sheet_music"),
-    routerEvalCases: [
-      {
-        kind: "positive",
-        text: "小哈 查流行歌譜 A TIME FOR US",
-        expected: {
-          type: "execute",
-          action: "find_pop_sheet_music",
-          arguments: { query: "A TIME FOR US", fileType: "pdf", matchMode: "fuzzy" }
-        }
-      },
-      {
-        kind: "positive",
-        text: "小哈 查歌譜 Yesterday jpg",
-        expected: {
-          type: "execute",
-          action: "find_pop_sheet_music",
-          arguments: { query: "Yesterday", fileType: "image", matchMode: "fuzzy" }
-        }
-      },
-      {
-        kind: "positive",
-        text: "小哈，幫我找 Yesterday 的流行歌曲樂譜",
-        expected: {
-          type: "execute",
-          action: "find_pop_sheet_music",
-          arguments: { query: "Yesterday", fileType: "pdf", matchMode: "fuzzy" }
-        }
-      },
-      {
-        kind: "missing_slot",
-        text: "小哈 查流行歌曲樂譜",
-        expected: {
-          type: "execute",
-          action: "find_pop_sheet_music",
-          arguments: { query: "", fileType: "pdf", matchMode: "fuzzy" }
-        }
-      },
-      {
-        kind: "typo",
-        text: "小哈 查流行歌譜 Yestarday",
-        expected: {
-          type: "execute",
-          action: "find_pop_sheet_music",
-          arguments: { query: "Yestarday", fileType: "pdf", matchMode: "fuzzy" }
-        }
-      },
-      {
-        kind: "negative",
-        text: "小哈 查流行歌 Yesterday",
-        expected: { type: "deny", reason: "keyword_no_match" }
-      },
-      {
-        kind: "disabled",
-        text: "小哈 查流行歌譜 Yesterday",
-        enabledFunctions: withoutFunction("find_pop_sheet_music"),
-        expected: { type: "deny", reason: "function_disabled" }
-      },
-      {
-        kind: "cross_function",
-        text: "小哈 查投影片 奇異恩典",
-        expected: {
-          type: "execute",
-          action: "find_ppt_slides",
-          arguments: { query: "奇異恩典", matchMode: "fuzzy" }
-        }
-      }
-    ],
-    register: ({ config, clients }) => {
-      if (!config.graph || !clients.graph) {
-        return {};
-      }
-      return {
-        functions: {
-          find_pop_sheet_music: createFindPopSheetMusicHandler({
-            graph: clients.graph,
-            catalog: clients.catalog,
-            driveId: config.graph.driveId,
-            allowedExtensions: config.graph.sheetMusicAllowedExtensions,
-            memoryStore: clients.memoryStore,
-            sessionStore: clients.sessionStore,
-            externalSearch:
-              clients.webSearch && clients.sheetMusicExternalSearchSummarizer
-                ? {
-                    webSearch: clients.webSearch,
-                    summarize: clients.sheetMusicExternalSearchSummarizer
-                  }
-                : undefined,
-            now: clients.now,
-            requestIdFactory: clients.requestIdFactory
-          })
-        },
-        postbacks: {
-          select_sheet_music: createFindPopSheetMusicPostbackHandler({
-            graph: clients.graph,
-            sessionStore: clients.sessionStore,
-            now: clients.now
-          })
-        },
-        textMessages: {
-          sheet_music_numeric_selection: createFindPopSheetMusicTextMessageHandler({
-            graph: clients.graph,
-            sessionStore: clients.sessionStore,
-            externalSearch:
-              clients.webSearch && clients.sheetMusicExternalSearchSummarizer
-                ? {
-                    webSearch: clients.webSearch,
-                    summarize: clients.sheetMusicExternalSearchSummarizer
-                  }
-                : undefined,
-            now: clients.now
-          })
-        }
-      };
-    }
-  },
-  {
-    name: "save_schedule_memory",
-    definition: requiredDefinition("save_schedule_memory"),
-    routerEvalCases: [
-      {
-        kind: "positive",
-        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
-        expected: {
-          type: "execute",
-          action: "save_schedule_memory",
-          arguments: { content: "七/10五黃弘家族2" }
-        }
-      },
-      {
-        kind: "positive",
-        text: "小哈保存舉牌服事表：7/19黃弘家族(音樂人)",
-        expected: {
-          type: "execute",
-          action: "save_schedule_memory",
-          arguments: { content: "7/19黃弘家族(音樂人)" }
-        }
-      },
-      {
-        kind: "missing_slot",
-        text: "小哈記住晨更服事表",
-        expected: {
-          type: "execute",
-          action: "save_schedule_memory",
-          arguments: { content: "" }
-        }
-      },
-      {
-        kind: "typo",
-        text: "小哈保存仙履奇緣服事表：七/16四仙履奇緣",
-        expected: {
-          type: "execute",
-          action: "save_schedule_memory",
-          arguments: { content: "七/16四仙履奇緣" }
-        }
-      },
-      {
-        kind: "negative",
-        text: "小哈今天晚餐吃什麼",
-        expected: { type: "deny", reason: "keyword_no_match" }
-      },
-      {
-        kind: "disabled",
-        text: "小哈幫我記住這份晨更服事表：七/10五黃弘家族2",
-        enabledFunctions: withoutFunction("save_schedule_memory"),
-        expected: { type: "deny", reason: "function_disabled" }
-      },
-      {
-        kind: "cross_function",
-        text: "小哈查7/19舉牌",
-        expected: {
-          type: "execute",
-          action: "query_schedule_memory",
-          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
-        }
-      }
-    ],
-    register: ({ clients }) => {
-      if (!clients.memoryStore) {
-        return {};
-      }
-      return {
-        functions: {
-          save_schedule_memory: createSaveScheduleMemoryHandler({
-            memoryStore: clients.memoryStore,
-            sessionStore: clients.sessionStore,
-            now: clients.now,
-            requestIdFactory: clients.requestIdFactory
-          })
-        }
-      };
-    }
-  },
-  {
-    name: "query_schedule_memory",
-    definition: requiredDefinition("query_schedule_memory"),
-    routerEvalCases: [
-      {
-        kind: "positive",
-        text: "小哈查7/19舉牌",
-        expected: {
-          type: "execute",
-          action: "query_schedule_memory",
-          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
-        }
-      },
-      {
-        kind: "positive",
-        text: "小哈查7/17晨更家族服事",
-        expected: {
-          type: "execute",
-          action: "query_schedule_memory",
-          arguments: { query: "7/17晨更家族服事", scheduleType: "morning_prayer_family" }
-        }
-      },
-      {
-        kind: "missing_slot",
-        text: "小哈查舉牌",
-        expected: {
-          type: "execute",
-          action: "query_schedule_memory",
-          arguments: { query: "舉牌", scheduleType: "street_sign_service" }
-        }
-      },
-      {
-        kind: "typo",
-        text: "小哈找7/19舉牌",
-        expected: {
-          type: "execute",
-          action: "query_schedule_memory",
-          arguments: { query: "7/19舉牌", scheduleType: "street_sign_service" }
-        }
-      },
-      {
-        kind: "negative",
-        text: "小哈查昨天吃什麼",
-        expected: { type: "deny", reason: "keyword_no_match" }
-      },
-      {
-        kind: "disabled",
-        text: "小哈查7/19舉牌",
-        enabledFunctions: withoutFunction("query_schedule_memory"),
-        expected: { type: "deny", reason: "function_disabled" }
-      },
-      {
-        kind: "cross_function",
-        text: "小哈查服事表",
-        expected: {
-          type: "execute",
-          action: "query_schedule",
-          arguments: { query: "" }
-        }
-      }
-    ],
-    register: ({ clients }) => {
-      if (!clients.memoryStore) {
-        return {};
-      }
-      return {
-        functions: {
-          query_schedule_memory: createQueryScheduleMemoryHandler({
-            memoryStore: clients.memoryStore,
             now: clients.now
           })
         }
@@ -1078,6 +725,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
       {
         kind: "positive",
         text: "小哈幫我記住這個月服事表：主日導播是小明",
+
         expected: {
           type: "execute",
           action: "save_memory",
@@ -1295,23 +943,11 @@ export const FUNCTION_MODULES: FunctionModule[] = [
 ];
 
 export function getRouterEvalCases(): RouterEvalCase[] {
-  return FUNCTION_MODULES.filter((module) => !module.definition.deprecated).flatMap(
-    (module) => module.routerEvalCases
-  );
+  return FUNCTION_MODULES.flatMap((module) => module.routerEvalCases);
 }
 
 function withoutFunction(name: FunctionName): FunctionName[] {
-  const legacyAlias =
-    name === "query_schedule"
-      ? "query_service_schedule"
-      : name === "save_schedule"
-        ? "save_schedule_memory"
-        : name === "find_sheet_music"
-          ? "find_pop_sheet_music"
-          : undefined;
-  return FUNCTION_NAMES.filter(
-    (functionName) => functionName !== name && functionName !== legacyAlias
-  );
+  return FUNCTION_NAMES.filter((functionName) => functionName !== name);
 }
 
 function requiredDefinition(name: FunctionName): FunctionDefinition {
@@ -1319,11 +955,7 @@ function requiredDefinition(name: FunctionName): FunctionDefinition {
   if (!definition) {
     throw new Error(`Missing function definition: ${name}`);
   }
-  if (
-    !definition.deprecated &&
-    definition.sideEffectLevel === "read" &&
-    !definition.agentCapability
-  ) {
+  if (definition.sideEffectLevel === "read" && !definition.agentCapability) {
     throw new Error(`Missing agent capability contract: ${name}`);
   }
   return definition;

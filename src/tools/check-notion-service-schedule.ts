@@ -210,15 +210,14 @@ function handlerContext(): FunctionHandlerContext {
     groupRequireWakeWord: false,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["query_service_schedule"],
+    enabledFunctions: ["query_schedule"],
     allowedProviders: ["ollama"],
     allowSubscriptionProviders: false,
     controlledAgent: {
-      enabled: false,
-      shadow: false,
       maxCandidates: 3,
       minPlannerConfidence: 0.65
-    }
+    },
+    schedulePolicy: { meetingWindows: [] }
   };
 
   return {

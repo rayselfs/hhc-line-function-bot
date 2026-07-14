@@ -51,7 +51,7 @@ function profile(): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["save_schedule_memory", "query_schedule_memory"]
+    enabledFunctions: ["save_schedule", "query_schedule"]
   };
 }
 
@@ -181,7 +181,7 @@ describe("schedule memory", () => {
     expect(morningPrayer.replyText).not.toContain("黃弘家族");
   });
 
-  it("keeps continuation queries inside the canonical saved schedule", async () => {
+  it("keeps active-task queries inside the canonical saved schedule", async () => {
     const now = () => new Date("2026-07-09T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now });
     const july = await store.saveScheduleMemory({
@@ -222,10 +222,16 @@ describe("schedule memory", () => {
       { query: "晨更", scheduleType: "morning_prayer_family", dateIntent: "upcoming" },
       {
         ...context("晨更"),
-        continuation: {
-          functionName: "query_schedule",
-          arguments: { scheduleType: "morning_prayer_family" },
-          resultReferences: { kind: "schedule_memory", memoryId: july.id },
+        activeTask: {
+          version: 1,
+          capability: "query_schedule",
+          anchors: {
+            scheduleType: "morning_prayer_family",
+            memoryId: july.id
+          },
+          entities: [],
+          references: { kind: "schedule_memory", memoryId: july.id },
+          supportedOperations: ["continue", "refine", "advance"],
           createdAt: "2026-07-09T00:00:00.000Z",
           expiresAt: "2026-07-09T00:01:00.000Z"
         }

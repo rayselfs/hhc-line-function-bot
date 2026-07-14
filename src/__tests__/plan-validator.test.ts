@@ -93,6 +93,37 @@ describe("deterministic agent plan validation", () => {
     }
   );
 
+  it("materializes missing schedule anchors for a validated active-task refinement", () => {
+    expect(
+      validateAgentPlan(
+        input({
+          text: "音控是誰",
+          candidates: [{ capability: "query_schedule", reason: "active_task_entity", score: 300 }],
+          proposal: {
+            disposition: "refine",
+            capability: "query_schedule",
+            arguments: { query: "音控是誰", role: "音控" },
+            confidence: 0.95
+          },
+          activeTask: {
+            ...scheduleTask,
+            entities: [...scheduleTask.entities, { type: "role", key: "音控", label: "音控" }]
+          }
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: {
+        query: "音控是誰",
+        role: "音控",
+        date: "2026-07-14",
+        meeting: "晨更"
+      },
+      reasonCode: "active_task_refinement"
+    });
+  });
+
   it("derives active-task authority from the candidate when execute relabels an expired continuation", () => {
     expect(
       validateAgentPlan(

@@ -21,7 +21,7 @@ function profile(): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["find_ppt_slides", "find_pop_sheet_music", "save_memory", "retrieve_memory"]
+    enabledFunctions: ["find_ppt_slides", "find_sheet_music", "save_memory", "retrieve_memory"]
   };
 }
 

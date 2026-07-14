@@ -16,7 +16,6 @@ import { applyActiveTaskTransition } from "./agent/active-task-transition.js";
 import { createAgentTurnRuntime, type AgentTurnRuntime } from "./agent/turn-runtime.js";
 import { InMemoryAgentJobStore, type AgentJobScope, type AgentJobStore } from "./agent/jobs.js";
 import {
-  createContextManager,
   InMemoryConversationWindowStore,
   type ConversationWindowScope,
   type ConversationWindowStore
@@ -74,7 +73,6 @@ import type {
   BotProfileConfig,
   FunctionExecutionResult,
   FunctionRegistry,
-  FunctionRouterPort,
   AdminActionRouterPort,
   LineIdentityClient,
   LineEvent,
@@ -92,7 +90,6 @@ import type {
 import { isFunctionName } from "./types.js";
 
 export interface AppDependencies {
-  router: FunctionRouterPort;
   adminActionRouter?: AdminActionRouterPort;
   adminActionRegistry?: AdminActionRegistry;
   functionRegistry?: FunctionRegistry;
@@ -254,14 +251,9 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
   const agentJobStore = deps.agentJobStore ?? new InMemoryAgentJobStore();
   const conversationWindowStore =
     deps.conversationWindowStore ?? new InMemoryConversationWindowStore();
-  const contextManager = createContextManager({
-    runtimeContextBudgetTokens: config.llm.runtimeContextBudgetTokens ?? 2000,
-    compressionThresholdRatio: config.llm.contextCompressionThresholdRatio ?? 0.75
-  });
   const agentTurnRuntime =
     deps.agentTurnRuntime ??
     createAgentTurnRuntime({
-      router: deps.router,
       functionRegistry,
       textMessageHandlers: deps.textMessageHandlers ?? {},
       adminActionRouter,
@@ -276,7 +268,6 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
       routeObserver: deps.routeObserver,
       textGenerator,
       textFallbackGenerator,
-      contextManager,
       conversationWindowStore,
       controlledAgentRouter: deps.controlledAgentRouter,
       timeZone: config.timeZone
@@ -304,7 +295,6 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         reply,
         profile,
         config,
-        deps.router,
         adminActionRegistry,
         deps.postbackHandlers ?? {},
         deps.textMessageHandlers ?? {},
@@ -320,6 +310,7 @@ export function createApp(config: AppConfig, deps: AppDependencies): FastifyInst
         registrationInviteCodeStore,
         diagnostics,
         agentTurnRuntime,
+        deps.controlledAgentRouter,
         agentTraceStore,
         textGenerator,
         textFallbackGenerator,
@@ -339,7 +330,6 @@ async function handleWebhook(
   reply: FastifyReply,
   profile: BotProfileConfig,
   config: AppConfig,
-  router: FunctionRouterPort,
   adminActionRegistry: AdminActionRegistry,
   postbackHandlers: PostbackHandlerRegistry,
   textMessageHandlers: TextMessageHandlerRegistry,
@@ -355,6 +345,7 @@ async function handleWebhook(
   registrationInviteCodeStore: RegistrationInviteCodeStore,
   diagnostics: AppDiagnostics,
   agentTurnRuntime: AgentTurnRuntime,
+  controlledAgentRouter: ControlledAgentRouter | undefined,
   agentTraceStore: AgentTraceStore,
   textGenerator: TextGenerationProvider | undefined,
   textFallbackGenerator: TextGenerationProvider | undefined,
@@ -436,7 +427,7 @@ async function handleWebhook(
           result.agentResource?.resourceType,
           effectiveProfile.enabledFunctions
         );
-      if (postbackFunctionName && effectiveProfile.controlledAgent?.enabled) {
+      if (postbackFunctionName) {
         await applyActiveTaskTransition({
           store: conversationWindowStore,
           scope: activeTaskScopeForEvent(conversationWindowStore, effectiveProfile, event),
@@ -582,7 +573,7 @@ async function handleWebhook(
           event,
           config,
           adminHandlers,
-          router,
+          controlledAgentRouter,
           lastErrorStore,
           lastRouteStore,
           accessStore,
@@ -813,9 +804,9 @@ async function resolveEffectiveFunctions(
     ? profile.enabledFunctions
     : profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
   const userGrants = event.source.userId
-    ? mapLegacyFunctionNames(
-        await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
-      ).filter((name) => isFunctionGrantableForPrincipal(name, "user"))
+    ? (await accessStore.listUserFunctionGrants(profile.name, event.source.userId)).filter((name) =>
+        isFunctionGrantableForPrincipal(name, "user")
+      )
     : [];
   const userRoleFunctions = event.source.userId
     ? capabilitiesToFunctionNames(
@@ -826,7 +817,7 @@ async function resolveEffectiveFunctions(
   if (event.source.type !== "group" || !event.source.groupId) {
     return mergeFunctionNames(mergeFunctionNames(profileFunctions, userGrants), userRoleFunctions);
   }
-  const groupGrants = mapLegacyFunctionNames(
+  const groupGrants = (
     await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId)
   ).filter((name) => isFunctionGrantableForPrincipal(name, "group"));
   const groupRoleFunctions = capabilitiesToFunctionNames(
@@ -1474,7 +1465,7 @@ async function handleAdminCommand(
   event: LineEvent,
   config: AppConfig,
   adminHandlers: AdminHandlerRegistry,
-  router: FunctionRouterPort,
+  controlledAgentRouter: ControlledAgentRouter | undefined,
   lastErrorStore: LastErrorStore,
   lastRouteStore: LastRouteStore,
   accessStore: AccessStore,
@@ -1546,7 +1537,7 @@ async function handleAdminCommand(
   }
 
   if (parsed.command === "route-test") {
-    return handleRouteTestCommand(parsed.args, profile, event, router);
+    return handleRouteTestCommand(parsed.args, profile, event, controlledAgentRouter);
   }
 
   if (parsed.command === "last-errors") {
@@ -2051,20 +2042,6 @@ function mergeFunctionNames(
   return Array.from(new Set([...profileFunctions, ...grantedFunctions]));
 }
 
-function mapLegacyFunctionNames(functionNames: FunctionName[]): FunctionName[] {
-  return functionNames.map((name) => {
-    switch (name) {
-      case "query_service_schedule":
-      case "query_schedule_memory":
-        return "query_schedule";
-      case "save_schedule_memory":
-        return "save_schedule";
-      default:
-        return name;
-    }
-  });
-}
-
 function isKnownAdminCommand(command: string, adminHandlers: AdminHandlerRegistry): boolean {
   return (
     builtInAdminCommandGroups.some((group) =>
@@ -2113,44 +2090,29 @@ async function handleRouteTestCommand(
   args: string[],
   profile: BotProfileConfig,
   event: LineEvent,
-  router: FunctionRouterPort
+  router: ControlledAgentRouter | undefined
 ): Promise<FunctionExecutionResult> {
   const text = args.join(" ").trim();
   if (!text) {
     return { ok: true, replyText: "Route test\n請提供要測試的文字。" };
   }
 
-  const route = await router.route({
+  if (!router) {
+    return { ok: true, replyText: "Route test\ncontrolled agent router unavailable" };
+  }
+  const route = await router.resolve({
     profileName: profile.name,
     text,
     enabledFunctions: profile.enabledFunctions,
-    source: event.source
+    sourceType: event.source.type,
+    maxCandidates: profile.controlledAgent?.maxCandidates ?? 3,
+    minPlannerConfidence: profile.controlledAgent?.minPlannerConfidence ?? 0.65
   });
 
-  if (route.type === "deny") {
+  if (route.disposition === "deny") {
     return {
       ok: true,
-      replyText: [
-        "Route test",
-        "type: deny",
-        `provider: ${route.provider}`,
-        `reason: ${route.reason}`,
-        ...formatFallbackDiagnostics(route)
-      ].join("\n")
-    };
-  }
-
-  if (route.type === "respond") {
-    return {
-      ok: true,
-      replyText: [
-        "Route test",
-        "type: respond",
-        `provider: ${route.provider}`,
-        `action: ${route.action}`,
-        `arguments: ${JSON.stringify(route.arguments)}`,
-        ...formatFallbackDiagnostics(route)
-      ].join("\n")
+      replyText: ["Route test", "type: deny", `reason: ${route.reasonCode}`].join("\n")
     };
   }
 
@@ -2158,26 +2120,14 @@ async function handleRouteTestCommand(
     ok: true,
     replyText: [
       "Route test",
-      "type: execute",
-      `provider: ${route.provider}`,
-      `action: ${route.action}`,
-      `arguments: ${JSON.stringify(route.arguments)}`,
-      ...formatFallbackDiagnostics(route)
+      `type: ${route.disposition}`,
+      ...(route.disposition === "execute"
+        ? [`action: ${route.capability}`, `arguments: ${JSON.stringify(route.arguments)}`]
+        : route.disposition === "clarify" && route.capability
+          ? [`action: ${route.capability}`]
+          : [])
     ].join("\n")
   };
-}
-
-function formatFallbackDiagnostics(route: {
-  fallbackProvider?: string;
-  fallbackReason?: string;
-}): string[] {
-  if (!route.fallbackProvider && !route.fallbackReason) {
-    return [];
-  }
-  return [
-    `fallbackProvider: ${route.fallbackProvider ?? "(unknown)"}`,
-    `fallbackReason: ${route.fallbackReason ?? "(unknown)"}`
-  ];
 }
 
 function functionNameForAgentResource(
@@ -2188,9 +2138,7 @@ function functionNameForAgentResource(
     case "ppt_slide":
       return "find_ppt_slides";
     case "sheet_music":
-      return enabledFunctions.includes("find_sheet_music")
-        ? "find_sheet_music"
-        : "find_pop_sheet_music";
+      return enabledFunctions.includes("find_sheet_music") ? "find_sheet_music" : undefined;
     default:
       return undefined;
   }

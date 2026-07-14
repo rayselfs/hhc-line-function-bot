@@ -11,6 +11,19 @@ import type { BotProfileConfig } from "../types.js";
 
 const profile = { name: "helper", enabledFunctions: ["query_knowledge"] } as BotProfileConfig;
 
+function knowledgeTask(reference: Record<string, unknown>) {
+  return {
+    version: 1 as const,
+    capability: "query_knowledge" as const,
+    anchors: { ...reference },
+    entities: [],
+    references: { ...reference },
+    supportedOperations: ["continue", "refine", "select"],
+    createdAt: "2026-07-12T00:00:00.000Z",
+    expiresAt: "2026-07-14T00:00:00.000Z"
+  };
+}
+
 describe("query_knowledge", () => {
   it("clarifies an equal cross-source maximum hidden beyond the answer-context limit", async () => {
     const store = new InMemoryKnowledgeStore();
@@ -309,16 +322,9 @@ describe("query_knowledge", () => {
       });
     }
     const handler = createQueryKnowledgeHandler({ store });
-    const continuation = {
-      functionName: "query_knowledge" as const,
-      arguments: {},
-      resultReferences: { sourceId: trip.id, documentId: tripDocument.id },
-      createdAt: "2026-07-12T00:00:00.000Z",
-      expiresAt: "2026-07-12T00:01:00.000Z"
-    };
     const handlerContext = {
       profile,
-      continuation,
+      activeTask: knowledgeTask({ sourceId: trip.id, documentId: tripDocument.id }),
       event: {
         type: "message" as const,
         source: { type: "user" as const, userId: "u" },
@@ -346,9 +352,7 @@ describe("query_knowledge", () => {
     expect(scoped.replyText).not.toContain("sop-doc");
     expect(noSwitch.agentResult).toMatchObject({ status: "not_found" });
     expect(switched.replyText).toContain("消防設備放在後門");
-    expect(switched.continuation?.resultReferences).toEqual(
-      expect.objectContaining({ sourceId: sop.id })
-    );
+    expect(switched.agentResult?.anchors).toEqual(expect.objectContaining({ sourceId: sop.id }));
   });
 
   it("returns safe not-found, ambiguous, and unavailable result envelopes", async () => {
@@ -410,13 +414,7 @@ describe("query_knowledge", () => {
       { query: "再說一次" },
       {
         ...context,
-        continuation: {
-          functionName: "query_knowledge" as const,
-          arguments: {},
-          resultReferences: { sourceId: "removed", documentId: "missing" },
-          createdAt: "2026-07-13T00:00:00.000Z",
-          expiresAt: "2026-07-13T00:01:00.000Z"
-        },
+        activeTask: knowledgeTask({ sourceId: "removed", documentId: "missing" }),
         event: { ...context.event, message: { type: "text", text: "再說一次" } }
       }
     );
@@ -488,7 +486,7 @@ describe("query_knowledge", () => {
     );
 
     expect(result.replyText).toContain("聚會結束後請關閉音控設備");
-    expect(result.continuation?.resultReferences).toEqual(
+    expect(result.agentResult?.anchors).toEqual(
       expect.objectContaining({ sourceId: sources[0]!.id })
     );
     expect(searchTopPerSource).toHaveBeenCalledWith(
@@ -653,7 +651,7 @@ describe("query_knowledge", () => {
       }
     );
     expect(selectedByPostback.replyText).toContain("集合時間是晚上七點");
-    expect(selectedByPostback.continuation?.resultReferences).toEqual(
+    expect(selectedByPostback.agentResult?.anchors).toEqual(
       expect.objectContaining({ sourceId: sources[1]!.id })
     );
 
@@ -679,7 +677,7 @@ describe("query_knowledge", () => {
     };
     await expect(numeric.matches({ text: "1" }, numericContext)).resolves.toBe(true);
     await expect(numeric.handle({ text: "1" }, numericContext)).resolves.toMatchObject({
-      continuation: { resultReferences: { sourceId: sources[0]!.id } }
+      agentResult: { anchors: { sourceId: sources[0]!.id } }
     });
   });
 
@@ -791,17 +789,11 @@ describe("query_knowledge", () => {
     const handler = createQueryKnowledgeHandler({ store });
     const context = {
       profile,
-      continuation: {
-        functionName: "query_knowledge" as const,
-        arguments: {},
-        resultReferences: {
-          sourceId: source.id,
-          documentId: document.id,
-          sectionKey: document.chunks[0]!.sectionKey
-        },
-        createdAt: "2026-07-13T00:00:00.000Z",
-        expiresAt: "2026-07-13T00:01:00.000Z"
-      },
+      activeTask: knowledgeTask({
+        sourceId: source.id,
+        documentId: document.id,
+        sectionKey: document.chunks[0]!.sectionKey
+      }),
       event: {
         type: "message" as const,
         source: { type: "user" as const, userId: "u" },

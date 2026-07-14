@@ -18,7 +18,7 @@ Read these first when starting work:
 1. `README.md` for product behavior, configuration, commands, and deployment context.
 2. `docs/architecture-context.md` for the request flow, subsystem map, and debug entry points.
 3. `src/server.ts` for LINE entrance behavior, admin commands, access checks, and postback routing.
-4. `src/router.ts`, `src/keyword-router.ts`, and `src/function-arguments.ts` for LLM/keyword routing and argument handling.
+4. `src/agent/capability-candidates.ts`, `src/agent/controlled-agent-router.ts`, `src/agent/plan-validator.ts`, and `src/function-arguments.ts` for controlled routing and argument handling.
 5. `src/functions/definitions.ts`, `src/functions/registry.ts`, and `src/functions/modules.ts` for function registration.
 6. `src/access/*` for managed user/group/admin registration and PostgreSQL/in-memory stores.
 7. `src/state/*`, `src/cache/*`, and `src/redis.ts` for session/cache persistence.
@@ -45,7 +45,7 @@ The first-class functions are:
 
 - `find_ppt_slides`: search configured `.pptx`, `.ppt`, `.key`, or `.odp` presentation files and return temporary sharing links.
 - `query_schedule`: query configured service schedule sources and return a focused service list without exposing the source.
-- `find_sheet_music`: search the catalog-backed pop and hymn sheet-music sources and return temporary sharing links. `find_pop_sheet_music` is only a thin internal legacy alias.
+- `find_sheet_music`: search the catalog-backed pop and hymn sheet-music sources and return temporary sharing links.
 - `find_resource`: search authorized general church catalog sources without competing with explicit schedule, slide, or sheet-music intent.
 - `query_wikipedia`: query Wikipedia for supported factual lookups.
 - `query_knowledge`: query admin-registered, profile-shared Notion knowledge through PostgreSQL full-text plus pgvector retrieval and a grounded LLM answer; do not create travel/SOP-specific variants.
@@ -65,7 +65,7 @@ When adding or changing a function:
 - Include capability metadata: `displayName`, `shortDescription`, `examples`, `requires`, `scope`, `sideEffectLevel`, `allowedSources`, `requiredSlots`, `resourcePolicy`, `memoryPolicy`, and `clarificationPrompt`.
 - Every enabled read function must declare an `agentCapability` contract with bounded intents/hints, allowed operations, entity types, refinable fields, ambiguity policy, and field-local active-evidence rules. Retrieval-evidence providers must be declarative, read-only, bounded, and content-free.
 - Read handlers must return a structured `agentResult` envelope for success, not-found, ambiguity, and unavailable outcomes. Successful envelopes may expose only declared safe entity types, canonical anchors, opaque references, supported operations, clarification metadata, and reply data.
-- Arbitrary administrator-added knowledge domains—including trips, SOPs, policies, and ministry material—must reuse dynamic-source metadata plus `query_knowledge`; do not add per-domain adapters or capabilities. Add a source adapter only for a genuinely new storage/API technology behind the existing product capability, and add a new capability contract only for genuinely separate product behavior. Never add function-specific branches to the generic controlled router, planner, validator, or top-level continuation flow.
+- Arbitrary administrator-added knowledge domains—including trips, SOPs, policies, and ministry material—must reuse dynamic-source metadata plus `query_knowledge`; do not add per-domain adapters or capabilities. Add a source adapter only for a genuinely new storage/API technology behind the existing product capability, and add a new capability contract only for genuinely separate product behavior. Never add function-specific branches to the generic controlled router, planner, validator, or top-level active-task flow.
 - For a required value that users can omit by naming only the capability, declare `genericRequest.phrases` on that required slot (and `clearArguments` for related model-inferred fields). Do not add function-specific generic-request checks in routers or handlers.
 - Register the function module.
 - Update routing and argument extraction.
@@ -92,13 +92,13 @@ When adding or changing an admin action:
 - `src/server.ts`: Fastify routes, LINE webhook entrance, access gates, admin commands, and postbacks.
 - `src/router.ts`: primary model routing and router result model.
 - `src/llm/provider-runtime.ts` and `src/llm/provider-metadata.ts`: provider allowlist/runtime metadata.
-- `src/keyword-router.ts`: conservative fallback routing when configured model providers are unavailable or invalid.
+- `src/agent/capability-candidates.ts`, `src/agent/controlled-agent-router.ts`, and `src/agent/plan-validator.ts`: bounded candidates, advisory model planning, and deterministic authority validation.
 - `src/function-arguments.ts`: argument extraction and slot handling.
 - `src/functions/*`: function definitions, modules, and implementations.
 - `src/agent/turn-runtime.ts`: shared text-turn pipeline after LINE entrance checks.
 - `src/agent/capability-candidates.ts`, `src/agent/planner.ts`, and `src/agent/plan-validator.ts`: deterministic candidate generation, advisory semantic planning, and the server-owned authority boundary.
-- `src/agent/active-task.ts` and `src/agent/active-task-transition.ts`: requester-scoped continuation state derived from successful structured read results.
-- `src/agent/context-manager.ts`: runtime context budget/compression plus requester-scoped conversation windows and independently expiring function continuation state.
+- `src/agent/active-task.ts` and `src/agent/active-task-transition.ts`: requester-scoped active-task state derived from successful structured read results.
+- `src/agent/context-manager.ts`: runtime context budget/compression plus requester-scoped conversation windows.
 - `src/agent/jobs.ts`: long-running job results scoped by profile/source/requester.
 - `src/agent/slot-clarification.ts`: definition-driven required-slot clarification.
 - `src/agent/trace-store.ts`: sanitized recent agent turn diagnostics for `/last-agent-turns`.
@@ -150,14 +150,14 @@ When adding or changing an admin action:
 - Active tasks are profile/source/requester scoped, expire independently of conversation turns, and may be created or replaced only by successful structured results whose operations intersect the definition contract.
 - Each module owns its router eval cases. Include positive, missing-slot, typo, negative, disabled, and cross-function cases.
 - Use `expected: { type: "execute", ... }` or `expected: { type: "deny", ... }` so evals can check both allowed and blocked behavior.
-- Keep `pnpm eval:router` deterministic and offline. Use `pnpm eval:router:ollama` only for manual live-model checks.
+- Keep `pnpm eval:agent` deterministic and offline. Use `pnpm eval:agent:live` only for manual live-model checks.
 
 ## State And Persistence
 
 - In-memory stores are acceptable for single-replica local/dev behavior.
 - `REDIS_URL` moves sessions, cache, recent errors, rate-limit state, and registration invite codes to Redis.
 - `REDIS_URL` also moves destructive-action confirmation codes to Redis.
-- `REDIS_URL` also moves requester-scoped conversation windows, independently expiring function continuation state, and long-running job results to Redis.
+- `REDIS_URL` also moves requester-scoped conversation windows, independently expiring active-task state, and long-running job results to Redis.
 - Redis rate limiting must use atomic counters, not read-modify-write JSON buckets.
 - PostgreSQL backs managed access principals and audit events when registration is enabled.
 - PostgreSQL backs agent memory when configured. The app creates access and agent memory tables on startup.
@@ -191,10 +191,10 @@ When adding or changing an admin action:
   - `pnpm lint`
   - `pnpm test`
   - `pnpm build`
-- For router behavior changes, also run `pnpm eval:router` when relevant.
+- For controlled routing behavior changes, also run `pnpm eval:agent` when relevant.
 - For controlled-agent candidate/planner/validator/result changes, also run `pnpm eval:agent`.
 - Run `pnpm eval:agent:live` manually when DeepSeek credentials and the configured Ollama endpoint are available; do not add it to CI.
-- For live Ollama model validation, run `pnpm eval:router:ollama` manually; do not add it to CI.
+- For live planner validation, run `pnpm eval:agent:live` manually; do not add it to CI.
 - For admin natural-language routing changes, also run `pnpm eval:admin`.
 - For webhook entrance changes, consider `pnpm smoke:webhook` against a local dev server or deployed URL.
 - Update tests when changing routing, LINE webhook entrance behavior, access control, admin commands, or function execution behavior.
@@ -215,7 +215,7 @@ Testing map:
 - `AGENTS.md`, `README.md`, and `docs/**`-only changes should not trigger the pipeline.
 - Do not push deploy-triggering changes to `main` unless the user explicitly asks to deploy or confirms that deploying is acceptable.
 - If the user asks for code changes but not deployment, commit locally or leave changes staged/unstaged as appropriate, then ask before pushing.
-- During controlled-agent production acceptance, `controlledAgent.enabled=false` is the rollback switch and `shadow=true` is detached observation while legacy routing owns the reply. Normal helper operation is `enabled=true, shadow=false`; do not change the DeepSeek-primary/Ollama-fallback lane policy as part of a rollback.
+- Controlled routing is always authoritative. Do not reintroduce runtime switches, shadow routing, or a second router; roll back through a reviewed application deployment while retaining the DeepSeek-primary/Ollama-fallback lane policy.
 
 ## Deployment Context
 

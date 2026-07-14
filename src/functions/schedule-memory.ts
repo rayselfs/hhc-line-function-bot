@@ -22,6 +22,9 @@ import type {
 import type { SessionStore } from "../state/session-store.js";
 import { storePendingFunctionQuery } from "./pending-function.js";
 import { resolveScheduleResultRows, scheduleResultEnvelope } from "./schedule-result.js";
+import { selectFirstUpcomingOccurrence } from "../schedules/occurrence-policy.js";
+import type { MeetingWindowRule } from "../types.js";
+import { readTimeZone } from "../time-zone.js";
 
 const SCHEDULE_MEMORY_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -44,6 +47,7 @@ export interface ScheduleMemoryFunctionOptions {
   now?: () => Date;
   requestIdFactory?: () => string;
   action?: FunctionName;
+  timeZone?: string;
 }
 
 export function parseScheduleMemoryContent(
@@ -65,7 +69,7 @@ export function createSaveScheduleMemoryHandler(
 ): FunctionHandler {
   const now = options.now ?? (() => new Date());
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
-  const action = options.action ?? "save_schedule_memory";
+  const action = options.action ?? "save_schedule";
   return async (rawArgs, context) => {
     const args = saveScheduleMemoryArgumentsSchema.parse(rawArgs);
     const content = scheduleMemoryContent(args);
@@ -344,6 +348,7 @@ export function createQueryScheduleMemoryHandler(
   options: ScheduleMemoryFunctionOptions
 ): FunctionHandler {
   const now = options.now ?? (() => new Date());
+  const timeZone = readTimeZone(options.timeZone, "timeZone");
   return async (rawArgs, context) => {
     const args = queryScheduleMemoryArgumentsSchema.parse(rawArgs);
     const query = args.query.trim();
@@ -354,7 +359,7 @@ export function createQueryScheduleMemoryHandler(
       profileName: context.profile.name,
       source: context.event.source,
       requesterUserId: context.event.source.userId,
-      memoryId: scheduleMemoryId(context.continuation?.resultReferences),
+      memoryId: scheduleMemoryId(context.activeTask?.references),
       scheduleType: inferredType,
       date,
       meetingName: args.meeting,
@@ -367,7 +372,9 @@ export function createQueryScheduleMemoryHandler(
       entries,
       args,
       now(),
-      scheduleAdvanceDate(args, context.continuation?.arguments)
+      scheduleAdvanceDate(args, context.activeTask?.anchors),
+      context.profile.schedulePolicy?.meetingWindows,
+      timeZone
     );
     const roleResolution = resolveScheduleResultRows(entries, args.role);
     entries =
@@ -395,12 +402,6 @@ export function createQueryScheduleMemoryHandler(
     );
     return {
       ok: true,
-      continuation: scheduleMemoryContinuation(
-        entries,
-        inferredType,
-        args.role,
-        continuationRoles(context.continuation?.arguments)
-      ),
       replyText: agentResult.replyText,
       agentResult
     };
@@ -413,41 +414,6 @@ function scheduleMemoryId(references: unknown): string | undefined {
   return record.kind === "schedule_memory" && typeof record.memoryId === "string"
     ? record.memoryId
     : undefined;
-}
-
-function scheduleMemoryContinuation(
-  entries: AgentScheduleEntryRecord[],
-  scheduleType: AgentScheduleType | undefined,
-  role?: string,
-  previousRoles: string[] = []
-): FunctionExecutionResult["continuation"] | undefined {
-  const memoryIds = unique(entries.map((entry) => entry.memoryId));
-  const dates = unique(entries.map((entry) => entry.serviceDate));
-  const meetings = unique(entries.map((entry) => entry.meetingName));
-  const availableRoles = unique([...previousRoles, ...entries.map((entry) => entry.role)]);
-  if (memoryIds.length !== 1 || dates.length !== 1 || meetings.length !== 1) return undefined;
-  return {
-    arguments: {
-      date: dates[0],
-      meeting: meetings[0],
-      availableRoles,
-      scheduleType: scheduleType ?? entries[0]?.scheduleType,
-      ...(role ? { role } : {})
-    },
-    resultReferences: { kind: "schedule_memory", memoryId: memoryIds[0] }
-  };
-}
-
-function continuationRoles(arguments_: unknown): string[] | undefined {
-  if (!arguments_ || typeof arguments_ !== "object") return undefined;
-  const roles = (arguments_ as Record<string, unknown>).availableRoles;
-  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
-    ? roles
-    : undefined;
-}
-
-function unique(values: Array<string | undefined>): string[] {
-  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function parseScheduleLine(
@@ -620,27 +586,26 @@ function applyScheduleDateIntent(
   entries: AgentScheduleEntryRecord[],
   args: QueryScheduleMemoryArguments,
   now: Date,
-  afterDate?: string
+  afterDate?: string,
+  meetingWindows?: MeetingWindowRule[],
+  timeZone = "UTC"
 ): AgentScheduleEntryRecord[] {
   const today = toDateKey(now);
   switch (args.dateIntent) {
     case "next_meeting": {
-      const upcoming = entries
-        .filter(
-          (entry) => entry.serviceDate >= today && (!afterDate || entry.serviceDate > afterDate)
-        )
-        .sort(
-          (left, right) =>
-            left.serviceDate.localeCompare(right.serviceDate) ||
-            left.meetingName.localeCompare(right.meetingName, "zh-Hant")
-        );
-      const first = upcoming[0];
-      return first
-        ? upcoming.filter(
-            (entry) =>
-              entry.serviceDate === first.serviceDate && entry.meetingName === first.meetingName
-          )
-        : [];
+      const candidates = entries
+        .filter((entry) => !afterDate || entry.serviceDate > afterDate)
+        .map((entry) => ({
+          serviceDate: entry.serviceDate,
+          meeting: entry.meetingName,
+          entry
+        }));
+      return selectFirstUpcomingOccurrence({
+        rows: candidates,
+        now,
+        timeZone,
+        meetingWindows
+      }).map(({ entry }) => entry);
     }
     case "upcoming":
       return entries.filter((entry) => entry.serviceDate >= today);
@@ -659,17 +624,17 @@ function applyScheduleDateIntent(
 
 function scheduleAdvanceDate(
   args: QueryScheduleMemoryArguments,
-  continuationArguments: unknown
+  activeTaskAnchors: unknown
 ): string | undefined {
   if (
     args.dateIntent !== "next_meeting" ||
     !/(?:下一場|下場|下一次|下次)/u.test(args.query) ||
-    !continuationArguments ||
-    typeof continuationArguments !== "object"
+    !activeTaskAnchors ||
+    typeof activeTaskAnchors !== "object"
   ) {
     return undefined;
   }
-  const record = continuationArguments as Record<string, unknown>;
+  const record = activeTaskAnchors as Record<string, unknown>;
   const date = typeof record.date === "string" ? record.date : record.specificDate;
   return typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(date) ? date : undefined;
 }

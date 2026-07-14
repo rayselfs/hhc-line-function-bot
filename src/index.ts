@@ -30,7 +30,6 @@ import { createDependencyDiagnostics } from "./diagnostics/dependencies.js";
 import { createPostgresRuntime } from "./db/postgres.js";
 import { createFunctionRegistries } from "./functions/registry.js";
 import { createInFlightStore } from "./in-flight/create-in-flight-store.js";
-import { createKeywordFallbackRouter } from "./keyword-router.js";
 import { createKnowledgeStore } from "./knowledge/create-store.js";
 import { listKnowledgeRoutingMetadata } from "./knowledge/routing-metadata.js";
 import { createKnowledgeRetrievalEvidenceProvider } from "./knowledge/retrieval-evidence.js";
@@ -41,7 +40,6 @@ import { createRateLimiter } from "./rate-limit.js";
 import { createRedisRuntime } from "./redis.js";
 import { createScheduleStore } from "./schedules/create-schedule-store.js";
 import { createSheetMusicExternalSearchSummarizer } from "./search/sheet-music-external-summarizer.js";
-import { createFunctionRouter } from "./router.js";
 import { createApp } from "./server.js";
 import { createSessionStore } from "./state/create-session-store.js";
 
@@ -118,13 +116,6 @@ const wikipediaSummaryFallback = createProfileAwareProvider({
   providers,
   role: "fallback",
   lane: "web_summarization"
-});
-const router = createFunctionRouter({
-  primary: functionRoutingPrimary,
-  modelFallback: functionRoutingFallback,
-  keywordFallback: createKeywordFallbackRouter(),
-  keywordFallbackEnabled: config.llm.keywordFallbackEnabled,
-  lane: "function_routing"
 });
 const adminActionRouter = createAdminActionRouter({
   primary: adminRoutingPrimary,
@@ -251,7 +242,6 @@ const registries = createFunctionRegistries(config, {
   })
 });
 const app = createApp(config, {
-  router,
   adminActionRouter,
   adminActionRegistry: knowledgeAdminActionRegistry,
   functionRegistry: registries.functions,

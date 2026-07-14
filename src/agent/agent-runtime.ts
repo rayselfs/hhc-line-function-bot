@@ -293,7 +293,6 @@ function resourceTypesForAction(action: FunctionName): AgentResourceType[] | und
     case "find_ppt_slides":
       return ["ppt_slide"];
     case "find_sheet_music":
-    case "find_pop_sheet_music":
       return ["sheet_music"];
     default:
       return undefined;
@@ -332,10 +331,5 @@ function parseMemoryCommand(text: string): { command: string; args: string[] } |
 }
 
 export function isMemoryFunctionName(action: FunctionName): boolean {
-  return (
-    action === "save_memory" ||
-    action === "retrieve_memory" ||
-    action === "save_schedule_memory" ||
-    action === "query_schedule_memory"
-  );
+  return action === "save_memory" || action === "retrieve_memory";
 }

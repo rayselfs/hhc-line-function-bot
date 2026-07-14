@@ -25,7 +25,7 @@ function config(): AppConfig {
         groupRequireWakeWord: false,
         wakeKeywords: [],
         acceptMention: true,
-        enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+        enabledFunctions: ["find_ppt_slides", "query_schedule"],
         adminUserId: "Uadmin",
         adminDirectOnly: true,
         directAccessPolicy: "managed",
@@ -39,8 +39,7 @@ function config(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     }
   };
 }
@@ -61,7 +60,7 @@ function diagnostics(status: "ok" | "error" = "ok"): AppDiagnostics {
         [
           "Diagnostics",
           "profiles: helper",
-          "functions: find_ppt_slides, query_service_schedule",
+          "functions: find_ppt_slides, query_schedule",
           "postgres: ok",
           "redis: ok",
           "ollama: ok",

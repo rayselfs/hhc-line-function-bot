@@ -24,7 +24,7 @@ describe("Ollama client", () => {
       prompt: "Return JSON.",
       profileName: "helper",
       text: "小哈",
-      enabledFunctions: ["query_service_schedule"]
+      enabledFunctions: ["query_schedule"]
     });
 
     const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));
@@ -49,7 +49,7 @@ describe("Ollama client", () => {
       prompt: "Return JSON.",
       profileName: "helper",
       text: "小哈",
-      enabledFunctions: ["query_service_schedule"]
+      enabledFunctions: ["query_schedule"]
     });
 
     const body = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body));

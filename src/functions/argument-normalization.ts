@@ -6,7 +6,6 @@ import type { FunctionName, JsonRecord } from "../types.js";
 
 export interface FunctionArgumentNormalizationInput {
   text: string;
-  continuationArguments?: JsonRecord;
   now?: Date;
   timeZone?: string;
   inferStructuredEvidence?: boolean;
@@ -51,10 +50,8 @@ export function normalizeFunctionArguments(
     case "find_ppt_slides":
       return normalizePptSlideArguments(args, input);
     case "find_sheet_music":
-    case "find_pop_sheet_music":
       return normalizeSheetMusicArguments(args, input);
     case "query_schedule":
-    case "query_service_schedule":
       return normalizeServiceScheduleArguments(args, input);
     case "query_knowledge":
       return normalizeKnowledgeArguments(args, input);
@@ -224,35 +221,8 @@ function normalizeServiceScheduleArguments(
 ): JsonRecord {
   const query = stringArg(args, "query");
   const currentQuery = query || input.text.trim();
-  if (!input.continuationArguments) {
-    if (!input.inferStructuredEvidence) {
-      const next: JsonRecord = { ...args };
-      if (!stringArg(next, "dateIntent")) {
-        const dateIntent = relativeScheduleDateIntent(input.text);
-        if (dateIntent) next.dateIntent = dateIntent;
-      }
-      if (query === "主日") return { ...next, query: "主日服事" };
-      return query ? next : { ...next, query: currentQuery };
-    }
-    const refinement = refineScheduleQuery(
-      { query: currentQuery },
-      input.now ?? new Date(),
-      input.timeZone ?? "Asia/Taipei"
-    );
-    const role = extractScheduleRoleFocus({
-      query: currentQuery,
-      hasContinuation: false,
-      now: input.now,
-      timeZone: input.timeZone
-    });
-    const structured = Object.fromEntries(
-      Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
-    );
-    const next: JsonRecord = {
-      ...structured,
-      ...args,
-      ...(role && !stringArg(args, "role") ? { role } : {})
-    };
+  if (!input.inferStructuredEvidence) {
+    const next: JsonRecord = { ...args };
     if (!stringArg(next, "dateIntent")) {
       const dateIntent = relativeScheduleDateIntent(input.text);
       if (dateIntent) next.dateIntent = dateIntent;
@@ -267,22 +237,17 @@ function normalizeServiceScheduleArguments(
   );
   const role = extractScheduleRoleFocus({
     query: currentQuery,
-    hasContinuation: Boolean(input.continuationArguments),
-    availableRoles: stringArrayArg(input.continuationArguments, "availableRoles"),
+    hasContinuation: false,
     now: input.now,
     timeZone: input.timeZone
   });
-  const trusted = { ...args };
-  for (const field of ["date", "dateIntent", "specificDate", "meeting", "role", "scheduleType"]) {
-    delete trusted[field];
-  }
   const structured = Object.fromEntries(
     Object.entries(refinement.structuredArguments).filter(([, value]) => value !== undefined)
   );
   return {
-    ...trusted,
     ...structured,
     ...(role ? { role } : {}),
+    ...args,
     query: currentQuery === "主日" ? "主日服事" : currentQuery
   };
 }
@@ -295,13 +260,6 @@ function relativeScheduleDateIntent(
   if (/後天|后天/u.test(text)) return "day_after_tomorrow";
   if (/明天/u.test(text)) return "tomorrow";
   return /今天/u.test(text) ? "today" : undefined;
-}
-
-function stringArrayArg(args: JsonRecord | undefined, key: string): string[] | undefined {
-  const value = args?.[key];
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
-    ? value
-    : undefined;
 }
 
 export function extractSheetMusicQuery(text: string): string {

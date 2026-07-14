@@ -1,4 +1,4 @@
-import { ProviderResponseError } from "../router.js";
+import { ProviderResponseError } from "../llm/provider-response.js";
 import { providerCapabilities } from "../llm/provider-metadata.js";
 import type {
   ChatProvider,

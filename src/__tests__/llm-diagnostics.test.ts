@@ -11,8 +11,7 @@ function llmConfig(): LlmConfig {
     deepseekBaseUrl: "https://api.deepseek.com",
     deepseekModel: "deepseek-v4-flash",
     deepseekTimeoutMs: 8000,
-    timeoutMs: 8000,
-    keywordFallbackEnabled: true
+    timeoutMs: 8000
   };
 }
 
@@ -23,8 +22,7 @@ function llmConfigWithoutKeepAlive(): LlmConfig {
     deepseekBaseUrl: "https://api.deepseek.com",
     deepseekModel: "deepseek-v4-flash",
     deepseekTimeoutMs: 8000,
-    timeoutMs: 8000,
-    keywordFallbackEnabled: true
+    timeoutMs: 8000
   };
 }
 
@@ -52,7 +50,7 @@ function adminContext() {
       groupRequireWakeWord: true,
       wakeKeywords: ["小哈"],
       acceptMention: true,
-      enabledFunctions: ["query_service_schedule"],
+      enabledFunctions: ["query_schedule"],
       allowedProviders: ["ollama", "deepseek"],
       providerPolicy: providerPolicy(),
       allowSubscriptionProviders: false,

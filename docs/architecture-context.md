@@ -79,10 +79,9 @@ For normal LINE webhook messages, read the flow in this order:
 17. Successful file handlers can record resource metadata for later recall.
 18. Handler output is replied through the LINE client.
 
-During the production acceptance window, `controlledAgent.enabled=false` is the
-rollback switch. `shadow=true` runs detached, sanitized observation while the
-legacy router owns the reply; it cannot delay or change that reply. The normal
-production setting is `enabled=true, shadow=false`.
+Controlled routing is the only production text-routing path. Deprecated
+`controlledAgent.enabled` and `controlledAgent.shadow` configuration is rejected
+at startup so a deployment cannot silently return to the removed router.
 
 The main entrance behavior lives in `src/server.ts`; tests for it live mostly in
 `src/__tests__/entrance.test.ts`.
@@ -163,20 +162,18 @@ Routing is deliberately layered:
 - `src/agent/plan-validator.ts`: deterministic authority boundary that grounds
   arguments/references and rejects unsupported plans.
 - `src/agent/active-task.ts` and `src/agent/active-task-transition.ts`:
-  requester-scoped continuation state derived only from successful structured
+  requester-scoped active-task state derived only from successful structured
   results.
 - `src/agent/slot-clarification.ts`: required-slot handling driven by function
   definition metadata.
-- `src/router.ts`: primary JSON router with provider/fallback diagnostics.
 - `src/clients/deepseek.ts`: DeepSeek chat/text provider.
-- `src/keyword-router.ts`: narrow fallback when Ollama fails.
 - `src/function-arguments.ts` and `src/functions/argument-normalization.ts`:
   slot validation and cleanup.
 
 If a behavior is "the bot answered when it should not", start with
 `engagement.ts` and entrance tests. If a behavior is "the wrong function ran",
-start with `router.ts`, `keyword-router.ts`, function definitions, and router
-eval cases.
+start with `agent/capability-candidates.ts`, `agent/controlled-agent-router.ts`,
+`agent/plan-validator.ts`, function definitions, and agent eval cases.
 
 ## Function Cookbook
 
@@ -209,11 +206,11 @@ To add or change a user function:
 High-value tests:
 
 - entrance/access behavior: `src/__tests__/entrance.test.ts`
-- routing behavior: `src/__tests__/router.test.ts`
-- deterministic eval corpus: `src/__tests__/router-evals.test.ts`
+- controlled routing behavior: `src/__tests__/controlled-agent-router.test.ts`
+- deterministic planner and validator evals: `src/__tests__/agent-planner-eval.test.ts`
 - function behavior: function-specific test files
 
-Run `pnpm eval:router` after changing function routing.
+Run `pnpm eval:agent` after changing function routing.
 
 ## Agent Runtime Cookbook
 
@@ -244,8 +241,8 @@ handler:
 - in-flight duplicate protection for long-running lookups
 - requester-scoped conversation windows for natural follow-up messages
   (default 60 seconds; each handled reply refreshes the requester window)
-- structured continuation state containing handler-confirmed canonical arguments
-  and safe result references; it has an independent absolute expiry, does not extend
+- structured active-task state containing handler-confirmed canonical anchors,
+  declared entities, and safe references; it has an independent absolute expiry, does not extend
   with ordinary conversation turns, and cannot be inherited by another group requester
 - bounded runtime context building and compression
 - postback-based long-running job result retrieval
@@ -409,19 +406,16 @@ Confirmed bytes enter the same shared binary publisher as LINE attachments.
 Catalog-backed lookups are separated from user-facing function names. The
 canonical functions are `find_ppt_slides`, `find_sheet_music`, and
 `find_resource`; they should call the catalog/search layer with different
-filters instead of implementing separate source-specific searches. Legacy
-`find_pop_sheet_music` is an internal alias only. Future OneDrive-backed
+filters instead of implementing separate source-specific searches. Future OneDrive-backed
 folders such as weekly report audio should be added as a `catalog_sources` row,
 an item kind value, resolver aliases, and tests; they must not add another
 OneDrive crawl/search implementation.
 
-The shared query-domain resolver lives in `src/query-domain-resolver.ts` and is
-used by both model-route policy and keyword fallback. It handles explicit
-domains such as service schedules, slides, sheet music, church resources,
-weekly report audio, and Wikipedia. If a user names a domain but omits the
-required topic/title/date, the resolver must preserve the missing slot and let
-the shared slot clarification path ask instead of letting the LLM invent a
-query.
+The controlled candidate and validation contracts handle explicit domains such
+as service schedules, slides, sheet music, church resources, weekly report
+audio, and Wikipedia. If a user names a capability but omits the required
+topic/title/date, definition-driven slot clarification asks instead of letting
+the planner invent a query.
 
 Service schedules are intentionally separated from file catalog items. Notion
 media-team schedule sources are registered through the same source config, but
@@ -489,9 +483,9 @@ Use this map for common issues:
   `groupRequireWakeWord`, `src/engagement.ts`.
 - Bot responds when merely mentioned in third person: `src/engagement.ts` and
   entrance tests for `third_person`.
-- Wrong function route: `src/router.ts`, `src/keyword-router.ts`,
-  `src/query-domain-resolver.ts`, `src/functions/definitions.ts`, router eval
-  cases.
+- Wrong function route: `src/agent/capability-candidates.ts`,
+  `src/agent/controlled-agent-router.ts`, `src/agent/plan-validator.ts`,
+  `src/functions/definitions.ts`, and agent eval cases.
 - Missing query or wrong slot: `src/function-arguments.ts`,
   `src/functions/argument-normalization.ts`, `src/agent/slot-clarification.ts`,
   and clarification tests.
@@ -528,7 +522,6 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm config:validate
-pnpm eval:router
 pnpm eval:admin
 pnpm eval:agent
 pnpm build

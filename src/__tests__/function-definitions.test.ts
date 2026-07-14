@@ -26,9 +26,6 @@ describe("function definitions", () => {
       resourcePolicy: {
         kind: "graph_file",
         resourceTypes: ["sheet_music"]
-      },
-      keywordFallback: {
-        defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
       }
     });
   });
@@ -37,7 +34,7 @@ describe("function definitions", () => {
     const lookupNames = [
       "find_ppt_slides",
       "query_schedule",
-      "find_pop_sheet_music",
+      "find_sheet_music",
       "query_wikipedia",
       "retrieve_memory"
     ] as const;
@@ -49,21 +46,18 @@ describe("function definitions", () => {
     }
   });
 
-  it("carries router prompt, keyword fallback, and quick reply metadata for sheet music", () => {
-    const definition = getFunctionDefinition("find_pop_sheet_music");
+  it("carries agent capability and quick reply metadata for sheet music", () => {
+    const definition = getFunctionDefinition("find_sheet_music");
 
     expect(definition).toMatchObject({
-      name: "find_pop_sheet_music",
+      name: "find_sheet_music",
       quickReply: {
-        label: "查流行歌譜",
-        command: "小哈 查流行歌譜"
-      },
-      keywordFallback: {
-        defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
+        label: "查歌譜",
+        command: "小哈 查歌譜"
       }
     });
-    expect(definition?.description).toContain("流行歌譜");
-    expect(definition?.keywordFallback?.keywords).toContain("樂譜");
+    expect(definition?.shortDescription).toContain("歌譜");
+    expect(definition?.agentCapability?.candidateHints).toContain("樂譜");
   });
 
   it("keeps shared write functions user-grant-only", () => {

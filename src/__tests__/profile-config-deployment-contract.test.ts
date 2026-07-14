@@ -81,8 +81,6 @@ describe("production profile configuration deployment contract", () => {
     );
     expect(helper?.allowedMessageTypes).toEqual(expect.arrayContaining(["text", "image", "file"]));
     expect(helper?.controlledAgent).toEqual({
-      enabled: true,
-      shadow: false,
       maxCandidates: 3,
       minPlannerConfidence: 0.65
     });
@@ -90,8 +88,6 @@ describe("production profile configuration deployment contract", () => {
       primary: "deepseek",
       fallback: "ollama"
     });
-    expect(pipeline).toContain("--secret-names bot-profiles-base64-json");
-    expect(pipeline).not.toContain("--secret-name bot-profiles-base64-json");
     expect(readProjectFile("README.md")).toContain("sole complete");
     expect(readProjectFile("README.md")).not.toContain("Example shape:");
     expect(readProjectFile("README.md")).not.toContain('"personaPrompt"');

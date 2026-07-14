@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createAdminActionRouter } from "../admin-action-router.js";
-import { ProviderResponseError } from "../router.js";
+import { ProviderResponseError } from "../llm/provider-response.js";
 import type { ChatProvider } from "../types.js";
 
 function provider(raw: string): ChatProvider {

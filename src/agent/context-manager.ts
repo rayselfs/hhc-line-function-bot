@@ -1,4 +1,4 @@
-import type { FunctionContinuationState, FunctionName, JsonRecord } from "../types.js";
+import type { FunctionName } from "../types.js";
 import {
   cloneActiveTask,
   decodeActiveTask,
@@ -29,15 +29,6 @@ export interface ConversationWindowStore {
     ttlMs: number;
   }): Promise<void>;
   recentTurns(scope: ConversationWindowScope, limit: number): Promise<string[]>;
-  recordFunctionContext(input: {
-    scope: ConversationWindowScope;
-    functionName: FunctionName;
-    arguments: JsonRecord;
-    resultReferences?: JsonRecord;
-    ttlMs: number;
-  }): Promise<void>;
-  functionContext(scope: ConversationWindowScope): Promise<FunctionContinuationContext | undefined>;
-  clearFunctionContext(scope: ConversationWindowScope): Promise<void>;
   recordActiveTask(input: {
     scope: ConversationWindowScope;
     task: ActiveTaskContext;
@@ -47,8 +38,6 @@ export interface ConversationWindowStore {
   activeTask(scope: ConversationWindowScope): Promise<ActiveTaskContext | undefined>;
   clearActiveTask(scope: ConversationWindowScope): Promise<void>;
 }
-
-export type FunctionContinuationContext = FunctionContinuationState;
 
 interface ConversationWindowRecord {
   expiresAt: string;
@@ -63,7 +52,6 @@ export interface RedisConversationWindowClient {
 
 export class InMemoryConversationWindowStore implements ConversationWindowStore {
   private readonly records = new Map<string, ConversationWindowRecord>();
-  private readonly functionContexts = new Map<string, FunctionContinuationContext>();
   private readonly activeTasks = new Map<string, ActiveTaskContext>();
   private readonly now: () => Date;
 
@@ -103,42 +91,6 @@ export class InMemoryConversationWindowStore implements ConversationWindowStore 
     return (record?.turns ?? [])
       .slice(-Math.max(0, limit))
       .map((turn) => `${turn.role}: ${turn.text}`);
-  }
-
-  async recordFunctionContext(input: {
-    scope: ConversationWindowScope;
-    functionName: FunctionName;
-    arguments: JsonRecord;
-    resultReferences?: JsonRecord;
-    ttlMs: number;
-  }): Promise<void> {
-    const now = this.now();
-    this.functionContexts.set(conversationScopeKey(input.scope), {
-      functionName: input.functionName,
-      arguments: sanitizeContinuationRecord(input.arguments),
-      resultReferences: input.resultReferences
-        ? sanitizeContinuationRecord(input.resultReferences)
-        : undefined,
-      createdAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + input.ttlMs).toISOString()
-    });
-  }
-
-  async functionContext(
-    scope: ConversationWindowScope
-  ): Promise<FunctionContinuationContext | undefined> {
-    const key = conversationScopeKey(scope);
-    const context = this.functionContexts.get(key);
-    if (!context) return undefined;
-    if (new Date(context.expiresAt).getTime() <= this.now().getTime()) {
-      this.functionContexts.delete(key);
-      return undefined;
-    }
-    return context;
-  }
-
-  async clearFunctionContext(scope: ConversationWindowScope): Promise<void> {
-    this.functionContexts.delete(conversationScopeKey(scope));
   }
 
   async recordActiveTask(input: {
@@ -233,43 +185,6 @@ export class RedisConversationWindowStore implements ConversationWindowStore {
       .map((turn) => `${turn.role}: ${turn.text}`);
   }
 
-  async recordFunctionContext(input: {
-    scope: ConversationWindowScope;
-    functionName: FunctionName;
-    arguments: JsonRecord;
-    resultReferences?: JsonRecord;
-    ttlMs: number;
-  }): Promise<void> {
-    const now = this.now();
-    const context: FunctionContinuationContext = {
-      functionName: input.functionName,
-      arguments: sanitizeContinuationRecord(input.arguments),
-      resultReferences: input.resultReferences
-        ? sanitizeContinuationRecord(input.resultReferences)
-        : undefined,
-      createdAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + input.ttlMs).toISOString()
-    };
-    await this.options.client.setEx(
-      this.functionContextKey(input.scope),
-      Math.max(1, Math.ceil(input.ttlMs / 1000)),
-      JSON.stringify(context)
-    );
-  }
-
-  async functionContext(
-    scope: ConversationWindowScope
-  ): Promise<FunctionContinuationContext | undefined> {
-    const raw = await this.options.client.get(this.functionContextKey(scope));
-    if (!raw) return undefined;
-    const context = JSON.parse(raw) as FunctionContinuationContext;
-    return new Date(context.expiresAt).getTime() > this.now().getTime() ? context : undefined;
-  }
-
-  async clearFunctionContext(scope: ConversationWindowScope): Promise<void> {
-    await this.options.client.del(this.functionContextKey(scope));
-  }
-
   async recordActiveTask(input: {
     scope: ConversationWindowScope;
     task: ActiveTaskContext;
@@ -319,24 +234,9 @@ export class RedisConversationWindowStore implements ConversationWindowStore {
     return `${this.options.keyPrefix}:conversation-window:${conversationScopeKey(scope)}`;
   }
 
-  private functionContextKey(scope: ConversationWindowScope): string {
-    return `${this.options.keyPrefix}:function-continuation:${conversationScopeKey(scope)}`;
-  }
-
   private activeTaskKey(scope: ConversationWindowScope): string {
     return `${this.options.keyPrefix}:active-task-v1:${conversationScopeKey(scope)}`;
   }
-}
-
-function sanitizeContinuationRecord(input: JsonRecord): JsonRecord {
-  const output: JsonRecord = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (typeof value === "string") output[key] = value.slice(0, 500);
-    else if (typeof value === "number" || typeof value === "boolean") output[key] = value;
-    else if (Array.isArray(value) && value.every((entry) => typeof entry === "string"))
-      output[key] = value.slice(0, 10).map((entry) => entry.slice(0, 200));
-  }
-  return output;
 }
 
 export interface ContextManagerOptions {
@@ -359,7 +259,6 @@ export interface ContextBuildInput {
   activeSessionSummary?: string;
   recentTurns?: string[];
   functionResultSummaries?: string[];
-  functionContinuation?: FunctionContinuationContext;
   memoryCandidates?: string[];
 }
 
@@ -385,9 +284,6 @@ export function createContextManager(options: ContextManagerOptions): ContextMan
         "Safety context (do not summarize or drop):",
         safety,
         input.activeSessionSummary ? `activeSession=${input.activeSessionSummary}` : undefined,
-        input.functionContinuation
-          ? `Continuation context (may only continue this enabled function or ask for clarification):\n${JSON.stringify(input.functionContinuation)}`
-          : undefined,
         "",
         "Current user message:",
         input.currentMessage

@@ -74,7 +74,7 @@ describe("action policy", () => {
 
     await expect(
       evaluateActionPolicy({
-        action: "query_service_schedule",
+        action: "query_schedule",
         profile: profile(),
         source: { type: "group", groupId: "C1", userId: "U1" },
         accessStore,

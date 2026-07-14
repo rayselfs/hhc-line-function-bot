@@ -85,6 +85,64 @@ const migrations = [
     unique (profile_name, principal_type, principal_id, role_id),
     foreign key (role_id, profile_name) references access_roles(id, profile_name) on delete cascade
   )
+  `,
+  ...["access_group_function_grants", "access_user_function_grants"].flatMap((table) => [
+    `
+    with capability_mapping(old_name, new_name) as (
+      values
+        ('query_service_schedule', 'query_schedule'),
+        ('find_pop_sheet_music', 'find_sheet_music'),
+        ('save_schedule_memory', 'save_schedule'),
+        ('query_schedule_memory', 'query_schedule')
+    )
+    delete from ${table} legacy
+    using capability_mapping mapping, ${table} canonical
+    where legacy.function_name = mapping.old_name
+      and canonical.function_name = mapping.new_name
+      and canonical.profile_name = legacy.profile_name
+      and canonical.${table === "access_group_function_grants" ? "group_id" : "user_id"} =
+        legacy.${table === "access_group_function_grants" ? "group_id" : "user_id"}
+    `,
+    `
+    with capability_mapping(old_name, new_name) as (
+      values
+        ('query_service_schedule', 'query_schedule'),
+        ('find_pop_sheet_music', 'find_sheet_music'),
+        ('save_schedule_memory', 'save_schedule'),
+        ('query_schedule_memory', 'query_schedule')
+    )
+    update ${table} grants
+    set function_name = mapping.new_name
+    from capability_mapping mapping
+    where grants.function_name = mapping.old_name
+    `
+  ]),
+  `
+  with capability_mapping(old_name, new_name) as (
+    values
+      ('query_service_schedule', 'query_schedule'),
+      ('find_pop_sheet_music', 'find_sheet_music'),
+      ('save_schedule_memory', 'save_schedule'),
+      ('query_schedule_memory', 'query_schedule')
+  )
+  delete from access_role_capability_bindings legacy
+  using capability_mapping mapping, access_role_capability_bindings canonical
+  where legacy.capability = mapping.old_name
+    and canonical.capability = mapping.new_name
+    and canonical.role_id = legacy.role_id
+  `,
+  `
+  with capability_mapping(old_name, new_name) as (
+    values
+      ('query_service_schedule', 'query_schedule'),
+      ('find_pop_sheet_music', 'find_sheet_music'),
+      ('save_schedule_memory', 'save_schedule'),
+      ('query_schedule_memory', 'query_schedule')
+  )
+  update access_role_capability_bindings bindings
+  set capability = mapping.new_name
+  from capability_mapping mapping
+  where bindings.capability = mapping.old_name
   `
 ];
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
+import { activeTaskFromResult } from "../agent/active-task.js";
 import { createQueryScheduleHandler } from "../functions/query-schedule.js";
 import { createSaveScheduleHandler } from "../functions/schedule-memory.js";
 import { InMemoryScheduleStore } from "../schedules/store.js";
@@ -56,7 +57,50 @@ function notionSchedulePage(
   };
 }
 
+function scheduleTask(result: Awaited<ReturnType<ReturnType<typeof createQueryScheduleHandler>>>) {
+  return activeTaskFromResult(
+    "query_schedule",
+    result,
+    new Date("2026-07-12T00:00:00.000Z"),
+    60_000
+  );
+}
+
 describe("query_schedule", () => {
+  it("skips a same-day meeting after its configured end time in the read model", async () => {
+    const schedules = new InMemoryScheduleStore();
+    for (const [serviceDate, meeting, assignee] of [
+      ["2026-07-14", "晨更", "已結束同工"],
+      ["2026-07-17", "晨更", "下一場同工"]
+    ]) {
+      await schedules.upsertItem({
+        profileName: "helper",
+        sourceKey: "media_team_service_schedule",
+        origin: "notion",
+        externalId: `${serviceDate}-${meeting}`,
+        serviceDate,
+        meeting,
+        role: "音控",
+        assignee
+      });
+    }
+    const query = createQueryScheduleHandler({
+      memoryStore: new InMemoryAgentMemoryStore(),
+      scheduleStore: schedules,
+      now: () => new Date("2026-07-14T08:40:00.000Z"),
+      timeZone: "Asia/Taipei"
+    });
+
+    const result = await query(
+      { query: "下一場服事", dateIntent: "next_meeting" },
+      context("下一場服事")
+    );
+
+    expect(result.replyText).toContain("7月17日");
+    expect(result.replyText).toContain("下一場同工");
+    expect(result.replyText).not.toContain("已結束同工");
+  });
+
   it("answers media-team and role questions without full-text matching the whole sentence", async () => {
     const schedules = new InMemoryScheduleStore();
     await schedules.upsertItem({
@@ -86,16 +130,14 @@ describe("query_schedule", () => {
     );
 
     expect(mediaResult.replyText).toContain("音控：Ray");
-    expect(mediaResult.continuation).toEqual({
-      arguments: {
+    expect(mediaResult.agentResult).toMatchObject({
+      status: "success",
+      anchors: {
         date: "2026-07-18",
         meeting: "主日",
-        availableRoles: ["音控"]
-      },
-      resultReferences: {
-        kind: "schedule_read_model",
         sourceKeys: ["media_team_service_schedule"]
-      }
+      },
+      entities: [expect.objectContaining({ type: "role", label: "音控" })]
     });
     expect(roleResult.replyText).toContain("音控：Ray");
   });
@@ -131,13 +173,7 @@ describe("query_schedule", () => {
       { query: "音控是誰", date: "2026-07-18", role: "音控" },
       {
         ...context("音控是誰"),
-        continuation: {
-          functionName: "query_schedule",
-          arguments: first.continuation?.arguments ?? {},
-          resultReferences: first.continuation?.resultReferences,
-          createdAt: "2026-07-12T00:00:00.000Z",
-          expiresAt: "2026-07-12T00:01:00.000Z"
-        }
+        activeTask: scheduleTask(first)
       }
     );
 
@@ -145,7 +181,7 @@ describe("query_schedule", () => {
     expect(followUp.replyText).not.toContain("Wrong Person");
   });
 
-  it("creates a canonical continuation when live Notion supplies the result", async () => {
+  it("creates canonical active-task evidence when live Notion supplies the result", async () => {
     const notion: NotionDatabaseClient = {
       queryDatabase: vi
         .fn()
@@ -169,18 +205,17 @@ describe("query_schedule", () => {
       context("下一場影視團隊服事表")
     );
 
-    expect(result.continuation).toEqual({
-      arguments: {
+    expect(result.agentResult).toMatchObject({
+      status: "success",
+      anchors: {
         date: "2026-07-14",
         meeting: "晨更",
-        availableRoles: ["音控", "導播"],
-        scheduleRoute: "live_notion",
         sourceKeys: ["media_team_service_schedule"]
       },
-      resultReferences: {
-        kind: "notion_schedule",
-        sourceKeys: ["media_team_service_schedule"]
-      }
+      entities: expect.arrayContaining([
+        expect.objectContaining({ type: "role", label: "音控" }),
+        expect.objectContaining({ type: "role", label: "導播" })
+      ])
     });
   });
 
@@ -213,19 +248,6 @@ describe("query_schedule", () => {
     );
 
     expect(result.replyText).toContain("前攝影：姵穎,佳美");
-    expect(result.continuation).toEqual({
-      arguments: {
-        date: "2026-07-14",
-        meeting: "7月14日(二) 晨更",
-        availableRoles: ["音控", "導播", "前攝影"],
-        scheduleRoute: "live_notion",
-        sourceKeys: ["media_team_service_schedule"]
-      },
-      resultReferences: {
-        kind: "notion_schedule",
-        sourceKeys: ["media_team_service_schedule"]
-      }
-    });
     expect(result.agentResult).toEqual({
       status: "success",
       replyText: result.replyText,
@@ -343,10 +365,15 @@ describe("query_schedule", () => {
       { query: "導播是誰", date: "2026-07-14", meeting: "晨更" },
       {
         ...context("導播是誰"),
-        continuation: {
-          functionName: "query_schedule",
-          arguments: { date: "2026-07-14", meeting: "晨更" },
-          resultReferences: { kind: "notion_schedule" },
+        activeTask: {
+          version: 1,
+          capability: "query_schedule",
+          anchors: { date: "2026-07-14", meeting: "晨更" },
+          entities: [
+            { type: "role", key: "音控", label: "音控" },
+            { type: "role", key: "導播", label: "導播" }
+          ],
+          supportedOperations: ["continue", "refine", "advance"],
           createdAt: "2026-07-13T00:00:00.000Z",
           expiresAt: "2026-07-13T00:01:00.000Z"
         }
@@ -388,13 +415,7 @@ describe("query_schedule", () => {
       { query: "那下一場呢", dateIntent: "next_meeting" },
       {
         ...context("那下一場呢"),
-        continuation: {
-          functionName: "query_schedule",
-          arguments: first.continuation?.arguments ?? {},
-          resultReferences: first.continuation?.resultReferences,
-          createdAt: "2026-07-12T00:00:00.000Z",
-          expiresAt: "2026-07-12T00:01:00.000Z"
-        }
+        activeTask: scheduleTask(first)
       }
     );
 
@@ -436,12 +457,12 @@ describe("query_schedule", () => {
     expect(result.replyText).toContain("音控：資恆");
     expect(result.replyText).not.toContain("B 晨更");
     expect(result.replyText).not.toContain("不應出現");
-    expect(result.continuation).toMatchObject({
-      arguments: {
+    expect(result.agentResult).toMatchObject({
+      anchors: {
         date: "2026-07-14",
-        meeting: "A 晨更",
-        availableRoles: ["音控"]
-      }
+        meeting: "A 晨更"
+      },
+      entities: [expect.objectContaining({ type: "role", label: "音控" })]
     });
   });
 
@@ -473,13 +494,17 @@ describe("query_schedule", () => {
       { query: "下一場服事表的前攝影是誰", dateIntent: "next_meeting" },
       {
         ...context("下一場服事表的前攝影是誰"),
-        continuation: {
-          functionName: "query_schedule",
-          arguments: { date: "2026-07-14", meeting: "晨更" },
-          resultReferences: {
-            kind: "schedule_read_model",
+        activeTask: {
+          version: 1,
+          capability: "query_schedule",
+          anchors: {
+            date: "2026-07-14",
+            meeting: "晨更",
             sourceKeys: ["media_team_service_schedule"]
           },
+          entities: [],
+          references: { sourceKeys: ["media_team_service_schedule"] },
+          supportedOperations: ["continue", "refine", "advance"],
           createdAt: "2026-07-13T00:00:00.000Z",
           expiresAt: "2026-07-13T00:01:00.000Z"
         }
@@ -542,18 +567,6 @@ describe("query_schedule", () => {
       },
       entities: [expect.objectContaining({ type: "role", label: "服事家族" })],
       supportedOperations: ["continue", "refine", "advance"]
-    });
-    expect(result.continuation).toEqual({
-      arguments: {
-        date: expect.stringMatching(/-07-19$/u),
-        meeting: "為耶穌舉牌",
-        availableRoles: ["服事家族"],
-        scheduleType: "street_sign_service"
-      },
-      resultReferences: {
-        kind: "schedule_memory",
-        memoryId: expect.any(String)
-      }
     });
   });
 
@@ -743,7 +756,7 @@ describe("query_schedule", () => {
     expect(result.quickReplies?.map((item) => item.label)).toEqual(["下一場", "本週", "主日"]);
   });
 
-  it("aggregates saved and synchronized schedule results into one structured continuation", async () => {
+  it("aggregates saved and synchronized schedule results into one structured result", async () => {
     const now = () => new Date("2026-07-13T00:00:00.000Z");
     const memoryStore = new InMemoryAgentMemoryStore({ now });
     await memoryStore.saveScheduleMemory({
@@ -792,12 +805,15 @@ describe("query_schedule", () => {
       ]),
       supportedOperations: ["continue", "refine", "advance"]
     });
-    expect(result.continuation).toMatchObject({
-      arguments: {
+    expect(result.agentResult).toMatchObject({
+      anchors: {
         date: "2026-07-19",
-        meeting: "主日",
-        availableRoles: expect.arrayContaining(["招待", "音控"])
-      }
+        meeting: "主日"
+      },
+      entities: expect.arrayContaining([
+        expect.objectContaining({ type: "role", label: "招待" }),
+        expect.objectContaining({ type: "role", label: "音控" })
+      ])
     });
   });
 

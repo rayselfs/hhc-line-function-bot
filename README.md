@@ -10,7 +10,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
 - Controlled semantic planner that uses DeepSeek as the helper profile's primary function-routing provider and Ollama as its fallback.
 - Action catalog that separates user functions, admin actions, and system actions.
 - Policy gate and admin action registry for natural-language admin operations.
-- Conservative keyword fallback when Ollama times out, is unreachable, or returns invalid JSON.
+- Deterministic candidate generation and validation when model providers fail, without a second legacy router.
 - LINE Quick Reply suggestions for clarification and result selection.
 - Postback-based selection state for multi-result flows, currently used by PPT and sheet music search.
 - Hermes-compatible numeric selection replies, so users can tap a Quick Reply or reply with `1`, `2`, `3`.
@@ -32,7 +32,7 @@ LINE webhook service for routing selected church bot requests to local-first fun
   - `find_ppt_slides`: searches a configured presentation folder, fuzzy-matches `.pptx`, `.ppt`, `.key`, and `.odp` names, and returns 24 hour sharing links.
   - `query_schedule`: one user-facing service-schedule query that selects configured sources without exposing them.
   - `query_knowledge`: searches admin-registered, profile-shared Notion knowledge with grounded hybrid retrieval.
-  - `find_sheet_music`: canonical sheet-music lookup for configured pop and hymn sheet sources. `find_pop_sheet_music` remains an internal legacy alias only.
+  - `find_sheet_music`: canonical sheet-music lookup for configured pop and hymn sheet sources.
   - `find_resource`: generic authorized church catalog lookup for non-schedule, non-slide, non-sheet-music resources such as future weekly report audio.
   - `query_wikipedia`: reads a matching Wikipedia introduction and returns a source-bounded summary.
   - `save_schedule`: previews and manages the helper profile's shared canonical text-only service schedules with one-year retention.
@@ -159,9 +159,9 @@ DeepSeek is the primary `function_routing` planner and Ollama is the configured 
 
 Read capabilities may declaratively opt into a bounded retrieval-evidence provider. The knowledge provider probes at most 20 promoted sources in the current profile and returns only a candidate reason to the planner—never source IDs/names, titles, URLs, or content. Every non-explicit knowledge-evidence path—active-task entities, routing metadata, knowledge capability hints, and retrieval evidence—uses the same conservative small-talk and write-intent guard. Explicit knowledge queries remain eligible. DeepSeek proposals remain advisory: they never bypass deterministic profile policy, function toggles, argument validation, clarification, access control, or registered handler execution.
 
-`controlledAgent.enabled=false` is the production rollback switch during the acceptance window. `shadow=true` can observe sanitized controlled-planner outcomes while legacy routing still owns the reply; shadow work is detached and never delays or changes that reply. Restore `enabled=true, shadow=false` after diagnosis. Keep `function_routing` on `deepseek -> ollama` unless a separately reviewed provider-policy change is intended.
+Controlled routing is always authoritative. The removed `controlledAgent.enabled` and `controlledAgent.shadow` fields are rejected during configuration validation so production cannot silently return to a second routing flow. Keep `function_routing` on `deepseek -> ollama` unless a separately reviewed provider-policy change is intended.
 
-If a lane's primary provider returns invalid JSON, times out, or is unavailable, the lane can fall back to its configured fallback provider. Function routing can still fall back to conservative keyword routing after model failures. Explicit model deny decisions do not fall back. Remote API small talk is bounded by `LLM_GENERAL_MAX_OUTPUT_TOKENS` rather than the local Ollama 80-character fallback limit.
+If a lane's primary provider returns invalid JSON, times out, or is unavailable, the lane can fall back to its configured fallback provider. If all planner providers fail, only one unambiguous, revalidated high-confidence capability may be recovered from the same declarative contract; unresolved evidence fails closed. Remote API small talk is bounded by `LLM_GENERAL_MAX_OUTPUT_TOKENS` rather than the local Ollama 80-character fallback limit.
 
 Relevant env vars:
 
@@ -187,7 +187,7 @@ Bootstrap superadmin direct-chat commands for LLM provider operations:
 
 `/llm-use` reports the active legacy default provider and the provider names accepted by the current profile. `/llm-status` reports the current profile's lane policy. Provider selection is controlled by profile/env configuration; LINE commands do not persist provider changes.
 
-Keyword fallback is intentionally narrow:
+Deterministic capability hints are intentionally narrow:
 
 - `find_ppt_slides`: `投影片`, `ppt`, `powerpoint`, `slides`, `keynote`, `odp`
 - `query_schedule`: `服事表`, `服事`
@@ -195,21 +195,21 @@ Keyword fallback is intentionally narrow:
 - `find_resource`: `教會資料`, `小哈資料庫`, and explicit catalog aliases such as `週報音檔`
 - `save_schedule`: `記住晨更`, `記住舉牌`, or pasted text schedules with date rows.
 
-Keyword fallback does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
+Candidate generation does not treat `詩歌` or `流行歌` alone as PPT requests. PPT fuzzy matching happens inside `find_ppt_slides`; for example, `奇易恩點` can match `奇異恩典.pptx`.
 
-For sheet music requests, Ollama can extract the song title, optional artist, requested file type, and fuzzy/exact match preference. Keyword fallback stays conservative and only routes requests that explicitly mention sheet music wording.
+For sheet music requests, the planner can extract the song title, optional artist, requested file type, and fuzzy/exact match preference. Candidate generation stays conservative and only offers this capability when current-message evidence supports it.
 
 Sheet music lookup remains catalog/local-first. If no local sheet music matches and `SEARXNG_BASE_URL` is configured, the bot asks the requester whether to search public web results. It calls SearXNG only after explicit consent, sends only the query to SearXNG, and passes only returned title/snippet/url fields to the `web_summarization` provider. Results are never fetched or saved automatically. An authorized requester with effective `save_resource` permission may explicitly select and confirm one direct HTTPS PDF/JPEG/PNG result for import into the shared pop or hymn catalog. HTML pages, authenticated downloads, and crawling remain prohibited.
 
-The shared query-domain resolver runs before keyword fallback and guards model output when the user names an explicit domain. For example, `查維基百科` with no topic asks for the missing topic instead of letting a model invent one, and `查週報音檔` resolves to internal catalog search rather than Wikipedia when `find_resource` is enabled.
-
-Router behavior is guarded by a deterministic offline eval corpus in each function module. Run `pnpm eval:router` for CI-safe keyword fallback checks. Run `pnpm eval:router:ollama` manually when validating a live Ollama model.
+The candidate generator and validator guard model output when the user names an explicit domain. For example, `查維基百科` with no topic asks for the missing topic instead of letting a model invent one, and `查週報音檔` resolves to internal catalog search rather than Wikipedia when `find_resource` is enabled.
 
 The controlled planner has a separate acceptance corpus. `pnpm eval:agent` runs offline with deterministic stub proposals and exercises the real candidate generator and plan validator, including schedule continuation, dynamic knowledge, cross-function switching, ambiguity, disabled functions, stale state, and argument-injection rejection. `pnpm eval:agent:live` uses the configured `helper` (or `AGENT_EVAL_PROFILE`) `function_routing` policy, requires DeepSeek as primary, allows its configured Ollama fallback, and reports semantic proposal accuracy separately from final validated-plan accuracy. The live command exits non-zero when any final validated case fails and is intentionally not part of CI.
 
 ## Time Zone
 
 Set `TIME_ZONE` for all calendar date range decisions, including `今天`, `明天`, `後天`, and upcoming service schedule queries. The default is `Asia/Taipei`.
+
+Each profile may declare `schedulePolicy.meetingWindows` with meeting-name aliases and local start/end times. `下一場` uses this shared policy across synchronized, saved, and live schedule sources: a same-day meeting is eligible only before its configured end time, so a 16:40 Taipei query does not return that morning's 晨更. Future dates without a configured window remain eligible; unknown same-day times fail closed instead of pretending the meeting is still upcoming.
 
 ## State
 
@@ -392,7 +392,7 @@ Knowledge synchronization preserves page hierarchy, tables, lists, properties, a
 
 The model is installed on the existing private Ollama host, not in the ACA image or PostgreSQL. Configure `OLLAMA_EMBEDDING_MODEL=bge-m3`, `EMBEDDING_BATCH_SIZE=16`, `EMBEDDING_TIMEOUT_MS=30000`, and `EMBEDDING_KEEP_ALIVE=1m`; `EMBEDDING_OLLAMA_BASE_URL` is optional and otherwise reuses `OLLAMA_BASE_URL`. PostgreSQL must already have the `vector` extension; the app validates it but never installs extensions.
 
-Requester-scoped continuation state records the last function plus the canonical arguments and safe references returned by the successful handler. Schedule follow-ups therefore keep the confirmed date and meeting from read-model, saved-schedule, or live Notion results. Short role questions such as `導播` or `音控是誰` are protected from a model `small_talk` misroute, and unlisted role names are resolved from the current text instead of a fixed vocabulary. Only date, meeting, or role changes supported by the current user text override prior filters. `那下一場呢` advances after the returned date, while a complete request such as `下一場服事表的前攝影是誰` resolves the next meeting from now. Knowledge follow-ups search the opaque section key first, then the same document, then the same source; they never fall back profile-wide and switch sources only when the same capped eligible routing provider yields one unique match. Missing, removed, expired, or never-successfully-synchronized sources fail closed. Knowledge task state stores only opaque source/document/section identifiers, generic labels, and ordinal values—never display names, aliases, titles, headings, URLs, answer content, or person-bearing labels. Continuation uses an independent absolute 60-second expiry, so small talk does not keep stale function state alive. Group state remains isolated by profile, group, and requester.
+Requester-scoped active-task state records the last successful capability plus canonical anchors, declared entities, and safe references returned by the handler. Schedule follow-ups therefore keep the confirmed date, meeting, source, and role evidence from read-model, saved-schedule, or live Notion results. Short role questions such as `導播` or `音控是誰` are resolved against those entities instead of being treated as small talk, and unlisted roles do not require a hard-coded vocabulary. Only current-message evidence or declaratively bound active-task evidence may fill arguments. `那下一場呢` advances after the returned date, while a complete request such as `下一場服事表的前攝影是誰` resolves from now. Knowledge follow-ups search the opaque section key first, then the same document, then the same source; missing or stale sources fail closed. Active tasks have an independent absolute 60-second expiry, and group state is isolated by profile, group, and requester.
 
 ## LINE Attachment Save Gate
 
@@ -471,7 +471,6 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm config:validate
-pnpm eval:router
 pnpm eval:admin
 pnpm eval:agent
 pnpm build
@@ -480,6 +479,5 @@ pnpm build
 Optional live local-model check:
 
 ```powershell
-pnpm eval:router:ollama
 pnpm eval:agent:live
 ```

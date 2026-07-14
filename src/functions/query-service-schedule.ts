@@ -5,12 +5,9 @@ import {
   type QueryServiceScheduleArguments
 } from "../function-arguments.js";
 import { readTimeZone } from "../time-zone.js";
-import type {
-  FunctionExecutionResult,
-  FunctionHandler,
-  JsonRecord,
-  NotionDatabaseClient
-} from "../types.js";
+import { selectFirstUpcomingOccurrence } from "../schedules/occurrence-policy.js";
+import type { MeetingWindowRule } from "../types.js";
+import type { FunctionHandler, JsonRecord, NotionDatabaseClient } from "../types.js";
 import { withRequesterDisplayName } from "../requester-personalization.js";
 import type { SessionStore } from "../state/session-store.js";
 import { normalizeNotionSchedulePage } from "../schedules/notion-adapter.js";
@@ -66,7 +63,7 @@ export function createQueryServiceScheduleHandler(
       await storePendingFunctionQuery({
         sessionStore: options.sessionStore,
         requestId: requestIdFactory(),
-        action: "query_service_schedule",
+        action: "query_schedule",
         arguments: args,
         context,
         now: now()
@@ -130,7 +127,12 @@ export function createQueryServiceScheduleHandler(
       .filter((row) => matchesOptional(row.role, derivedFilters.role))
       .filter((row) => matchesDateRange(row.date, derivedFilters.range));
     const meetingRows = derivedFilters.nextMeetingOnly
-      ? limitToFirstUpcomingGroup(filteredRows, now(), timeZone)
+      ? limitToFirstUpcomingGroup(
+          filteredRows,
+          now(),
+          timeZone,
+          context.profile.schedulePolicy?.meetingWindows
+        )
       : filteredRows;
     const roleResolution = resolveScheduleResultRows(meetingRows, derivedFilters.role);
     const filtered =
@@ -170,52 +172,10 @@ export function createQueryServiceScheduleHandler(
     });
     return {
       ok: true,
-      continuation: liveScheduleContinuation(
-        filtered,
-        derivedFilters.role,
-        continuationRoles(context.continuation?.arguments),
-        options.sourceKeys
-      ),
       replyText: agentResult.replyText,
       agentResult
     };
   };
-}
-
-function liveScheduleContinuation(
-  rows: ServiceRow[],
-  role?: string,
-  previousRoles: string[] = [],
-  sourceKeys: string[] = []
-): FunctionExecutionResult["continuation"] | undefined {
-  const dates = Array.from(new Set(rows.map((row) => extractDateKey(row.date)).filter(Boolean)));
-  const meetings = Array.from(new Set(rows.map((row) => row.meeting).filter(Boolean)));
-  if (dates.length !== 1 || meetings.length !== 1) return undefined;
-  return {
-    arguments: {
-      date: dates[0],
-      meeting: meetings[0],
-      availableRoles: Array.from(
-        new Set([...previousRoles, ...rows.map((row) => row.role).filter(Boolean)])
-      ),
-      ...(sourceKeys.length > 0
-        ? { scheduleRoute: "live_notion", sourceKeys: Array.from(new Set(sourceKeys)) }
-        : {}),
-      ...(role ? { role } : {})
-    },
-    resultReferences: {
-      kind: "notion_schedule",
-      ...(sourceKeys.length > 0 ? { sourceKeys: Array.from(new Set(sourceKeys)) } : {})
-    }
-  };
-}
-
-function continuationRoles(arguments_: unknown): string[] | undefined {
-  if (!arguments_ || typeof arguments_ !== "object") return undefined;
-  const roles = (arguments_ as Record<string, unknown>).availableRoles;
-  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
-    ? roles
-    : undefined;
 }
 
 function needsServiceScheduleClarification(args: QueryServiceScheduleArguments): boolean {
@@ -363,16 +323,23 @@ function applyStructuredDateIntent(
   }
 }
 
-function limitToFirstUpcomingGroup(rows: ServiceRow[], now: Date, timeZone: string): ServiceRow[] {
-  const [first] = groupRows(rows)
-    .map((group) => ({ group, window: inferServiceGroupWindow(group, timeZone) }))
-    .filter(({ window }) => !window?.end || window.end > now)
-    .sort((left, right) => {
-      const leftTime = left.window?.start.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const rightTime = right.window?.start.getTime() ?? Number.MAX_SAFE_INTEGER;
-      return leftTime - rightTime;
-    });
-  return first?.group.rows ?? [];
+function limitToFirstUpcomingGroup(
+  rows: ServiceRow[],
+  now: Date,
+  timeZone: string,
+  meetingWindows?: MeetingWindowRule[]
+): ServiceRow[] {
+  const candidates = rows.map((row) => ({
+    serviceDate: row.date,
+    meeting: row.meeting,
+    row
+  }));
+  return selectFirstUpcomingOccurrence({
+    rows: candidates,
+    now,
+    timeZone,
+    meetingWindows
+  }).map(({ row }) => row);
 }
 
 function upcomingRange(now: Date, timeZone: string): NonNullable<DerivedFilters["range"]> {
@@ -536,66 +503,6 @@ interface ServiceGroup {
   rows: ServiceRow[];
 }
 
-interface MeetingTimeRule {
-  pattern: RegExp;
-  weekdays?: number[];
-  startHour: number;
-  startMinute: number;
-  endHour: number;
-  endMinute: number;
-}
-
-const MEETING_TIME_RULES: MeetingTimeRule[] = [
-  {
-    pattern: /晨更/u,
-    weekdays: [2, 5],
-    startHour: 6,
-    startMinute: 30,
-    endHour: 8,
-    endMinute: 30
-  },
-  {
-    pattern: /仙履奇緣/u,
-    weekdays: [4],
-    startHour: 6,
-    startMinute: 30,
-    endHour: 9,
-    endMinute: 0
-  },
-  {
-    pattern: /福音餐會/u,
-    weekdays: [4],
-    startHour: 12,
-    startMinute: 0,
-    endHour: 14,
-    endMinute: 0
-  },
-  {
-    pattern: /門訓禱告會/u,
-    weekdays: [5],
-    startHour: 19,
-    startMinute: 0,
-    endHour: 21,
-    endMinute: 30
-  },
-  {
-    pattern: /國度禱告會/u,
-    weekdays: [6],
-    startHour: 9,
-    startMinute: 0,
-    endHour: 11,
-    endMinute: 30
-  },
-  {
-    pattern: /主日/u,
-    weekdays: [0],
-    startHour: 9,
-    startMinute: 0,
-    endHour: 12,
-    endMinute: 0
-  }
-];
-
 function groupRows(rows: ServiceRow[]): ServiceGroup[] {
   const groups = new Map<string, ServiceGroup>();
   for (const row of rows) {
@@ -607,106 +514,6 @@ function groupRows(rows: ServiceRow[]): ServiceGroup[] {
     groups.set(key, group);
   }
   return Array.from(groups.values());
-}
-
-function inferServiceGroupWindow(
-  group: ServiceGroup,
-  timeZone: string
-): { start: Date; end: Date } | undefined {
-  const rawDate = group.rows[0]?.date ?? "";
-  const explicitWindow = parseDateTimeWindow(rawDate);
-  if (explicitWindow) {
-    return explicitWindow;
-  }
-
-  if (!group.dateKey) {
-    return undefined;
-  }
-  const rule = inferMeetingTimeRule(group.meeting, group.dateKey);
-  return {
-    start: zonedDateTimeToUtc(group.dateKey, rule.startHour, rule.startMinute, timeZone),
-    end: zonedDateTimeToUtc(group.dateKey, rule.endHour, rule.endMinute, timeZone)
-  };
-}
-
-function parseDateTimeWindow(value: string): { start: Date; end: Date } | undefined {
-  const matches = value.match(/\d{4}-\d{2}-\d{2}T[^\s~]+/g);
-  if (!matches || matches.length === 0) {
-    return undefined;
-  }
-  const first = matches[0];
-  const last = matches.length > 1 ? matches.at(-1) : matches[0];
-  if (!first || !last) {
-    return undefined;
-  }
-  const start = new Date(first);
-  const parsed = new Date(last);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(parsed.getTime())) {
-    return undefined;
-  }
-  return {
-    start,
-    end: matches.length > 1 ? parsed : new Date(parsed.getTime() + 3 * 60 * 60 * 1000)
-  };
-}
-
-function inferMeetingTimeRule(meeting: string, dateKey: string): MeetingTimeRule {
-  const weekday = weekdayFromDateKey(dateKey);
-  const rule = MEETING_TIME_RULES.find(
-    (candidate) =>
-      candidate.pattern.test(meeting) &&
-      (!candidate.weekdays || candidate.weekdays.includes(weekday))
-  );
-  if (rule) {
-    return rule;
-  }
-  return {
-    pattern: /.*/u,
-    startHour: 0,
-    startMinute: 0,
-    endHour: 23,
-    endMinute: 59
-  };
-}
-
-function weekdayFromDateKey(dateKey: string): number {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
-
-function zonedDateTimeToUtc(dateKey: string, hour: number, minute: number, timeZone: string): Date {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute));
-  return new Date(utcGuess.getTime() - timeZoneOffsetMs(utcGuess, timeZone));
-}
-
-function timeZoneOffsetMs(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((acc, part) => {
-      if (part.type !== "literal") {
-        acc[part.type] = part.value;
-      }
-      return acc;
-    }, {});
-  const zonedAsUtc = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(parts.hour),
-    Number(parts.minute),
-    Number(parts.second)
-  );
-  return zonedAsUtc - date.getTime();
 }
 
 function formatMonthDay(dateKey: string): string {

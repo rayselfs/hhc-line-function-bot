@@ -1,5 +1,5 @@
 import { providerCapabilities } from "../llm/provider-metadata.js";
-import { ProviderResponseError } from "../router.js";
+import { ProviderResponseError } from "../llm/provider-response.js";
 import type {
   ChatProvider,
   ChatProviderRequest,

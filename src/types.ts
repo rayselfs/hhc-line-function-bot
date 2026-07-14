@@ -5,16 +5,12 @@ export const FUNCTION_NAMES = [
   "query_schedule",
   "query_knowledge",
   "save_schedule",
-  "query_service_schedule",
   "find_sheet_music",
-  "find_pop_sheet_music",
   "find_resource",
   "query_wikipedia",
   "save_memory",
   "save_resource",
-  "retrieve_memory",
-  "save_schedule_memory",
-  "query_schedule_memory"
+  "retrieve_memory"
 ] as const;
 
 export type FunctionName = (typeof FUNCTION_NAMES)[number];
@@ -172,10 +168,20 @@ export interface GeneralAgentConfig {
 }
 
 export interface ControlledAgentConfig {
-  enabled: boolean;
-  shadow: boolean;
   maxCandidates: number;
   minPlannerConfidence: number;
+}
+
+export interface MeetingWindowRule {
+  key: string;
+  aliases: string[];
+  weekdays?: number[];
+  start: string;
+  end: string;
+}
+
+export interface SchedulePolicyConfig {
+  meetingWindows: MeetingWindowRule[];
 }
 
 export interface LongRunningJobsConfig {
@@ -206,6 +212,7 @@ export interface BotProfileConfig {
   allowSubscriptionProviders: boolean;
   providerPolicy?: ProviderPolicy;
   controlledAgent: ControlledAgentConfig;
+  schedulePolicy: SchedulePolicyConfig;
   generalAgent?: GeneralAgentConfig;
   longRunningJobs?: LongRunningJobsConfig;
 }
@@ -226,7 +233,6 @@ export interface LlmConfig {
   generalMaxOutputTokens?: number;
   routeMaxOutputTokens?: number;
   timeoutMs: number;
-  keywordFallbackEnabled: boolean;
 }
 
 export interface GraphConfig {
@@ -596,7 +602,6 @@ export interface FunctionExecutionResult {
   quickReplies?: QuickReplyItem[];
   agentResult?: AgentResultEnvelope;
   agentResource?: AgentResourceReference;
-  continuation?: { arguments?: JsonRecord; resultReferences?: JsonRecord };
   smallTalkTrace?: {
     lane: "smart_talk";
     outcome: "generated" | "fallback" | "template";
@@ -605,21 +610,19 @@ export interface FunctionExecutionResult {
   };
 }
 
-export interface FunctionContinuationState {
-  functionName: FunctionName;
-  arguments: JsonRecord;
-  resultReferences?: JsonRecord;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export interface FunctionHandlerContext {
   profile: BotProfileConfig;
   event: LineEvent;
   requestId?: string;
   requesterDisplayName?: string;
   requesterIsAdmin?: boolean;
-  continuation?: FunctionContinuationState;
+  activeTask?: {
+    capability: FunctionName;
+    anchors: JsonRecord;
+    references?: JsonRecord;
+    entities: Array<{ type: string; key: string; label: string; aliases?: string[] }>;
+    supportedOperations: string[];
+  };
 }
 
 export type FunctionHandler = (

@@ -31,7 +31,7 @@ export function createQueryClarificationReply(
 
 function queryCapabilities(profile: BotProfileConfig): string[] {
   const definitions = getFunctionDefinitions(profile.enabledFunctions).filter(
-    (definition) => definition.sideEffectLevel === "read" && !definition.deprecated
+    (definition) => definition.sideEffectLevel === "read"
   );
   return definitions.map((definition) => definition.displayName);
 }

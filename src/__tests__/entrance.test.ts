@@ -45,7 +45,7 @@ function testConfig(): AppConfig {
         groupRequireWakeWord: true,
         wakeKeywords: ["小哈"],
         acceptMention: true,
-        enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+        enabledFunctions: ["find_ppt_slides", "query_schedule"],
         adminUserId: "Uadmin",
         adminDirectOnly: true,
         directAccessPolicy: "managed",
@@ -74,8 +74,7 @@ function testConfig(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     }
   };
 }
@@ -126,9 +125,40 @@ function createTestApp(
   config: AppConfig,
   deps: Parameters<typeof createApp>[1]
 ): ReturnType<typeof createApp> {
+  const legacyRouter = (deps as Parameters<typeof createApp>[1] & { router?: FunctionRouterPort })
+    .router;
   return createApp(config, {
     accessStore: defaultAccessStore(),
-    ...deps
+    ...deps,
+    controlledAgentRouter:
+      deps.controlledAgentRouter ??
+      (legacyRouter
+        ? {
+            async resolve(input) {
+              const route = await legacyRouter.route({
+                profileName: input.profileName,
+                text: input.text,
+                enabledFunctions: [...input.enabledFunctions],
+                source:
+                  input.sourceType === "group"
+                    ? { type: "group", groupId: "test-group", userId: "test-user" }
+                    : { type: "user", userId: "test-user" }
+              });
+              if (route.type === "deny") {
+                return { disposition: "deny", reasonCode: "planner_denied" } as const;
+              }
+              if (route.type === "respond") {
+                return { disposition: "chat", reasonCode: "no_capability_evidence" } as const;
+              }
+              return {
+                disposition: "execute",
+                capability: route.action,
+                arguments: route.arguments,
+                reasonCode: "explicit_intent"
+              } as const;
+            }
+          }
+        : undefined)
   });
 }
 
@@ -152,7 +182,7 @@ function accessConfig(): AppConfig {
         groupRequireWakeWord: true,
         wakeKeywords: ["小哈"],
         acceptMention: true,
-        enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+        enabledFunctions: ["find_ppt_slides", "query_schedule"],
         adminUserId: "Uroot",
         adminDirectOnly: true,
         directAccessPolicy: "managed",
@@ -170,7 +200,7 @@ function accessConfig(): AppConfig {
         groupRequireWakeWord: false,
         wakeKeywords: [],
         acceptMention: true,
-        enabledFunctions: ["query_service_schedule"],
+        enabledFunctions: ["query_schedule"],
         adminUserId: "Uroot",
         adminDirectOnly: true,
         directAccessPolicy: "public",
@@ -184,8 +214,7 @@ function accessConfig(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     },
     access: { registrationInviteCodeTtlMinutes: 60 }
   };
@@ -291,7 +320,7 @@ describe("LINE entrance", () => {
         kind: "route",
         profileName: "configured",
         sourceType: "group",
-        provider: "ollama",
+        provider: "router",
         outcome: "execute",
         action: "find_ppt_slides"
       })
@@ -597,10 +626,10 @@ describe("LINE entrance", () => {
     expect(replyText).toHaveBeenCalledTimes(1);
   });
 
-  it("emits fallback diagnostics when keyword routing is used after Ollama fails", async () => {
+  it("emits controlled routing diagnostics for a function execution", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "execute",
-      action: "query_service_schedule",
+      action: "query_schedule",
       arguments: { query: "服事表" },
       provider: "keyword",
       fallbackProvider: "ollama",
@@ -614,7 +643,7 @@ describe("LINE entrance", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createTestApp(testConfig(), {
       router: { route },
-      functionRegistry: { query_service_schedule: queryServiceSchedule },
+      functionRegistry: { query_schedule: queryServiceSchedule },
       routeObserver,
       createLineReplyClient: () => ({ replyText })
     });
@@ -636,11 +665,9 @@ describe("LINE entrance", () => {
     expect(routeObserver).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "route",
-        provider: "keyword",
+        provider: "router",
         outcome: "execute",
-        action: "query_service_schedule",
-        fallbackProvider: "ollama",
-        fallbackReason: "ollama_unreachable"
+        action: "query_schedule"
       })
     );
   });
@@ -813,7 +840,7 @@ describe("LINE entrance", () => {
 
     expect(res.statusCode).toBe(200);
     expect(route).toHaveBeenCalledOnce();
-    expect(route.mock.calls[0]?.[0].source).toEqual({ type: "user", userId: "Uallowed" });
+    expect(route.mock.calls[0]?.[0]).toMatchObject({ text: "query service schedule" });
   });
 
   it("handles slash admin status in direct chat without calling the router", async () => {
@@ -841,9 +868,7 @@ describe("LINE entrance", () => {
     expect(route).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("Admin status");
     expect(replyText.mock.calls[0]?.[1]).toContain("profile: main");
-    expect(replyText.mock.calls[0]?.[1]).toContain(
-      "functions: find_ppt_slides, query_service_schedule"
-    );
+    expect(replyText.mock.calls[0]?.[1]).toContain("functions: find_ppt_slides, query_schedule");
   });
 
   it("lists public commands and effective functions through help", async () => {
@@ -1113,7 +1138,7 @@ describe("LINE entrance", () => {
 
   it("lets an admin grant a function to the current group for the current profile", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1158,7 +1183,7 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "find_ppt_slides"]
+        enabledFunctions: ["query_schedule", "find_ppt_slides"]
       })
     );
   });
@@ -1167,7 +1192,7 @@ describe("LINE entrance", () => {
     "rejects slash-command group grants for user-scoped write function %s",
     async (functionName) => {
       const config = testConfig();
-      config.profiles[0].enabledFunctions = ["query_service_schedule", functionName] as never;
+      config.profiles[0].enabledFunctions = ["query_schedule", functionName] as never;
       const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
       const accessStore = defaultAccessStore();
       const app = createTestApp(config, {
@@ -1237,7 +1262,7 @@ describe("LINE entrance", () => {
     const config = testConfig();
     config.profiles[0] = {
       ...config.profiles[0],
-      enabledFunctions: ["query_service_schedule"],
+      enabledFunctions: ["query_schedule"],
       controlledAgent: {
         enabled: true,
         shadow: false,
@@ -1282,7 +1307,7 @@ describe("LINE entrance", () => {
     expect(resolve).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "find_ppt_slides"],
+        enabledFunctions: ["query_schedule", "find_ppt_slides"],
         sourceType: "group"
       }),
       expect.any(Function)
@@ -1293,7 +1318,7 @@ describe("LINE entrance", () => {
 
   it("does not apply group function grants to direct users", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "function_disabled",
@@ -1330,14 +1355,14 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule"]
+        enabledFunctions: ["query_schedule"]
       })
     );
   });
 
   it("hides profile-global write functions from non-admin users by default", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    config.profiles[0].enabledFunctions = ["query_schedule", "save_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1366,14 +1391,14 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule"]
+        enabledFunctions: ["query_schedule"]
       })
     );
   });
 
   it("keeps profile-global write functions available to admins", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    config.profiles[0].enabledFunctions = ["query_schedule", "save_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1402,14 +1427,14 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "save_schedule_memory"]
+        enabledFunctions: ["query_schedule", "save_schedule"]
       })
     );
   });
 
   it("lets a direct user use a write function through an explicit user grant", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1446,14 +1471,14 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "save_schedule"]
+        enabledFunctions: ["query_schedule", "save_schedule"]
       })
     );
   });
 
   it("lets an admin grant a function to a direct user for the current profile", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1501,14 +1526,14 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "main",
-        enabledFunctions: ["query_service_schedule", "save_schedule"]
+        enabledFunctions: ["query_schedule", "save_schedule"]
       })
     );
   });
 
   it("shows write functions as profile-global but not default effective group scope", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule", "save_schedule_memory"];
+    config.profiles[0].enabledFunctions = ["query_schedule", "save_schedule"];
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "deny",
       reason: "not_matched",
@@ -1535,10 +1560,10 @@ describe("LINE entrance", () => {
 
     const reply = String(replyText.mock.calls[0]?.[1] ?? "");
     expect(res.statusCode).toBe(200);
-    expect(reply).toContain("profile-global: query_service_schedule, save_schedule_memory");
-    expect(reply).toContain("profile-default: query_service_schedule");
-    expect(reply).toContain("effective: query_service_schedule");
-    expect(reply).not.toContain("effective: query_service_schedule, save_schedule_memory");
+    expect(reply).toContain("profile-global: query_schedule, save_schedule");
+    expect(reply).toContain("profile-default: query_schedule");
+    expect(reply).toContain("effective: query_schedule");
+    expect(reply).not.toContain("effective: query_schedule, save_schedule");
   });
 
   it("keeps group function grants isolated by profile", async () => {
@@ -1735,7 +1760,7 @@ describe("LINE entrance", () => {
     expect(route).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "你好",
-        enabledFunctions: ["find_ppt_slides", "query_service_schedule"]
+        enabledFunctions: ["find_ppt_slides", "query_schedule"]
       })
     );
     expect(completeText).toHaveBeenCalledWith(
@@ -1850,11 +1875,7 @@ describe("LINE entrance", () => {
 
   it("introduces sheet music lookup without exposing storage details", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = [
-      "find_ppt_slides",
-      "query_service_schedule",
-      "find_pop_sheet_music"
-    ];
+    config.profiles[0].enabledFunctions = ["find_ppt_slides", "query_schedule", "find_sheet_music"];
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createTestApp(config, {
@@ -2035,7 +2056,7 @@ describe("LINE entrance", () => {
   it("route-tests admin text without executing the selected function", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
       type: "execute",
-      action: "query_service_schedule",
+      action: "query_schedule",
       arguments: { query: "服事表" },
       provider: "keyword"
     });
@@ -2046,7 +2067,7 @@ describe("LINE entrance", () => {
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
     const app = createTestApp(testConfig(), {
       router: { route },
-      functionRegistry: { query_service_schedule: queryServiceSchedule },
+      functionRegistry: { query_schedule: queryServiceSchedule },
       createLineReplyClient: () => ({ replyText })
     });
     const body = lineBody({
@@ -2072,8 +2093,8 @@ describe("LINE entrance", () => {
     );
     expect(queryServiceSchedule).not.toHaveBeenCalled();
     expect(replyText.mock.calls[0]?.[1]).toContain("Route test");
-    expect(replyText.mock.calls[0]?.[1]).toContain("action: query_service_schedule");
-    expect(replyText.mock.calls[0]?.[1]).toContain("provider: keyword");
+    expect(replyText.mock.calls[0]?.[1]).toContain("action: query_schedule");
+    expect(replyText.mock.calls[0]?.[1]).not.toContain("provider: keyword");
   });
 
   it("records function errors with request ids and exposes them to slash admin last-errors", async () => {
@@ -2179,7 +2200,7 @@ describe("LINE entrance", () => {
     expect(replyText.mock.calls[1]?.[1]).toContain("Last routes");
     expect(replyText.mock.calls[1]?.[1]).toContain("requestId=present");
     expect(replyText.mock.calls[1]?.[1]).toContain("find_ppt_slides");
-    expect(replyText.mock.calls[1]?.[1]).toContain("provider=ollama");
+    expect(replyText.mock.calls[1]?.[1]).toContain("provider=router");
     expect(replyText.mock.calls[1]?.[1]).toContain("query=present");
     expect(replyText.mock.calls[1]?.[1]).toContain("ok=true");
     expect(replyText.mock.calls[1]?.[1]).not.toContain("Amazing Grace");
@@ -2306,7 +2327,7 @@ describe("LINE entrance", () => {
   it("prompts managed direct users to register before routing", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(accessConfig(), {
+    const app = createTestApp(accessConfig(), {
       router: { route },
       accessStore: new InMemoryAccessStore(),
       createLineReplyClient: () => ({ replyText })
@@ -2337,7 +2358,7 @@ describe("LINE entrance", () => {
   it("prompts unregistered groups to ask an admin to register when the bot is addressed", async () => {
     const route = vi.fn<FunctionRouterPort["route"]>();
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
-    const app = createApp(accessConfig(), {
+    const app = createTestApp(accessConfig(), {
       router: { route },
       accessStore: new InMemoryAccessStore(),
       createLineReplyClient: () => ({ replyText })
@@ -2640,7 +2661,7 @@ describe("LINE entrance", () => {
 
   it("lets admins manage current-group function scope through natural language", async () => {
     const config = testConfig();
-    config.profiles[0].enabledFunctions = ["query_service_schedule"];
+    config.profiles[0].enabledFunctions = ["query_schedule"];
     config.profiles[0].groupRequireWakeWord = false;
     const route = vi.fn<FunctionRouterPort["route"]>();
     const adminRoute = vi.fn().mockResolvedValue({
@@ -2976,7 +2997,7 @@ describe("LINE entrance", () => {
       reason: "not_matched",
       provider: "ollama"
     });
-    const app = createApp(accessConfig(), {
+    const app = createTestApp(accessConfig(), {
       router: { route },
       accessStore: new InMemoryAccessStore(),
       createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
@@ -3375,7 +3396,7 @@ describe("LINE entrance", () => {
       .mockResolvedValueOnce({
         ok: true,
         replyText: "完成",
-        executedAction: "query_service_schedule",
+        executedAction: "query_schedule",
         agentResult: { status: "success", replyText: "完成", supportedOperations: [] }
       })
       .mockResolvedValueOnce({

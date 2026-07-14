@@ -19,7 +19,7 @@ function profile(): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"],
+    enabledFunctions: ["find_ppt_slides", "query_schedule", "find_sheet_music"],
     adminUserId: "Uadmin",
     adminDirectOnly: true
   };
@@ -40,8 +40,7 @@ function config(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     },
     graph: {
       tenantId: "tenant",
@@ -79,7 +78,7 @@ describe("function registry", () => {
     };
     const registries = createFunctionRegistries(config(), { graph });
 
-    expect(registries.functions.find_pop_sheet_music).toBeDefined();
+    expect(registries.functions.find_sheet_music).toBeDefined();
     expect(registries.postbacks.select_sheet_music).toBeDefined();
     expect(registries.textMessages.sheet_music_numeric_selection).toBeDefined();
     expect(registries.adminHandlers["refresh-sheet-music-cache"]).toBeUndefined();
@@ -154,8 +153,8 @@ describe("function registry", () => {
     });
 
     expect(functionsResult.replyText).toContain("- find_ppt_slides: configured");
-    expect(functionsResult.replyText).toContain("- query_service_schedule: not configured");
-    expect(functionsResult.replyText).toContain("- find_pop_sheet_music: configured");
+    expect(functionsResult.replyText).toContain("- query_schedule: configured");
+    expect(functionsResult.replyText).toContain("- find_sheet_music: configured");
     expect(sessionsResult.replyText).toContain("total: 1");
     expect(sessionsResult.replyText).toContain("- pending_function: 1");
     expect(cacheResult.replyText).toBe("Cache\nentries: 1");

@@ -26,7 +26,7 @@ function config(): AppConfig {
         groupRequireWakeWord: true,
         wakeKeywords: ["小哈"],
         acceptMention: true,
-        enabledFunctions: ["query_service_schedule"],
+        enabledFunctions: ["query_schedule"],
         adminUserId: "Uroot",
         adminDirectOnly: true,
         directAccessPolicy: "managed",
@@ -51,8 +51,7 @@ function config(): AppConfig {
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
-      timeoutMs: 8000,
-      keywordFallbackEnabled: true
+      timeoutMs: 8000
     }
   };
 }

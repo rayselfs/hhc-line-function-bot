@@ -77,7 +77,7 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       return source ? [{ source, metadata }] : [];
     });
 
-    const anchor = knowledgeAnchor(context.continuation);
+    const anchor = knowledgeAnchor(context.activeTask);
     if (anchor && !eligibleSources.some(({ source }) => source.id === anchor.sourceId)) {
       return knowledgeUnavailableResult();
     }
@@ -187,10 +187,6 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       ok: true,
       executedAction: "query_knowledge",
       agentResult,
-      continuation: {
-        arguments: { query: args.query, ...(agentResult.anchors ?? {}) },
-        resultReferences: agentResult.anchors
-      },
       replyText
     };
   };
@@ -246,14 +242,14 @@ interface KnowledgeAnchor {
 }
 
 function knowledgeAnchor(
-  continuation: Parameters<FunctionHandler>[1]["continuation"]
+  activeTask: Parameters<FunctionHandler>[1]["activeTask"]
 ): KnowledgeAnchor | undefined {
-  if (continuation?.functionName !== "query_knowledge") return undefined;
-  const references = continuation.resultReferences;
-  const sourceId = references?.sourceId;
-  const documentId = references?.documentId;
-  const sectionKey = references?.sectionKey;
-  const ordinal = references?.ordinal;
+  if (activeTask?.capability !== "query_knowledge") return undefined;
+  const values = { ...activeTask.anchors, ...activeTask.references };
+  const sourceId = values.sourceId;
+  const documentId = values.documentId;
+  const sectionKey = values.sectionKey;
+  const ordinal = values.ordinal;
   return typeof sourceId === "string" && typeof documentId === "string"
     ? {
         sourceId,

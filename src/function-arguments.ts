@@ -245,16 +245,12 @@ export function parseFunctionArguments(
     query_schedule: queryScheduleArgumentsSchema,
     query_knowledge: queryKnowledgeArgumentsSchema,
     save_schedule: saveScheduleArgumentsSchema,
-    query_service_schedule: queryServiceScheduleArgumentsSchema,
     find_sheet_music: findPopSheetMusicArgumentsSchema,
-    find_pop_sheet_music: findPopSheetMusicArgumentsSchema,
     find_resource: findResourceArgumentsSchema,
     query_wikipedia: queryWikipediaArgumentsSchema,
     save_memory: saveMemoryArgumentsSchema,
     save_resource: saveResourceArgumentsSchema,
-    retrieve_memory: retrieveMemoryArgumentsSchema,
-    save_schedule_memory: saveScheduleMemoryArgumentsSchema,
-    query_schedule_memory: queryScheduleMemoryArgumentsSchema
+    retrieve_memory: retrieveMemoryArgumentsSchema
   }[action];
   const parsed = schema.safeParse(rawArguments ?? {});
   return parsed.success ? (parsed.data as JsonRecord) : undefined;

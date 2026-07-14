@@ -15,7 +15,7 @@ function baseEnv(): NodeJS.ProcessEnv {
         webhookPath: "/api/line/webhook/main",
         channelSecret: "secret",
         channelAccessToken: "token",
-        enabledFunctions: ["query_service_schedule"]
+        enabledFunctions: ["query_schedule"]
       }
     ])
   };
@@ -111,7 +111,7 @@ describe("config", () => {
           channelSecretEnv: "LINE_HELPER_CHANNEL_SECRET",
           channelAccessTokenEnv: "LINE_HELPER_CHANNEL_ACCESS_TOKEN",
           adminUserIdEnv: "LINE_HELPER_ADMIN_USER_ID",
-          enabledFunctions: ["query_service_schedule"],
+          enabledFunctions: ["query_schedule"],
           registration: { enabled: true }
         }
       ],
@@ -335,7 +335,7 @@ describe("config", () => {
           webhookPath: "/api/line/webhook/main",
           channelSecret: "secret",
           channelAccessToken: "token",
-          enabledFunctions: ["query_service_schedule"],
+          enabledFunctions: ["query_schedule"],
           adminUserId: "Uadmin",
           adminDirectOnly: true
         }
@@ -399,7 +399,7 @@ describe("config", () => {
           webhookPath: "/api/line/webhook/helper",
           channelSecret: "secret",
           channelAccessToken: "token",
-          enabledFunctions: ["query_service_schedule"],
+          enabledFunctions: ["query_schedule"],
           adminUserId: "Uadmin"
         }
       ])
@@ -613,12 +613,10 @@ describe("config", () => {
     });
   });
 
-  it("defaults the controlled agent off", () => {
+  it("defaults the authoritative controlled agent policy", () => {
     const config = loadConfigFromEnv(baseEnv());
 
     expect(config.profiles[0]!.controlledAgent).toEqual({
-      enabled: false,
-      shadow: false,
       maxCandidates: 3,
       minPlannerConfidence: 0.65
     });
@@ -659,8 +657,6 @@ describe("config", () => {
             function_routing: { primary: "deepseek", fallback: "ollama" }
           },
           controlledAgent: {
-            enabled: true,
-            shadow: false,
             maxCandidates: 3,
             minPlannerConfidence: 0.65
           }
@@ -675,6 +671,22 @@ describe("config", () => {
         });
       }
     );
+  });
+
+  it.each(["enabled", "shadow"])("rejects removed controlled agent flag %s", (field) => {
+    expect(() =>
+      loadConfigFromEnv({
+        ...profilesEnv([
+          {
+            name: "helper",
+            webhookPath: "/api/line/webhook/helper",
+            channelSecret: "secret",
+            channelAccessToken: "token",
+            controlledAgent: { [field]: false }
+          }
+        ])
+      })
+    ).toThrow("controlled routing is always authoritative");
   });
 
   it("loads helper provider policy for remote API providers", () => {

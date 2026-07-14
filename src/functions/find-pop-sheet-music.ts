@@ -62,7 +62,7 @@ export interface FindPopSheetMusicOptions {
   sessionStore?: SessionStore;
   now?: () => Date;
   requestIdFactory?: () => string;
-  functionName?: Extract<FunctionName, "find_sheet_music" | "find_pop_sheet_music">;
+  functionName?: Extract<FunctionName, "find_sheet_music">;
   externalSearch?: SheetMusicExternalSearchOptions;
 }
 
@@ -111,7 +111,7 @@ export function createFindPopSheetMusicHandler(options: FindPopSheetMusicOptions
   const sessionStore =
     options.sessionStore ?? new InMemorySessionStore({ now, ttlMs: SELECTION_TTL_MS });
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
-  const functionName = options.functionName ?? "find_pop_sheet_music";
+  const functionName = options.functionName ?? "find_sheet_music";
 
   return async (rawArgs, context) => {
     const args = findPopSheetMusicArgumentsSchema.parse(rawArgs);
@@ -451,10 +451,7 @@ export function createFindPopSheetMusicTextMessageHandler(
 }
 
 function sheetMusicFunctionEnabled(enabledFunctions: FunctionName[]): boolean {
-  return (
-    enabledFunctions.includes("find_sheet_music") ||
-    enabledFunctions.includes("find_pop_sheet_music")
-  );
+  return enabledFunctions.includes("find_sheet_music");
 }
 
 async function findRememberedSheetMusic(
@@ -584,13 +581,7 @@ async function findCatalogSheetMusic(
     limit: MAX_CANDIDATES
   });
   return items
-    .filter((item) =>
-      catalogSourceAllowsRead(item.source, [
-        profileName,
-        "find_sheet_music",
-        "find_pop_sheet_music"
-      ])
-    )
+    .filter((item) => catalogSourceAllowsRead(item.source, [profileName, "find_sheet_music"]))
     .filter((item) => item.storageRef.provider === "graph")
     .filter((item) => extensions.some((extension) => catalogItemExtension(item) === extension));
 }

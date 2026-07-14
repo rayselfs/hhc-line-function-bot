@@ -128,7 +128,6 @@ function isEligibleDefinition(
 ): boolean {
   return (
     enabled.has(definition.name) &&
-    !definition.deprecated &&
     Boolean(definition.agentCapability) &&
     definition.allowedSources.includes(source)
   );

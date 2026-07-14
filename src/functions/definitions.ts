@@ -7,21 +7,12 @@ import {
   queryWikipediaArgumentsSchema,
   queryScheduleArgumentsSchema,
   queryKnowledgeArgumentsSchema,
-  queryScheduleMemoryArgumentsSchema,
-  queryServiceScheduleArgumentsSchema,
   retrieveMemoryArgumentsSchema,
   saveMemoryArgumentsSchema,
   saveResourceArgumentsSchema,
-  saveScheduleArgumentsSchema,
-  saveScheduleMemoryArgumentsSchema
+  saveScheduleArgumentsSchema
 } from "../function-arguments.js";
-import type { AgentResourceType, FunctionName, JsonRecord } from "../types.js";
-
-export interface FunctionKeywordFallback {
-  keywords: string[];
-  stripWords: string[];
-  defaultArguments?: JsonRecord;
-}
+import type { AgentResourceType, FunctionName } from "../types.js";
 
 export type FunctionSideEffectLevel = "read" | "write" | "admin" | "destructive";
 export type FunctionAllowedSource = "user" | "group";
@@ -30,14 +21,6 @@ export type FunctionRequiredSlotMissingWhen = "blank";
 export interface FunctionGenericRequest {
   phrases: string[];
   clearArguments?: string[];
-}
-
-export interface FunctionLegacyRecoveryPolicy {
-  systemRoute?: {
-    requiredAny: string[];
-    evidenceAny: string[];
-  };
-  continuation?: boolean;
 }
 
 export interface FunctionRequiredSlot {
@@ -119,46 +102,7 @@ export interface FunctionDefinition {
     command: string;
   };
   helpText: string;
-  deprecated?: boolean;
-  keywordFallback?: FunctionKeywordFallback;
-  continuation?: FunctionContinuationPolicy;
-  legacyRecovery?: FunctionLegacyRecoveryPolicy;
 }
-
-export interface FunctionContinuationPolicy {
-  carryArguments: string[];
-  exclusiveGroups?: string[][];
-}
-
-const commonStripWords = ["小哈", "請", "幫我", "幫忙", "查詢", "查", "找", "搜尋"];
-const legacyScheduleSystemRouteRecovery = {
-  requiredAny: ["服事", "聚會"],
-  evidenceAny: [
-    "下一場",
-    "下場",
-    "最近一場",
-    "下一次",
-    "下次",
-    "這週",
-    "這周",
-    "本週",
-    "本周",
-    "这周",
-    "这週",
-    "今天",
-    "明天",
-    "後天",
-    "后天",
-    "主日",
-    "晨更",
-    "門訓",
-    "國度禱告",
-    "福音餐會",
-    "仙履奇緣",
-    "服事表",
-    "聚會服事"
-  ]
-};
 
 export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
   {
@@ -207,12 +151,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查投影片",
       command: "小哈 查投影片"
     },
-    helpText: "查教會投影片，找到後回 1 天有效下載連結。",
-    keywordFallback: {
-      keywords: ["投影片", "ppt", "powerpoint", "slides"],
-      stripWords: [...commonStripWords, "投影片", "ppt", "powerpoint", "slides", "keynote", "odp"],
-      defaultArguments: { matchMode: "fuzzy" }
-    }
+    helpText: "查教會投影片，找到後回 1 天有效下載連結。"
   },
   {
     name: "query_schedule",
@@ -293,19 +232,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查服事表",
       command: "小哈 查服事表"
     },
-    helpText: "依日期、聚會或類型查服事表，例如下一場、主日、晨更或舉牌。",
-    keywordFallback: {
-      keywords: ["服事表", "服事"],
-      stripWords: [...commonStripWords]
-    },
-    continuation: {
-      carryArguments: ["date", "dateIntent", "specificDate", "meeting", "role", "scheduleType"],
-      exclusiveGroups: [["date", "dateIntent", "specificDate"]]
-    },
-    legacyRecovery: {
-      systemRoute: legacyScheduleSystemRouteRecovery,
-      continuation: true
-    }
+    helpText: "依日期、聚會或類型查服事表，例如下一場、主日、晨更或舉牌。"
   },
   {
     name: "query_knowledge",
@@ -361,14 +288,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       '- query_knowledge: answer from administrator-registered internal knowledge sources. Arguments: {"query":"full user question","sourceKey":"eligible source key optional","sourceId":"active-task opaque source id optional","documentId":"active-task document id optional","sectionKey":"active-task opaque section id optional","ordinal":"zero-based requested item optional","limit":number optional}. Never use it for service schedules when query_schedule applies.',
     argumentSchema: queryKnowledgeArgumentsSchema,
     quickReply: { label: "查知識", command: "小哈 查知識" },
-    helpText: "查詢管理員已加入的計畫、SOP與其他內部資訊。",
-    keywordFallback: {
-      keywords: ["查知識", "知識查詢", "SOP", "計畫"],
-      stripWords: [...commonStripWords, "查知識", "知識查詢", "知識", "SOP"]
-    },
-    continuation: {
-      carryArguments: []
-    }
+    helpText: "查詢管理員已加入的計畫、SOP與其他內部資訊。"
   },
   {
     name: "save_schedule",
@@ -418,66 +338,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "記服事表",
       command: "小哈 幫我記住服事表"
     },
-    helpText: "貼上文字版服事表，先整理預覽，確認後保存一年。",
-    keywordFallback: {
-      keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
-      stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]
-    }
-  },
-  {
-    name: "query_service_schedule",
-    deprecated: true,
-    displayName: "查服事表",
-    shortDescription: "幫你看近期聚會的服事安排。",
-    examples: ["小哈 下一場聚會服事表", "小哈 查主日服事"],
-    requires: ["notion"],
-    scope: "group_capable",
-    sideEffectLevel: "read",
-    allowedSources: ["user", "group"],
-    requiredSlots: [
-      {
-        name: "service_schedule_range",
-        argument: "query",
-        missingWhen: "blank",
-        genericRequest: {
-          phrases: [
-            "服事",
-            "服事表",
-            "服事人員",
-            "服事安排",
-            "聚會服事",
-            "聚會服事表",
-            "聚會服事人員"
-          ],
-          clearArguments: ["date", "dateIntent", "specificDate", "meeting", "role"]
-        },
-        prompt: "要查哪一場聚會或哪一天的服事？",
-        quickReplies: [
-          { label: "下一場", text: "下一場" },
-          { label: "本週", text: "本週" },
-          { label: "明天", text: "明天" },
-          { label: "主日", text: "主日服事" }
-        ]
-      }
-    ],
-    resourcePolicy: { kind: "none", remember: false, alias: false },
-    memoryPolicy: { kind: "none" },
-    clarificationPrompt: "要查哪一場聚會或哪一天的服事？",
-    description:
-      '- query_service_schedule: query church meeting service schedule or serving assignments. Arguments: {"query":"original user request text", "dateIntent":"today|tomorrow|day_after_tomorrow|this_week|next_meeting|specific_date|upcoming optional", "specificDate":"YYYY-MM-DD required for specific_date", "meeting":"text optional", "role":"text optional", "limit": number optional}. For requests like 下一場/最近一場, use dateIntent next_meeting.',
-    argumentSchema: queryServiceScheduleArgumentsSchema,
-    quickReply: {
-      label: "查服事表",
-      command: "小哈 查服事表"
-    },
-    helpText: "查 Notion 上的聚會服事安排，例如下一場、本週、明天或主日。",
-    keywordFallback: {
-      keywords: ["服事表", "服事"],
-      stripWords: [...commonStripWords]
-    },
-    legacyRecovery: {
-      systemRoute: legacyScheduleSystemRouteRecovery
-    }
+    helpText: "貼上文字版服事表，先整理預覽，確認後保存一年。"
   },
   {
     name: "find_sheet_music",
@@ -505,7 +366,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         argument: "query",
         missingWhen: "blank",
         genericRequest: {
-          phrases: ["歌譜", "樂譜", "流行歌譜", "詩歌歌譜", "sheet music", "score"]
+          phrases: ["歌譜", "樂譜", "查譜", "流行歌譜", "詩歌歌譜", "sheet music", "score"]
         },
         prompt: "請告訴我要查哪一首歌的歌譜。"
       }
@@ -525,119 +386,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查歌譜",
       command: "小哈 查歌譜"
     },
-    helpText: "查詢已設定的流行歌譜或詩歌歌譜；本地找不到時可詢問是否上網找公開結果。",
-    keywordFallback: {
-      keywords: ["歌譜", "樂譜", "流行歌譜", "詩歌歌譜", "sheet music", "score"],
-      stripWords: [
-        ...commonStripWords,
-        "歌譜",
-        "樂譜",
-        "流行歌譜",
-        "詩歌歌譜",
-        "sheet music",
-        "score",
-        "pdf",
-        "jpg",
-        "jpeg",
-        "png",
-        "image"
-      ],
-      defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
-    }
-  },
-  {
-    name: "find_pop_sheet_music",
-    deprecated: true,
-    displayName: "查流行歌譜",
-    shortDescription: "協助查找流行歌曲樂譜，適合同工臨時找譜使用。",
-    examples: ["小哈 查流行歌譜 Yesterday", "小哈 幫我找 A TIME FOR US 的樂譜"],
-    requires: ["graph", "cache"],
-    scope: "group_capable",
-    sideEffectLevel: "read",
-    allowedSources: ["user", "group"],
-    requiredSlots: [
-      {
-        name: "query",
-        argument: "query",
-        missingWhen: "blank",
-        genericRequest: {
-          phrases: ["譜", "流行歌譜", "流行歌曲樂譜", "歌譜", "樂譜", "sheet music", "score"]
-        },
-        prompt: "要查哪一首流行歌曲樂譜？請直接回覆歌名。"
-      }
-    ],
-    resourcePolicy: {
-      kind: "graph_file",
-      resourceTypes: ["sheet_music"],
-      remember: true,
-      alias: true
-    },
-    memoryPolicy: { kind: "resource_metadata" },
-    clarificationPrompt: "要查哪一首流行歌曲樂譜？請直接回覆歌名。",
-    description:
-      '- find_pop_sheet_music: find pop song sheet music PDF/image files by title or artist. Arguments: {"query":"song title keyword", "artist":"artist optional", "fileType":"pdf|image|any optional", "matchMode":"fuzzy|exact optional"}. Use this only for 流行歌譜, 流行歌曲樂譜, 樂譜, or sheet music requests.',
-    argumentSchema: findPopSheetMusicArgumentsSchema,
-    quickReply: {
-      label: "查流行歌譜",
-      command: "小哈 查流行歌譜"
-    },
-    helpText: "查 OneDrive 裡的流行歌曲樂譜 PDF 或圖片，找到後回 1 天有效下載連結。",
-    keywordFallback: {
-      keywords: ["流行歌譜", "流行歌曲樂譜", "樂譜", "歌譜", "sheet music"],
-      stripWords: [
-        ...commonStripWords,
-        "流行歌譜",
-        "流行歌曲樂譜",
-        "流行歌曲",
-        "樂譜",
-        "歌譜",
-        "sheet music",
-        "pdf",
-        "jpg",
-        "jpeg",
-        "png",
-        "圖片",
-        "image"
-      ],
-      defaultArguments: { fileType: "pdf", matchMode: "fuzzy" }
-    }
-  },
-  {
-    name: "save_schedule_memory",
-    deprecated: true,
-    displayName: "記服事表",
-    shortDescription: "把文字版服事表整理成可查詢的短期記憶。",
-    examples: ["小哈幫我記住這份晨更服事表：七/10五黃弘家族2"],
-    requires: ["memory", "session"],
-    scope: "group_capable",
-    sideEffectLevel: "write",
-    allowedSources: ["user", "group"],
-    requiredSlots: [
-      {
-        name: "content",
-        argument: "content",
-        missingWhen: "blank",
-        genericRequest: {
-          phrases: ["服事表", "記住服事表", "保存服事表", "儲存服事表"]
-        },
-        prompt: "請貼上要記住的服事表文字內容。"
-      }
-    ],
-    resourcePolicy: { kind: "none", remember: false, alias: false },
-    memoryPolicy: { kind: "explicit_text" },
-    clarificationPrompt: "請貼上要記住的服事表文字內容。",
-    description:
-      '- save_schedule_memory: save one canonical structured text-only service schedule such as 晨更家族服事表 or 為耶穌舉牌服事表. Arguments: {"content":"full pasted schedule text", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "title":"optional", "visibility":"private|group optional", "confirm": boolean optional}. Preview first unless confirm is true. Do not use for images or duplicate text memories.',
-    argumentSchema: saveScheduleMemoryArgumentsSchema,
-    quickReply: {
-      label: "記服事表",
-      command: "小哈 幫我記住服事表"
-    },
-    helpText: "貼上文字版服事表，先整理預覽，確認後保存一年。",
-    keywordFallback: {
-      keywords: ["記住服事表", "保存服事表", "儲存服事表", "記住晨更", "記住舉牌"],
-      stripWords: [...commonStripWords, "記住", "保存", "儲存", "服事表"]
-    }
+    helpText: "查詢已設定的流行歌譜或詩歌歌譜；本地找不到時可詢問是否上網找公開結果。"
   },
   {
     name: "find_resource",
@@ -680,49 +429,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查教會資料",
       command: "小哈 查教會資料"
     },
-    helpText: "查詢小哈資料庫或其他已授權的泛用教會資料。",
-    keywordFallback: {
-      keywords: ["教會資料", "小哈資料庫", "文件", "音檔"],
-      stripWords: [...commonStripWords, "教會資料", "小哈資料庫", "文件", "音檔"],
-      defaultArguments: {}
-    }
-  },
-  {
-    name: "query_schedule_memory",
-    deprecated: true,
-    displayName: "查記住的服事",
-    shortDescription: "查詢已記住的文字版服事表，不混用既有影視團隊服事表。",
-    examples: ["小哈查7/19舉牌", "小哈查7/17晨更家族服事"],
-    requires: ["memory"],
-    scope: "group_capable",
-    sideEffectLevel: "read",
-    allowedSources: ["user", "group"],
-    requiredSlots: [
-      {
-        name: "query",
-        argument: "query",
-        missingWhen: "blank",
-        genericRequest: {
-          phrases: ["記住的服事", "保存的服事", "服事表"]
-        },
-        prompt: "請告訴我要查哪個已記住的服事，例如 7/19 舉牌。"
-      }
-    ],
-    resourcePolicy: { kind: "none", remember: false, alias: false },
-    memoryPolicy: { kind: "retrieve_text" },
-    clarificationPrompt: "請告訴我要查哪個已記住的服事，例如 7/19 舉牌。",
-    description:
-      '- query_schedule_memory: query structured saved schedule memories. Arguments: {"query":"date/type/topic", "scheduleType":"morning_prayer_family|street_sign_service|custom_service_schedule optional", "date":"YYYY-MM-DD optional", "meeting":"optional", "limit": number optional}. Use this for saved 晨更家族 or 舉牌 schedules, not the media team service schedule.',
-    argumentSchema: queryScheduleMemoryArgumentsSchema,
-    quickReply: {
-      label: "查記住的服事",
-      command: "小哈 查記住的服事"
-    },
-    helpText: "查已保存的文字版服事表，例如晨更家族或為耶穌舉牌。",
-    keywordFallback: {
-      keywords: ["查舉牌", "查晨更家族", "查記住的服事", "查保存的服事"],
-      stripWords: [...commonStripWords, "查", "找", "看", "記住的", "保存的", "服事表"]
-    }
+    helpText: "查詢小哈資料庫或其他已授權的泛用教會資料。"
   },
   {
     name: "query_wikipedia",
@@ -765,11 +472,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查維基百科",
       command: "小哈 查維基百科"
     },
-    helpText: "查維基百科條目並整理重點。",
-    keywordFallback: {
-      keywords: ["維基百科", "wiki", "wikipedia"],
-      stripWords: [...commonStripWords, "維基百科", "wiki", "wikipedia", "查", "查詢", "幫我"]
-    }
+    helpText: "查維基百科條目並整理重點。"
   },
   {
     name: "save_memory",
@@ -808,11 +511,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "記住資訊",
       command: "小哈幫我記住："
     },
-    helpText: "保存你明確交代小哈記住的文字資訊，預設只保留一段時間。",
-    keywordFallback: {
-      keywords: ["幫我記住", "記住這個", "幫我保存", "幫我儲存"],
-      stripWords: [...commonStripWords, "幫我記住", "記住這個", "幫我保存", "幫我儲存"]
-    }
+    helpText: "保存你明確交代小哈記住的文字資訊，預設只保留一段時間。"
   },
   {
     name: "save_resource",
@@ -861,11 +560,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "保存連結",
       command: "小哈幫我保存投影片連結："
     },
-    helpText: "保存明確提供的投影片或歌譜 HTTPS 連結；預設私人，需確認後才寫入。",
-    keywordFallback: {
-      keywords: ["保存投影片", "儲存投影片", "記住投影片", "保存歌譜", "儲存歌譜", "記住歌譜"],
-      stripWords: [...commonStripWords, "保存", "儲存", "記住", "投影片", "歌譜", "樂譜"]
-    }
+    helpText: "保存明確提供的投影片或歌譜 HTTPS 連結；預設私人，需確認後才寫入。"
   },
   {
     name: "retrieve_memory",
@@ -908,18 +603,7 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
       label: "查記憶",
       command: "小哈查我記住的"
     },
-    helpText: "查詢先前明確保存的文字資訊。",
-    keywordFallback: {
-      keywords: ["查我記住", "查我保存", "查我儲存", "我記住的", "小哈記得"],
-      stripWords: [
-        ...commonStripWords,
-        "查我記住的",
-        "查我保存的",
-        "查我儲存的",
-        "我記住的",
-        "小哈記得"
-      ]
-    }
+    helpText: "查詢先前明確保存的文字資訊。"
   }
 ];
 
@@ -934,7 +618,7 @@ export function getFunctionDefinitions(names: FunctionName[]): FunctionDefinitio
 }
 
 export function isGrantableFunctionName(name: FunctionName): boolean {
-  return !getFunctionDefinition(name)?.deprecated;
+  return Boolean(getFunctionDefinition(name));
 }
 
 export function isFunctionGrantableForPrincipal(
@@ -943,14 +627,10 @@ export function isFunctionGrantableForPrincipal(
 ): boolean {
   const definition = getFunctionDefinition(name);
   return Boolean(
-    definition &&
-    !definition.deprecated &&
-    (definition.grantPolicy?.principals ?? ["user", "group"]).includes(principal)
+    definition && (definition.grantPolicy?.principals ?? ["user", "group"]).includes(principal)
   );
 }
 
 export function userFacingFunctionNames(): FunctionName[] {
-  return FUNCTION_DEFINITIONS.filter((definition) => !definition.deprecated).map(
-    (definition) => definition.name
-  );
+  return FUNCTION_DEFINITIONS.map((definition) => definition.name);
 }

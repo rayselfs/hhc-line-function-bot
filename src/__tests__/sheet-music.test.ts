@@ -28,7 +28,7 @@ function profile(): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["find_pop_sheet_music"]
+    enabledFunctions: ["find_sheet_music"]
   };
 }
 
@@ -51,7 +51,7 @@ function personalizedHandlerContext(): FunctionHandlerContext {
   };
 }
 
-describe("find_pop_sheet_music", () => {
+describe("find_sheet_music", () => {
   it("uses catalog results before crawling the sheet music folder", async () => {
     const catalog = new InMemoryCatalogStore();
     const source = await catalog.upsertSource({
@@ -541,7 +541,7 @@ describe("find_pop_sheet_music", () => {
       now: () => now
     });
     const context = handlerContext();
-    context.profile.enabledFunctions = ["find_pop_sheet_music", "save_resource"];
+    context.profile.enabledFunctions = ["find_sheet_music", "save_resource"];
 
     await expect(textHandler.handle({ text: "1" }, context)).resolves.toMatchObject({
       replyText: expect.stringContaining("流行歌譜還是詩歌歌譜")

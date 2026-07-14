@@ -29,7 +29,7 @@ function profile(): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["find_ppt_slides", "query_service_schedule"]
+    enabledFunctions: ["find_ppt_slides", "query_schedule"]
   };
 }
 
@@ -579,7 +579,7 @@ describe("find_ppt_slides", () => {
     });
     const disabledProfile: BotProfileConfig = {
       ...profile(),
-      enabledFunctions: ["query_service_schedule"]
+      enabledFunctions: ["query_schedule"]
     };
 
     const result = await handlePostback(
@@ -673,7 +673,7 @@ describe("find_ppt_slides", () => {
   });
 });
 
-describe("query_service_schedule", () => {
+describe("query_schedule", () => {
   it("softly personalizes generic service schedule clarification", async () => {
     const now = new Date("2026-07-04T10:00:00.000Z");
     const handler = createQueryServiceScheduleHandler({

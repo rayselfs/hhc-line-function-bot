@@ -82,10 +82,10 @@ Expected values are `enabled=true`, `appId=hhc-line-function-bot`,
 
 The line bot does not expose LLM auth callback routes. Public gateway routing should forward only the canonical webhook path for each profile.
 
-## Router Evals
+## Controlled Agent Evals
 
-- `pnpm eval:router` is deterministic and offline. It replays the function-module corpus through conservative keyword fallback.
-- `pnpm eval:router:ollama` is manual and requires a reachable Ollama model. Do not run it in CI/CD unless the pipeline has an intentional model endpoint.
+- `pnpm eval:agent` is deterministic and offline. It exercises bounded candidates, planner proposals, plan validation, active tasks, and fail-closed recovery.
+- `pnpm eval:agent:live` is manual and uses the configured DeepSeek-primary/Ollama-fallback lane. Do not run it in CI/CD unless the pipeline has intentional model endpoints and secrets.
 
 ## Dependency Checks
 

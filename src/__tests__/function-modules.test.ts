@@ -25,7 +25,9 @@ describe("function modules", () => {
       expect(module.definition.displayName, module.name).toBeTruthy();
       expect(module.definition.shortDescription, module.name).toBeTruthy();
       expect(module.definition.argumentSchema, module.name).toBeTruthy();
-      expect(module.definition.keywordFallback, module.name).toBeTruthy();
+      if (module.definition.sideEffectLevel === "read") {
+        expect(module.definition.agentCapability, module.name).toBeTruthy();
+      }
       expect(module.routerEvalCases.length, module.name).toBeGreaterThanOrEqual(
         requiredEvalKinds.length
       );

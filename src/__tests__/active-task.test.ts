@@ -529,23 +529,10 @@ describe("structured result active tasks", () => {
     });
 
     await store.recordActiveTask({ scope, task: previousTask, ttlMs: 60_000 });
-    await store.recordFunctionContext({
-      scope,
-      functionName: "query_schedule",
-      arguments: { date: "2026-07-14" },
-      ttlMs: 60_000
-    });
-
-    expect(Array.from(records.keys())).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(":active-task-v1:"),
-        expect.stringContaining(":function-continuation:")
-      ])
-    );
+    expect(Array.from(records.keys())).toEqual([expect.stringContaining(":active-task-v1:")]);
     await expect(store.activeTask(scope)).resolves.toEqual(previousTask);
 
     await store.clearActiveTask(scope);
     await expect(store.activeTask(scope)).resolves.toBeUndefined();
-    await expect(store.functionContext(scope)).resolves.toBeDefined();
   });
 });

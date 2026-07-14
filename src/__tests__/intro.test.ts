@@ -25,7 +25,7 @@ function profile(enabledFunctions: BotProfileConfig["enabledFunctions"]): BotPro
 describe("intro replies", () => {
   it("introduces Xiaoha without exposing the internal function catalog", () => {
     const result = createIntroReply(
-      profile(["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"]),
+      profile(["find_ppt_slides", "query_schedule", "find_sheet_music"]),
       "小哈"
     );
 
@@ -36,7 +36,7 @@ describe("intro replies", () => {
 
   it("answers capabilities questions without repeating the identity sentence", () => {
     const result = createIntroReply(
-      profile(["find_ppt_slides", "query_service_schedule"]),
+      profile(["find_ppt_slides", "query_schedule"]),
       "小哈你能做什麼"
     );
 
@@ -46,14 +46,14 @@ describe("intro replies", () => {
   });
 
   it("understands capabilities questions with address punctuation", () => {
-    const result = createIntroReply(profile(["query_service_schedule"]), "小哈，你能做什麼？");
+    const result = createIntroReply(profile(["query_schedule"]), "小哈，你能做什麼？");
 
     expect(result?.replyText).toContain("我可以幫你查資料");
     expect(result?.replyText).not.toContain("我是小哈");
   });
 
   it("can render the capabilities variant from router metadata", () => {
-    const result = createIntroReply(profile(["query_service_schedule"]), "你好", {
+    const result = createIntroReply(profile(["query_schedule"]), "你好", {
       force: true,
       variant: "capabilities"
     });
@@ -64,12 +64,12 @@ describe("intro replies", () => {
 
   it("keeps examples deterministic for available functions", () => {
     const result = createIntroReply(
-      profile(["find_ppt_slides", "query_service_schedule", "find_pop_sheet_music"]),
+      profile(["find_ppt_slides", "query_schedule", "find_sheet_music"]),
       "小哈你能做什麼"
     );
 
     expect(result?.replyText).toContain("小哈 查投影片 奇異恩典");
-    expect(result?.replyText).toContain("小哈 下一場聚會服事表");
-    expect(result?.replyText).toContain("小哈 查流行歌譜 Yesterday");
+    expect(result?.replyText).toContain("小哈 下一場服事表");
+    expect(result?.replyText).toContain("小哈 查歌譜 Yesterday");
   });
 });

@@ -5,8 +5,8 @@ import {
 } from "../function-arguments.js";
 import type { AgentMemoryStore } from "../agent/memory-store.js";
 import type {
-  FunctionExecutionResult,
   FunctionHandler,
+  FunctionHandlerContext,
   NotionDatabaseClient,
   QuickReplyItem
 } from "../types.js";
@@ -31,6 +31,8 @@ import {
   resolveScheduleResultRows,
   scheduleResultEnvelope
 } from "./schedule-result.js";
+import { selectFirstUpcomingOccurrence } from "../schedules/occurrence-policy.js";
+import type { MeetingWindowRule } from "../types.js";
 
 export interface QueryScheduleFunctionOptions {
   memoryStore: AgentMemoryStore;
@@ -54,7 +56,8 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
   const timeZone = readTimeZone(options.timeZone, "timeZone");
   const memoryHandler = createQueryScheduleMemoryHandler({
     memoryStore: options.memoryStore,
-    now
+    now,
+    timeZone
   });
   const serviceHandler =
     options.notion && options.databaseId && options.properties
@@ -90,8 +93,8 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
     const refinement = refineScheduleQuery(args, now(), timeZone);
     const roleFocus = extractScheduleRoleFocus({
       query: args.query,
-      hasContinuation: context.continuation?.functionName === "query_schedule",
-      availableRoles: continuationRoles(context.continuation?.arguments),
+      hasContinuation: context.activeTask?.capability === "query_schedule",
+      availableRoles: activeTaskRoles(context.activeTask),
       now: now(),
       timeZone
     });
@@ -102,10 +105,8 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
       query: roleFocus ? "" : refinement.residualQuery
     });
     const memorySpecific = Boolean(refinedArgs.scheduleType) || isMemorySpecificRequest(args.query);
-    const continuationSourceKeys = scheduleReadModelSourceKeys(
-      context.continuation?.resultReferences
-    );
-    const afterDate = scheduleAdvanceDate(args, context.continuation?.arguments);
+    const activeTaskSourceKeys = scheduleReadModelSourceKeys(context.activeTask?.anchors);
+    const afterDate = scheduleAdvanceDate(args, context.activeTask?.anchors);
     const results = [];
 
     if (memorySpecific || (!serviceHandler && !options.scheduleStore)) {
@@ -123,11 +124,12 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
             now: now(),
             timeZone,
             afterDate,
-            availableRoles: continuationRoles(context.continuation?.arguments),
+            availableRoles: activeTaskRoles(context.activeTask),
             sourceKeys:
               refinement.structuredArguments.scheduleCategory === "media_team"
                 ? [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS]
-                : continuationSourceKeys
+                : activeTaskSourceKeys,
+            meetingWindows: context.profile.schedulePolicy?.meetingWindows
           })
         : undefined;
       if (readModel && !isNoScheduleResult(readModel.replyText)) {
@@ -171,47 +173,22 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
     return {
       ok: true,
       replyText: agentResult.replyText,
-      agentResult,
-      continuation: aggregateScheduleContinuation(agentResult)
+      agentResult
     };
   };
 }
 
-function aggregateScheduleContinuation(
-  result: NonNullable<FunctionExecutionResult["agentResult"]>
-): FunctionExecutionResult["continuation"] | undefined {
-  const date = result.anchors?.date;
-  const meeting = result.anchors?.meeting;
-  if (typeof date !== "string" || typeof meeting !== "string") return undefined;
-  const availableRoles = Array.from(
-    new Set(
-      (result.entities ?? [])
-        .filter((entity) => entity.type === "role")
-        .map((entity) => entity.label)
-    )
-  );
-  return {
-    arguments: { date, meeting, availableRoles },
-    resultReferences: { kind: "schedule_aggregate" }
-  };
-}
-
-function continuationRoles(arguments_: unknown): string[] | undefined {
-  if (!arguments_ || typeof arguments_ !== "object") return undefined;
-  const roles = (arguments_ as Record<string, unknown>).availableRoles;
-  return Array.isArray(roles) && roles.every((role) => typeof role === "string")
-    ? roles
-    : undefined;
+function activeTaskRoles(activeTask: FunctionHandlerContext["activeTask"]): string[] | undefined {
+  const roles = activeTask?.entities
+    .filter((entity) => entity.type === "role")
+    .map((entity) => entity.label);
+  return roles?.length ? roles : undefined;
 }
 
 function scheduleReadModelSourceKeys(references: unknown): string[] | undefined {
   if (!references || typeof references !== "object") return undefined;
   const record = references as Record<string, unknown>;
-  if (
-    (record.kind !== "schedule_read_model" && record.kind !== "notion_schedule") ||
-    !Array.isArray(record.sourceKeys)
-  )
-    return undefined;
+  if (!Array.isArray(record.sourceKeys)) return undefined;
   const sourceKeys = record.sourceKeys.filter(
     (value): value is string => typeof value === "string"
   );
@@ -239,6 +216,7 @@ async function queryScheduleReadModel(input: {
   afterDate?: string;
   availableRoles?: string[];
   sourceKeys?: string[];
+  meetingWindows?: MeetingWindowRule[];
 }): Promise<Awaited<ReturnType<FunctionHandler>>> {
   const serviceArgs = input.args as QueryServiceScheduleArguments;
   const filters = deriveFilters(serviceArgs, input.now, input.timeZone);
@@ -258,7 +236,7 @@ async function queryScheduleReadModel(input: {
         : (filters.limit ?? 10)
   });
   const meetingRows = filters.nextMeetingOnly
-    ? limitToFirstReadModelGroup(rows, input.now, input.timeZone)
+    ? limitToFirstReadModelGroup(rows, input.now, input.timeZone, input.meetingWindows)
     : rows;
   const roleResolution = resolveScheduleResultRows(meetingRows, filters.role);
   const limitedRows =
@@ -287,7 +265,6 @@ async function queryScheduleReadModel(input: {
   );
   return {
     ok: true,
-    continuation: readModelContinuation(limitedRows, filters.role, input.availableRoles),
     replyText: agentResult.replyText,
     agentResult
   };
@@ -295,17 +272,17 @@ async function queryScheduleReadModel(input: {
 
 function scheduleAdvanceDate(
   args: QueryScheduleArguments,
-  continuationArguments: unknown
+  activeTaskAnchors: unknown
 ): string | undefined {
   if (
     args.dateIntent !== "next_meeting" ||
     !isScheduleAdvanceFollowUp(args.query) ||
-    !continuationArguments ||
-    typeof continuationArguments !== "object"
+    !activeTaskAnchors ||
+    typeof activeTaskAnchors !== "object"
   ) {
     return undefined;
   }
-  const record = continuationArguments as Record<string, unknown>;
+  const record = activeTaskAnchors as Record<string, unknown>;
   const date = typeof record.date === "string" ? record.date : record.specificDate;
   return typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(date) ? date : undefined;
 }
@@ -314,28 +291,6 @@ function nextDateKey(dateKey: string): string {
   const date = new Date(`${dateKey}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + 1);
   return date.toISOString().slice(0, 10);
-}
-
-function readModelContinuation(
-  rows: Array<{ sourceKey: string; serviceDate: string; meeting: string; role: string }>,
-  role?: string,
-  previousRoles: string[] = []
-): FunctionExecutionResult["continuation"] | undefined {
-  const sourceKeys = Array.from(new Set(rows.map((row) => row.sourceKey)));
-  const dates = Array.from(new Set(rows.map((row) => row.serviceDate)));
-  const meetings = Array.from(new Set(rows.map((row) => row.meeting)));
-  if (sourceKeys.length !== 1 || dates.length !== 1 || meetings.length !== 1) return undefined;
-  return {
-    arguments: {
-      date: dates[0],
-      meeting: meetings[0],
-      availableRoles: Array.from(
-        new Set([...previousRoles, ...rows.map((row) => row.role).filter(Boolean)])
-      ),
-      ...(role ? { role } : {})
-    },
-    resultReferences: { kind: "schedule_read_model", sourceKeys }
-  };
 }
 
 function scheduleItemToServiceRow(item: {
@@ -355,40 +310,8 @@ function scheduleItemToServiceRow(item: {
 function limitToFirstReadModelGroup<T extends { serviceDate: string; meeting: string }>(
   rows: T[],
   now: Date,
-  timeZone: string
+  timeZone: string,
+  meetingWindows?: MeetingWindowRule[]
 ): T[] {
-  const first = rows
-    .filter((row) => row.serviceDate >= toDateKey(now, timeZone))
-    .sort(compareScheduleGroup)[0];
-  if (!first) return [];
-  return rows.filter(
-    (row) => row.serviceDate === first.serviceDate && row.meeting === first.meeting
-  );
-}
-
-function compareScheduleGroup<T extends { serviceDate: string; meeting: string }>(
-  left: T,
-  right: T
-): number {
-  return (
-    left.serviceDate.localeCompare(right.serviceDate) ||
-    left.meeting.localeCompare(right.meeting, "zh-Hant")
-  );
-}
-
-function toDateKey(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  })
-    .formatToParts(date)
-    .reduce<Record<string, string>>((acc, part) => {
-      if (part.type !== "literal") {
-        acc[part.type] = part.value;
-      }
-      return acc;
-    }, {});
-  return `${parts.year}-${parts.month}-${parts.day}`;
+  return selectFirstUpcomingOccurrence({ rows, now, timeZone, meetingWindows });
 }

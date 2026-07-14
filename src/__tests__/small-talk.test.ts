@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createControlledSmallTalkReply,
   createSmallTalkReply,
-  smallTalkCategoryFromArguments
+  smallTalkCategoryFromArguments,
+  smallTalkCategoryFromText
 } from "../small-talk.js";
 import type { BotProfileConfig, TextGenerationProvider } from "../types.js";
 
@@ -19,7 +20,7 @@ function profile(overrides: Partial<BotProfileConfig> = {}): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["find_ppt_slides", "query_service_schedule"],
+    enabledFunctions: ["find_ppt_slides", "query_schedule"],
     adminDirectOnly: true,
     directAccessPolicy: "managed",
     groupAccessPolicy: "managed",
@@ -33,6 +34,7 @@ function profile(overrides: Partial<BotProfileConfig> = {}): BotProfileConfig {
 describe("small talk replies", () => {
   it("recognizes greeting as a first-class category", () => {
     expect(smallTalkCategoryFromArguments({ category: "greeting" })).toBe("greeting");
+    expect(smallTalkCategoryFromText("你好")).toBe("greeting");
     expect(createSmallTalkReply("greeting").replyText).toBeTruthy();
   });
 

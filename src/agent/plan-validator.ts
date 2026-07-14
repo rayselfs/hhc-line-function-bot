@@ -140,7 +140,7 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
   ) {
     return { disposition: "deny", reasonCode: "write_evidence_missing" };
   }
-  if (authoritativeDefinition.deprecated || !authoritativeDefinition.agentCapability) {
+  if (!authoritativeDefinition.agentCapability) {
     return { disposition: "deny", reasonCode: "capability_not_agent_enabled" };
   }
 
@@ -185,8 +185,15 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
     return { disposition: "clarify", capability, reasonCode: "low_confidence" };
   }
 
+  const materializedArguments = activeAuthority
+    ? materializeActiveTaskArguments(
+        rawArguments,
+        authoritativeDefinition.agentCapability.activeEvidence?.arguments,
+        liveTask
+      )
+    : rawArguments;
   const groundedArguments = groundPlanRecord({
-    record: rawArguments,
+    record: materializedArguments,
     text: input.text,
     rules: authoritativeDefinition.agentCapability.activeEvidence?.arguments,
     activeTask: activeAuthority ? liveTask : undefined,
@@ -226,6 +233,43 @@ export function validateAgentPlan(input: ValidateAgentPlanInput): ValidatedAgent
       : {}),
     reasonCode: executionReason(selected.reason, proposal.disposition)
   };
+}
+
+function materializeActiveTaskArguments(
+  current: Record<string, unknown>,
+  rules: Record<string, { anchorKeys?: string[]; referenceKeys?: string[] }> | undefined,
+  activeTask: ActiveTaskContext | undefined
+): JsonRecord {
+  const output: JsonRecord = { ...current };
+  if (!rules || !activeTask) return output;
+  const consumedStorage = new Set<string>();
+  for (const [argument, rule] of Object.entries(rules)) {
+    if (output[argument] !== undefined) continue;
+    const stored =
+      firstStoredValue(rule.anchorKeys, activeTask.anchors, "anchor", consumedStorage) ??
+      firstStoredValue(rule.referenceKeys, activeTask.references, "reference", consumedStorage);
+    if (stored) {
+      output[argument] = stored.value;
+      consumedStorage.add(stored.identity);
+    }
+  }
+  return output;
+}
+
+function firstStoredValue(
+  keys: string[] | undefined,
+  record: JsonRecord | undefined,
+  kind: "anchor" | "reference",
+  consumed: ReadonlySet<string>
+): { value: JsonRecord[string]; identity: string } | undefined {
+  if (!record) return undefined;
+  for (const key of keys ?? []) {
+    const identity = `${kind}:${key}`;
+    if (record[key] !== undefined && !consumed.has(identity)) {
+      return { value: record[key], identity };
+    }
+  }
+  return undefined;
 }
 
 function validateNoPlan(input: ValidateAgentPlanInput): ValidatedAgentPlan {
@@ -296,7 +340,6 @@ function deterministicClarificationRecovery(
   const definition = getFunctionDefinition(candidate.capability);
   if (
     !definition ||
-    definition.deprecated ||
     definition.sideEffectLevel !== "read" ||
     !definition.agentCapability ||
     !input.enabledFunctions.includes(candidate.capability) ||
@@ -419,7 +462,6 @@ function revalidatedExplicitCandidates(input: ValidateAgentPlanInput): FunctionN
     const definition = getFunctionDefinition(capability);
     return Boolean(
       definition &&
-      !definition.deprecated &&
       definition.agentCapability &&
       sourceAllowed(definition, input.sourceType) &&
       (definition.sideEffectLevel === "read"
@@ -436,7 +478,6 @@ function revalidatedDisabledExplicitCandidates(input: ValidateAgentPlanInput): F
   return FUNCTION_DEFINITIONS.filter(
     (definition) =>
       !enabled.has(definition.name) &&
-      !definition.deprecated &&
       Boolean(definition.agentCapability) &&
       sourceAllowed(definition, input.sourceType) &&
       (definition.sideEffectLevel === "read"

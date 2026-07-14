@@ -91,7 +91,7 @@ stages:
           - script: pnpm config:validate
             displayName: Validate production profile config
 
-          - script: pnpm eval:router
+          - script: pnpm eval:agent
             displayName: Router eval replay
 
           - script: pnpm build

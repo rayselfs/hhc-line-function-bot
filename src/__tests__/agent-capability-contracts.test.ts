@@ -3,12 +3,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { buildCapabilityCandidates } from "../agent/capability-candidates.js";
-import { guardSystemRouteWithFunctionIntent } from "../agent/function-intent-guard.js";
 import { FUNCTION_DEFINITIONS, getFunctionDefinition } from "../functions/definitions.js";
 import type { FunctionName } from "../types.js";
 
 const eligibleReadDefinitions = FUNCTION_DEFINITIONS.filter(
-  (definition) => definition.sideEffectLevel === "read" && !definition.deprecated
+  (definition) => definition.sideEffectLevel === "read"
 );
 
 describe("controlled read capability contracts", () => {
@@ -19,9 +18,6 @@ describe("controlled read capability contracts", () => {
       expect(definition.agentCapability?.candidateHints.length, definition.name).toBeGreaterThan(0);
       expect(typeof definition.argumentSchema.safeParse, definition.name).toBe("function");
       expect(Array.isArray(definition.agentCapability?.operations), definition.name).toBe(true);
-      if ((definition.agentCapability?.operations.length ?? 0) > 0) {
-        expect(definition.continuation, definition.name).toBeDefined();
-      }
     }
   });
 
@@ -83,66 +79,6 @@ describe("controlled read capability contracts", () => {
     ).toEqual([]);
   });
 
-  it("keeps broad read hints on the original small-talk route", () => {
-    expect(
-      guardSystemRouteWithFunctionIntent(
-        {
-          type: "respond",
-          action: "introduce_bot",
-          arguments: {},
-          provider: "ollama"
-        },
-        "流程",
-        ["query_knowledge"]
-      )
-    ).toEqual({
-      type: "respond",
-      action: "introduce_bot",
-      arguments: {},
-      provider: "ollama"
-    });
-
-    expect(
-      guardSystemRouteWithFunctionIntent(
-        {
-          type: "respond",
-          action: "small_talk",
-          arguments: {},
-          provider: "deepseek"
-        },
-        "文件",
-        ["find_resource"]
-      )
-    ).toEqual({
-      type: "respond",
-      action: "small_talk",
-      arguments: {},
-      provider: "deepseek"
-    });
-  });
-
-  it.each(["下一場服事表", "本週聚會服事"])(
-    "preserves the declarative legacy schedule recovery for %s",
-    (text) => {
-      expect(
-        guardSystemRouteWithFunctionIntent(
-          {
-            type: "respond",
-            action: "small_talk",
-            arguments: {},
-            provider: "ollama"
-          },
-          text,
-          ["query_schedule"]
-        )
-      ).toMatchObject({
-        type: "execute",
-        action: "query_schedule",
-        arguments: { query: text }
-      });
-    }
-  );
-
   it("declares every emitted result entity type in its capability contract", () => {
     const emittedTypes = new Map<FunctionName, string[]>([
       ["find_ppt_slides", ["resource"]],
@@ -165,19 +101,8 @@ describe("controlled read capability contracts", () => {
     }
   });
 
-  it("keeps top-level continuation plumbing free of function-specific read branches", () => {
-    const continuation = readFileSync(
-      new URL("../agent/function-continuation.ts", import.meta.url),
-      "utf8"
-    );
-    const intentGuard = readFileSync(
-      new URL("../agent/function-intent-guard.ts", import.meta.url),
-      "utf8"
-    );
+  it("keeps the controlled runtime free of function-specific read branches", () => {
     const runtime = readFileSync(new URL("../agent/turn-runtime.ts", import.meta.url), "utf8");
-
-    expect(continuation).not.toMatch(/schedule-query-refinement|query_schedule/u);
-    expect(intentGuard).not.toMatch(/schedule-query-refinement|query_schedule/u);
     expect(runtime).not.toMatch(/route\.action\s*===\s*["']query_(?:schedule|knowledge)["']/u);
   });
 });

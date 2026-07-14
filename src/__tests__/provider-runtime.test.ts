@@ -24,7 +24,7 @@ function profile(overrides: Partial<BotProfileConfig> = {}): BotProfileConfig {
     groupRequireWakeWord: true,
     wakeKeywords: ["小哈"],
     acceptMention: true,
-    enabledFunctions: ["query_service_schedule"],
+    enabledFunctions: ["query_schedule"],
     allowedProviders: ["ollama"],
     allowSubscriptionProviders: false,
     ...overrides
@@ -52,7 +52,7 @@ function config(
       deepseekModel: "deepseek-v4-flash",
       deepseekTimeoutMs: 8000,
       timeoutMs: 8000,
-      keywordFallbackEnabled: true,
+
       ...llmOverrides
     }
   };
@@ -147,7 +147,7 @@ describe("provider runtime", () => {
         profileName: "helper",
         prompt: "route",
         text: "查服事表",
-        enabledFunctions: ["query_service_schedule"]
+        enabledFunctions: ["query_schedule"]
       })
     ).resolves.toBe("ollama");
     expect(ollama.completeJson).toHaveBeenCalledOnce();
