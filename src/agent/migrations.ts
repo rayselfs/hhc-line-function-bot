@@ -169,14 +169,6 @@ const migrations = [
   `,
   `
   alter table agent_schedule_memories
-    drop constraint if exists agent_schedule_memories_visibility_check
-  `,
-  `
-  alter table agent_schedule_memories
-    add constraint agent_schedule_memories_visibility_check check (visibility in ('private', 'group'))
-  `,
-  `
-  alter table agent_schedule_memories
     drop constraint if exists agent_schedule_memories_scope_type_check
   `,
   `
