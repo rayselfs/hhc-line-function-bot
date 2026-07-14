@@ -96,6 +96,7 @@ export interface AgentTextTurnInput {
   event: LineEvent;
   requestId: string;
   requesterDisplayName?: string;
+  requesterIsAdmin?: boolean;
   engagement?: string;
   allowRouting?: boolean;
 }
@@ -150,7 +151,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         profile: input.profile,
         event: input.event,
         requestId: input.requestId,
-        requesterDisplayName: input.requesterDisplayName
+        requesterDisplayName: input.requesterDisplayName,
+        requesterIsAdmin: input.requesterIsAdmin
       };
 
       const preRoute = await options.agentRuntime?.handleTextBeforeRouting({
@@ -175,7 +177,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
         input.event,
         input.profile,
         options.textMessageHandlers,
-        input.requesterDisplayName
+        input.requesterDisplayName,
+        input.requesterIsAdmin
       );
       if (textMessageHandler) {
         const startedAt = Date.now();
@@ -185,7 +188,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
             profile: input.profile,
             event: input.event,
             requestId: input.requestId,
-            requesterDisplayName: input.requesterDisplayName
+            requesterDisplayName: input.requesterDisplayName,
+            requesterIsAdmin: input.requesterIsAdmin
           }
         );
         steps.push({
@@ -692,7 +696,7 @@ async function recordFunctionWriteAudit(
   await accessStore.recordAudit({
     profileName: context.profile.name,
     actorUserId,
-    action: `function.${definition.sideEffectLevel}.${args.confirm === true ? "commit" : "preview"}`,
+    action: `function.${definition.sideEffectLevel}.${result.writePhase ?? (args.confirm === true ? "commit" : "preview")}`,
     targetType: "function",
     targetId: action,
     metadata: { sourceType: context.event.source.type }
@@ -1144,14 +1148,17 @@ async function matchingTextMessageHandler(
   event: LineEvent,
   profile: BotProfileConfig,
   textMessageHandlers: TextMessageHandlerRegistry,
-  requesterDisplayName?: string
+  requesterDisplayName?: string,
+  requesterIsAdmin?: boolean
 ) {
   const text = event.message?.text;
   if (event.type !== "message" || event.message?.type !== "text" || !text) {
     return undefined;
   }
   for (const [name, handler] of Object.entries(textMessageHandlers)) {
-    if (await handler.matches({ text }, { profile, event, requesterDisplayName })) {
+    if (
+      await handler.matches({ text }, { profile, event, requesterDisplayName, requesterIsAdmin })
+    ) {
       return { name, handler };
     }
   }

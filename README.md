@@ -138,6 +138,7 @@ Function toggles are profile-scoped:
 - Direct users can use profile-global read functions plus DB-managed grants for the same `profileName/userId`.
 - Groups can use profile-global read functions plus DB-managed grants for the same `profileName/groupId` and grants for the requester `profileName/userId`.
 - Group grants are additive. To make a function group-only, remove it from `enabledFunctions` and grant it to selected groups.
+- `save_schedule` and `save_memory` are user-grant-only writes. Use `/function-user-grant`; group grants and group role capabilities cannot open them for every member.
 - Admin actions are not `enabledFunctions` and cannot be granted to groups. They are gated separately by admin identity, source policy, and audit rules.
 
 ## Routing
@@ -151,6 +152,8 @@ Provider access is profile-scoped. Internal helper profiles may explicitly list 
 Each profile can override lane policy with `providerPolicy`. The internal helper profile uses `deepseek -> ollama` for `function_routing`, `smart_talk`, and `general_agent`, while keeping `admin_routing` and `memory_routing` on Ollama.
 
 The helper profile enables the controlled agent with at most three candidates and a minimum planner confidence of `0.65`. Candidate generation is deterministic and considers only effective, enabled functions with a declarative `agentCapability` contract. Evidence can come from explicit current-message intent, declared argument patterns, a live requester-scoped active task, promoted dynamic-knowledge metadata, or a bounded read-only retrieval probe. No provider may invent a capability or expand the effective function set.
+
+Write capabilities use a narrower path: they enter the candidate set only from explicit, unnegated current-message intent after requester grants are resolved. Domain writes such as `save_schedule` suppress the generic `save_memory` fallback when both match. The validator grounds the payload in the current message, and the handler still requires requester-scoped preview and confirmation.
 
 DeepSeek is the primary `function_routing` planner and Ollama is the configured fallback. The model proposes only a disposition, one candidate capability, bounded arguments/references, and confidence; it does not execute tools. The server then revalidates the proposal against the candidate set, source policy, function toggle, side-effect policy, current-message evidence, active-task authority, required slots, argument schema, and the `0.65` threshold. Unsupported or ungrounded values are discarded, ambiguity becomes clarification, and disabled or unauthorized capabilities are denied. When providers are unavailable, an unambiguous explicit request may still use the deterministic definition contract; unresolved evidence fails closed to clarification rather than guessing.
 
@@ -264,8 +267,11 @@ The memory layer adds controlled memory without making the bot an unrestricted c
 - Recent-result recall is requester-scoped. In a group, another user cannot accidentally recall someone else's latest result.
 - Resource aliases are scope-scoped. A user can say `以後 X 就用這份` after a successful result, and the bot will try that alias before doing a folder search in the same group or direct chat.
 - Text memories are saved only when the user clearly asks the bot to remember, save, or store content. Normal group chatter is not saved.
+- The helper profile enables `retrieve_memory` for registered users and keeps `save_memory` admin/explicit-user-grant only. In a registered group, a granted requester may explicitly choose group sharing; otherwise the memory stays private to that requester in that group.
+- Text-memory previews state the private/group visibility and 30-day retention before confirmation. Direct-chat memories are always private, and group memories never cross into direct chat or another group.
 - Structured schedule memories are separate from plain text memories. They store a schedule header plus date-based entries, are shared across the helper profile, and expire after one year.
 - Saving another schedule of the same type and month replaces the previous canonical schedule after confirmation. Entry add, update, delete, and whole-schedule delete use the same preview-and-confirm flow.
+- A requester with a `save_schedule` user grant may replace a schedule or add an entry from direct chat or a registered group. Updating or deleting existing entries or whole schedules remains admin-only.
 - Queries such as `下次世緯家園服事是什麼時候？` and `下一次中平家族什麼時候舉牌？` search these shared entries. Identity-based `我下一次服事是什麼時候？` remains out of scope until LINE identity is bound to the church login system.
 - Structured schedule memory is text-only in this version. The bot should ask for pasted text instead of trying to store or parse schedule images.
 - Text memories currently expire after 30 days.

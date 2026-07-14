@@ -77,7 +77,7 @@ describe("production profile configuration deployment contract", () => {
     expect(pipeline).toContain("EMBEDDING_TIMEOUT_MS=30000");
     expect(pipeline).toContain("EMBEDDING_KEEP_ALIVE=1m");
     expect(helper?.enabledFunctions).toEqual(
-      expect.arrayContaining(["find_resource", "save_resource"])
+      expect.arrayContaining(["find_resource", "save_resource", "save_memory", "retrieve_memory"])
     );
     expect(helper?.allowedMessageTypes).toEqual(expect.arrayContaining(["text", "image", "file"]));
     expect(helper?.controlledAgent).toEqual({

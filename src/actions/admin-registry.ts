@@ -3,6 +3,7 @@ import type { RegistrationInviteCodeStore } from "../access/registration-invite-
 import { InMemoryConfirmationStore, type ConfirmationStore } from "./confirmation-store.js";
 import {
   getFunctionDefinition,
+  isFunctionGrantableForPrincipal,
   isGrantableFunctionName,
   userFacingFunctionNames
 } from "../functions/definitions.js";
@@ -202,6 +203,9 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       return { ok: true, replyText: parsed.replyText };
     }
     if (parsed.target.type === "user") {
+      if (!isFunctionGrantableForPrincipal(parsed.functionName, "user")) {
+        return { ok: true, replyText: `${parsed.functionName} 不支援使用者授權。` };
+      }
       await this.options.accessStore.addUserFunctionGrant({
         profileName: input.profile.name,
         userId: parsed.target.userId,
@@ -224,6 +228,12 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
           `user: ${parsed.target.userId}`,
           `function: ${parsed.functionName}`
         ].join("\n")
+      };
+    }
+    if (!isFunctionGrantableForPrincipal(parsed.functionName, "group")) {
+      return {
+        ok: true,
+        replyText: `${parsed.functionName} 只能開放給指定使用者。`
       };
     }
     await this.options.accessStore.addGroupFunctionGrant({
@@ -328,10 +338,9 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
       return { ok: true, replyText: "請提供 groupId 或 userId。" };
     }
     if (target.type === "user") {
-      const userGrants = await this.options.accessStore.listUserFunctionGrants(
-        input.profile.name,
-        target.userId
-      );
+      const userGrants = (
+        await this.options.accessStore.listUserFunctionGrants(input.profile.name, target.userId)
+      ).filter((name) => isFunctionGrantableForPrincipal(name, "user"));
       const profileDefaults = input.profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
       const effectiveFunctions = mergeFunctionNames(profileDefaults, userGrants);
       return {
@@ -346,10 +355,9 @@ class DefaultAdminActionRegistry implements AdminActionRegistry {
         ].join("\n")
       };
     }
-    const groupGrants = await this.options.accessStore.listGroupFunctionGrants(
-      input.profile.name,
-      target.groupId
-    );
+    const groupGrants = (
+      await this.options.accessStore.listGroupFunctionGrants(input.profile.name, target.groupId)
+    ).filter((name) => isFunctionGrantableForPrincipal(name, "group"));
     const profileDefaults = input.profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
     const effectiveFunctions = mergeFunctionNames(profileDefaults, groupGrants);
     return {

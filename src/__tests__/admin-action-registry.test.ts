@@ -230,6 +230,32 @@ describe("admin action registry", () => {
     );
   });
 
+  it.each(["save_schedule", "save_memory"])(
+    "rejects a group-wide grant for user-scoped write function %s",
+    async (functionName) => {
+      const accessStore = new InMemoryAccessStore();
+      const registry = createAdminActionRegistry({
+        accessStore,
+        registrationInviteCodeStore: new InMemoryRegistrationInviteCodeStore(),
+        registrationInviteCodeTtlMinutes: 60
+      });
+
+      const result = await registry.execute({
+        action: "function_scope_grant",
+        profile: profile(),
+        event: {
+          type: "message",
+          source: { type: "group", groupId: "Cmain", userId: "Uroot" }
+        },
+        arguments: { functionName }
+      });
+
+      expect(result.replyText).toContain("只能開放給指定使用者");
+      await expect(accessStore.listGroupFunctionGrants("helper", "Cmain")).resolves.toEqual([]);
+      expect(accessStore.audit).toEqual([]);
+    }
+  );
+
   it("confirms a stored admin action only once", async () => {
     const accessStore = new InMemoryAccessStore();
     const registrationInviteCodeStore = new InMemoryRegistrationInviteCodeStore({

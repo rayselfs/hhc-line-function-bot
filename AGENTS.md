@@ -51,7 +51,8 @@ The first-class functions are:
 - `query_knowledge`: query admin-registered, profile-shared Notion knowledge through PostgreSQL full-text plus pgvector retrieval and a grounded LLM answer; do not create travel/SOP-specific variants.
 - `save_schedule`: preview and manage profile-shared structured service schedules with one-year retention.
 - `save_resource`: controlled LINE image/file attachment intake with purpose, validation, ClamAV scanning, confirmation, OneDrive publication, catalog upsert, and audit. It is enabled on `helper`, but write-function policy keeps it admin/explicit-grant only.
-- Generic `save_memory` and `retrieve_memory` modules are not enabled on the helper production profile.
+- `save_memory`: explicit 30-day text memory with preview/confirmation. It is enabled on `helper`, but only admins or explicit user grants can write; a granted requester may explicitly create group-visible memory in a registered group.
+- `retrieve_memory`: query visible explicit text memories in the current LINE source. It is enabled as a profile-global read function on `helper`.
 - Intro/help behavior is not a normal function execution path; keep it friendly and do not expose implementation details such as OneDrive or Notion to ordinary users.
 - User functions, admin actions, and system actions are separate action kinds. Do not add management behavior to `enabledFunctions`.
 - Admin natural language is direct-chat only. It may route to selected admin actions, currently invite-code creation, after admin identity and source policy checks.
@@ -133,8 +134,10 @@ When adding or changing an admin action:
 - `profile.enabledFunctions` means profile-global functions for that profile only, not service-global functions.
 - Direct users receive profile-global read functions plus DB-managed `profileName/userId/functionName` grants.
 - Groups receive profile-global read functions plus DB-managed `profileName/groupId/functionName` grants and `profileName/userId/functionName` grants for the requester.
-- User and group grants are additive. To make a function group-only, remove it from `enabledFunctions` and grant it to selected groups with `/function-grant`.
-- Write functions such as explicit memory saves are admin-only by default even when present in `profile.enabledFunctions`; grant them to selected users with `/function-user-grant` or to selected groups with `/function-grant`.
+- User and group grants are additive when the function definition allows that principal type. To make a read function group-only, remove it from `enabledFunctions` and grant it to selected groups with `/function-grant`.
+- Write functions are admin-only by default even when present in `profile.enabledFunctions`. `save_schedule` and `save_memory` are user-grant-only; grant them with `/function-user-grant`. Do not open them through group grants or group role capabilities.
+- A `save_schedule` user grant permits schedule replacement and entry addition from direct chat or a registered group; update/delete operations remain admin-only.
+- A `save_memory` user grant permits private memory and explicitly confirmed group-visible memory in the current registered group. It never records ordinary group chat automatically.
 - Use `/function-grant <functionName> [groupId]`, `/function-revoke <functionName> [groupId]`, and `/function-scopes [groupId]` for group function scope management.
 - Use `/function-user-grant <functionName> <userId>`, `/function-user-revoke <functionName> <userId>`, and `/function-user-scopes <userId>` for user function scope management.
 - In a group, admins can omit `groupId` for those function-scope commands. In direct chat, admins must provide `groupId`.

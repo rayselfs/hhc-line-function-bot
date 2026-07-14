@@ -200,6 +200,19 @@ describe("function argument normalization", () => {
     ).toMatchObject({ content: "" });
   });
 
+  it("derives explicit text-memory visibility from the current message", () => {
+    expect(
+      normalizeFunctionArguments(
+        "save_memory",
+        { content: "集合時間是下午兩點半" },
+        { text: "小哈幫我記住集合時間是下午兩點半，群組共用" }
+      )
+    ).toMatchObject({
+      content: "集合時間是下午兩點半",
+      visibility: "group"
+    });
+  });
+
   it.each([
     "不要刪除 7/14 晨更",
     "不要保存 7/14 晨更",

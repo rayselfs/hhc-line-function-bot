@@ -201,6 +201,34 @@ describe("ControlledAgentRouter", () => {
     });
   });
 
+  it("keeps an explicit memory write controlled when the planner succeeds", async () => {
+    const propose = vi.fn<AgentPlanner["propose"]>().mockResolvedValue({
+      status: "proposed",
+      version: 1,
+      disposition: "execute",
+      capability: "save_memory",
+      arguments: { content: "集合時間是下午兩點半", visibility: "group" },
+      confidence: 0.96,
+      provider: "deepseek",
+      attempts: []
+    });
+
+    await expect(
+      createRouter({ propose }).resolve({
+        profileName: "helper",
+        text: "幫我記住集合時間是下午兩點半，群組共用",
+        enabledFunctions: ["save_memory"],
+        sourceType: "group",
+        maxCandidates: 3,
+        minPlannerConfidence: 0.65
+      })
+    ).resolves.toMatchObject({
+      disposition: "execute",
+      capability: "save_memory",
+      arguments: { content: "集合時間是下午兩點半", visibility: "group" }
+    });
+  });
+
   it("loads bounded dynamic knowledge metadata before planning", async () => {
     const list = vi.fn<DynamicKnowledgeMetadataProvider["list"]>().mockResolvedValue([
       {

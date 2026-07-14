@@ -353,16 +353,62 @@ describe("deterministic capability candidates", () => {
     ).toMatchObject({ capability: "query_knowledge", reason: "knowledge_metadata" });
   });
 
-  it("never returns a disabled or write capability", () => {
+  it("returns an enabled write capability only from explicit write intent", () => {
     expect(
       buildCapabilityCandidates({
-        text: "查服事並幫我保存服事表",
+        text: "幫我保存服事表：7/14 晨更音控是資恆",
+        enabledFunctions: ["save_schedule"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })
+    ).toEqual([
+      expect.objectContaining({ capability: "save_schedule", reason: "explicit_intent" })
+    ]);
+
+    expect(
+      buildCapabilityCandidates({
+        text: "這份服事表是 7/14 晨更音控資恆",
         enabledFunctions: ["save_schedule"],
         source: "group",
         knowledgeSources: [],
         maxCandidates: 3
       })
     ).toEqual([]);
+  });
+
+  it("routes explicit short-lived text memory writes without inferring them from hints", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "幫我記住集合時間是下午兩點半",
+        enabledFunctions: ["save_memory"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })
+    ).toEqual([expect.objectContaining({ capability: "save_memory", reason: "explicit_intent" })]);
+
+    expect(
+      buildCapabilityCandidates({
+        text: "集合時間是下午兩點半",
+        enabledFunctions: ["save_memory"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      })
+    ).toEqual([]);
+  });
+
+  it("prefers a domain write over generic text memory for a pasted service schedule", () => {
+    expect(
+      buildCapabilityCandidates({
+        text: "幫我記住這份晨更服事表：七/17五世緯家園",
+        enabledFunctions: ["save_schedule", "save_memory", "retrieve_memory"],
+        source: "group",
+        knowledgeSources: [],
+        maxCandidates: 3
+      }).map(({ capability }) => capability)
+    ).toEqual(["save_schedule"]);
   });
 
   it("recognizes positive and one-edit typo hints deterministically", () => {

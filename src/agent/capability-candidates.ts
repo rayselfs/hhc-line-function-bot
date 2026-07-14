@@ -59,6 +59,8 @@ const CANDIDATE_SOURCE_IS_REQUIRED: CandidateSourceIsRequired = true;
 
 interface RankedCandidate extends CapabilityCandidate {
   definitionOrder: number;
+  writeCandidate: boolean;
+  genericWriteFallback: boolean;
 }
 
 const REASON_SCORE: Record<CapabilityCandidateReason, number> = {
@@ -98,11 +100,22 @@ export function buildCapabilityCandidates(
       contract: cloneContract(definition.agentCapability!),
       reason,
       score: REASON_SCORE[reason],
-      definitionOrder
+      definitionOrder,
+      writeCandidate: definition.sideEffectLevel !== "read",
+      genericWriteFallback: definition.agentCapability?.genericWriteFallback === true
     });
   }
 
-  return ranked
+  const hasSpecificWrite = ranked.some(
+    ({ writeCandidate, genericWriteFallback }) => writeCandidate && !genericWriteFallback
+  );
+  const prioritized = hasSpecificWrite
+    ? ranked.filter(({ writeCandidate, genericWriteFallback }) =>
+        writeCandidate ? !genericWriteFallback : true
+      )
+    : ranked;
+
+  return prioritized
     .sort((left, right) => right.score - left.score || left.definitionOrder - right.definitionOrder)
     .slice(0, limit)
     .map(({ capability, contract, reason, score }) => ({ capability, contract, reason, score }));
@@ -115,7 +128,6 @@ function isEligibleDefinition(
 ): boolean {
   return (
     enabled.has(definition.name) &&
-    definition.sideEffectLevel === "read" &&
     !definition.deprecated &&
     Boolean(definition.agentCapability) &&
     definition.allowedSources.includes(source)
@@ -127,6 +139,11 @@ function strongestReason(
   input: BuildCapabilityCandidatesInput
 ): CapabilityCandidateReason | undefined {
   const contract = definition.agentCapability!;
+  if (definition.sideEffectLevel !== "read") {
+    return hasWriteIntent(input.text) && matchesAnyExact(input.text, contract.intents)
+      ? "explicit_intent"
+      : undefined;
+  }
   if (matchesAnyExact(input.text, contract.intents)) return "explicit_intent";
   if (isInterpersonalOrSmallTalkText(input.text)) return undefined;
   if (!hasWriteIntent(input.text) && hasDeclarativeArgumentEvidence(definition, input.text)) {

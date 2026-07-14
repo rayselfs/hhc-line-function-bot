@@ -82,9 +82,14 @@ export function createPendingFunctionTextMessageHandler(
         profile: context.profile,
         event: context.event,
         requestId: context.requestId,
-        requesterDisplayName: context.requesterDisplayName
+        requesterDisplayName: context.requesterDisplayName,
+        requesterIsAdmin: context.requesterIsAdmin
       });
-      return { ...result, executedAction: pending.action };
+      return {
+        ...result,
+        executedAction: pending.action,
+        writePhase: normalizedArguments.confirm === true ? "commit" : "preview"
+      };
     }
   };
 }

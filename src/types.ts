@@ -592,6 +592,7 @@ export interface FunctionExecutionResult {
   ok: boolean;
   replyText: string;
   executedAction?: FunctionName;
+  writePhase?: "preview" | "commit";
   quickReplies?: QuickReplyItem[];
   agentResult?: AgentResultEnvelope;
   agentResource?: AgentResourceReference;
@@ -617,6 +618,7 @@ export interface FunctionHandlerContext {
   event: LineEvent;
   requestId?: string;
   requesterDisplayName?: string;
+  requesterIsAdmin?: boolean;
   continuation?: FunctionContinuationState;
 }
 
@@ -675,6 +677,7 @@ export interface TextMessageContext {
   event: LineEvent;
   requestId?: string;
   requesterDisplayName?: string;
+  requesterIsAdmin?: boolean;
 }
 
 export interface TextMessageHandler {

@@ -960,4 +960,66 @@ describe("deterministic agent plan validation", () => {
     expect(hasExplicitWriteEvidence("幫我保存 7/14 晨更", { content: "7/14 晨更" })).toBe(true);
     expect(hasExplicitWriteEvidence("看看 7/14 晨更", { content: "7/14 晨更" })).toBe(false);
   });
+
+  it("accepts a candidate-confined multi-line schedule write grounded in the current message", () => {
+    const text = "幫我記住服事表\n7/14 晨更\n音控：資恆\n導播：莘凌";
+
+    expect(
+      validateAgentPlan(
+        input({
+          text,
+          enabledFunctions: ["save_schedule"],
+          candidates: [{ capability: "save_schedule", reason: "explicit_intent", score: 400 }],
+          proposal: {
+            disposition: "execute",
+            capability: "save_schedule",
+            arguments: { content: "7/14 晨更\n音控：資恆\n導播：莘凌", operation: "replace" },
+            confidence: 0.95
+          }
+        })
+      )
+    ).toMatchObject({
+      disposition: "execute",
+      capability: "save_schedule",
+      arguments: { content: "7/14 晨更\n音控：資恆\n導播：莘凌" }
+    });
+  });
+
+  it("accepts explicit text-memory content but rejects model-invented content", () => {
+    const candidate = [
+      { capability: "save_memory" as const, reason: "explicit_intent" as const, score: 400 }
+    ];
+
+    expect(
+      validateAgentPlan(
+        input({
+          text: "幫我記住集合時間是下午兩點半",
+          enabledFunctions: ["save_memory"],
+          candidates: candidate,
+          proposal: {
+            disposition: "execute",
+            capability: "save_memory",
+            arguments: { content: "集合時間是下午兩點半" },
+            confidence: 0.95
+          }
+        })
+      )
+    ).toMatchObject({ disposition: "execute", capability: "save_memory" });
+
+    expect(
+      validateAgentPlan(
+        input({
+          text: "幫我記住集合時間是下午兩點半",
+          enabledFunctions: ["save_memory"],
+          candidates: candidate,
+          proposal: {
+            disposition: "execute",
+            capability: "save_memory",
+            arguments: { content: "集合時間是下午三點" },
+            confidence: 0.99
+          }
+        })
+      )
+    ).toEqual({ disposition: "deny", reasonCode: "write_evidence_missing" });
+  });
 });

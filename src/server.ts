@@ -36,6 +36,7 @@ import {
 import { createLineSdkIdentityClient, createLineSdkReplyClient } from "./clients/line.js";
 import {
   getFunctionDefinition,
+  isFunctionGrantableForPrincipal,
   isGrantableFunctionName,
   userFacingFunctionNames
 } from "./functions/definitions.js";
@@ -407,7 +408,13 @@ async function handleWebhook(
   const lineIdentity = createIdentityClient(profile);
   for (const event of allowedEvents) {
     const requestId = requestIdFactory();
-    const effectiveProfile = await resolveEffectiveProfile(profile, event, accessStore);
+    const requesterIsAdmin = await isAdminUser(profile, event.source.userId, accessStore);
+    const effectiveProfile = await resolveEffectiveProfile(
+      profile,
+      event,
+      accessStore,
+      requesterIsAdmin
+    );
     const requesterDisplayName = await resolveRequesterDisplayName(lineIdentity, event);
 
     if (event.type === "postback") {
@@ -695,6 +702,7 @@ async function handleWebhook(
       event,
       requestId,
       requesterDisplayName,
+      requesterIsAdmin,
       engagement: conversationWindowActive ? "conversation_window" : groupEngagement?.kind,
       allowRouting: routingAllowed
     });
@@ -773,9 +781,15 @@ async function handleAttachmentMessage(input: {
 async function resolveEffectiveProfile(
   profile: BotProfileConfig,
   event: LineEvent,
-  accessStore: AccessStore
+  accessStore: AccessStore,
+  requesterIsAdmin?: boolean
 ): Promise<BotProfileConfig> {
-  const enabledFunctions = await resolveEffectiveFunctions(profile, event, accessStore);
+  const enabledFunctions = await resolveEffectiveFunctions(
+    profile,
+    event,
+    accessStore,
+    requesterIsAdmin
+  );
   if (enabledFunctions.length === profile.enabledFunctions.length) {
     const unchanged = enabledFunctions.every(
       (name, index) => name === profile.enabledFunctions[index]
@@ -790,20 +804,23 @@ async function resolveEffectiveProfile(
 async function resolveEffectiveFunctions(
   profile: BotProfileConfig,
   event: LineEvent,
-  accessStore: AccessStore
+  accessStore: AccessStore,
+  requesterIsAdmin?: boolean
 ): Promise<FunctionName[]> {
-  const isAdmin = await isAdminUser(profile, event.source.userId, accessStore);
+  const isAdmin =
+    requesterIsAdmin ?? (await isAdminUser(profile, event.source.userId, accessStore));
   const profileFunctions = isAdmin
     ? profile.enabledFunctions
     : profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
   const userGrants = event.source.userId
     ? mapLegacyFunctionNames(
         await accessStore.listUserFunctionGrants(profile.name, event.source.userId)
-      )
+      ).filter((name) => isFunctionGrantableForPrincipal(name, "user"))
     : [];
   const userRoleFunctions = event.source.userId
     ? capabilitiesToFunctionNames(
-        await accessStore.listPrincipalCapabilities(profile.name, "user", event.source.userId)
+        await accessStore.listPrincipalCapabilities(profile.name, "user", event.source.userId),
+        "user"
       )
     : [];
   if (event.source.type !== "group" || !event.source.groupId) {
@@ -811,9 +828,10 @@ async function resolveEffectiveFunctions(
   }
   const groupGrants = mapLegacyFunctionNames(
     await accessStore.listGroupFunctionGrants(profile.name, event.source.groupId)
-  );
+  ).filter((name) => isFunctionGrantableForPrincipal(name, "group"));
   const groupRoleFunctions = capabilitiesToFunctionNames(
-    await accessStore.listPrincipalCapabilities(profile.name, "group", event.source.groupId)
+    await accessStore.listPrincipalCapabilities(profile.name, "group", event.source.groupId),
+    "group"
   );
   return mergeFunctionNames(
     mergeFunctionNames(mergeFunctionNames(profileFunctions, groupGrants), groupRoleFunctions),
@@ -821,12 +839,17 @@ async function resolveEffectiveFunctions(
   );
 }
 
-function capabilitiesToFunctionNames(capabilities: string[]): FunctionName[] {
+function capabilitiesToFunctionNames(
+  capabilities: string[],
+  principal: "user" | "group"
+): FunctionName[] {
   return capabilities
     .map((capability) => capability.match(/^function:([^:]+):execute$/u)?.[1])
     .filter(
       (name): name is FunctionName =>
-        typeof name === "string" && isGrantableFunctionName(name as FunctionName)
+        typeof name === "string" &&
+        isGrantableFunctionName(name as FunctionName) &&
+        isFunctionGrantableForPrincipal(name as FunctionName, principal)
     );
 }
 
@@ -872,6 +895,7 @@ async function handleAgentTextTurnWithLongJob(input: {
   event: LineEvent;
   requestId: string;
   requesterDisplayName?: string;
+  requesterIsAdmin?: boolean;
   engagement?: string;
   allowRouting: boolean;
 }): Promise<FunctionExecutionResult | undefined> {
@@ -880,6 +904,7 @@ async function handleAgentTextTurnWithLongJob(input: {
     event: input.event,
     requestId: input.requestId,
     requesterDisplayName: input.requesterDisplayName,
+    requesterIsAdmin: input.requesterIsAdmin,
     engagement: input.engagement,
     allowRouting: input.allowRouting
   });
@@ -1681,6 +1706,12 @@ async function handleAdminAccessCommand(
       return { ok: true, replyText: `Usage: /${command} <functionName> <groupId>` };
     }
     if (command === "function-grant") {
+      if (!isFunctionGrantableForPrincipal(functionName, "group")) {
+        return {
+          ok: true,
+          replyText: `${functionName} 只能開放給指定使用者，請使用 /function-user-grant。`
+        };
+      }
       await accessStore.addGroupFunctionGrant({
         profileName: profile.name,
         groupId: targetGroupId,
@@ -1735,6 +1766,9 @@ async function handleAdminAccessCommand(
       };
     }
     if (command === "function-user-grant") {
+      if (!isFunctionGrantableForPrincipal(functionName, "user")) {
+        return { ok: true, replyText: `${functionName} 不支援使用者授權。` };
+      }
       await accessStore.addUserFunctionGrant({
         profileName: profile.name,
         userId: targetUserId,
@@ -1784,7 +1818,9 @@ async function handleAdminAccessCommand(
     if (!targetUserId) {
       return { ok: true, replyText: "Usage: /function-user-scopes <userId>" };
     }
-    const userGrants = await accessStore.listUserFunctionGrants(profile.name, targetUserId);
+    const userGrants = (
+      await accessStore.listUserFunctionGrants(profile.name, targetUserId)
+    ).filter((name) => isFunctionGrantableForPrincipal(name, "user"));
     const isAdminTarget = await isAdminUser(profile, targetUserId, accessStore);
     const profileDefaults = isAdminTarget
       ? profile.enabledFunctions
@@ -1809,7 +1845,9 @@ async function handleAdminAccessCommand(
     if (!targetGroupId) {
       return { ok: true, replyText: "Usage: /function-scopes <groupId>" };
     }
-    const groupGrants = await accessStore.listGroupFunctionGrants(profile.name, targetGroupId);
+    const groupGrants = (
+      await accessStore.listGroupFunctionGrants(profile.name, targetGroupId)
+    ).filter((name) => isFunctionGrantableForPrincipal(name, "group"));
     const profileDefaults = profile.enabledFunctions.filter(isDefaultUserFunctionAvailable);
     const effectiveFunctions = mergeFunctionNames(profileDefaults, groupGrants);
     return {

@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createAgentRuntime } from "../agent/agent-runtime.js";
 import { InMemoryAgentMemoryStore } from "../agent/memory-store.js";
 import { PostgresAgentMemoryStore, type PgQueryable } from "../agent/postgres-memory-store.js";
-import { createRetrieveMemoryHandler } from "../functions/agent-memory-functions.js";
+import {
+  createRetrieveMemoryHandler,
+  createSaveMemoryHandler
+} from "../functions/agent-memory-functions.js";
 import type { BotProfileConfig, FunctionHandlerContext, GraphDriveClient } from "../types.js";
 
 function profile(): BotProfileConfig {
@@ -36,6 +39,79 @@ function context(): FunctionHandlerContext {
 }
 
 describe("agent memory", () => {
+  it("previews group-shared memory with its 30-day retention before saving", async () => {
+    const store = new InMemoryAgentMemoryStore();
+    const handler = createSaveMemoryHandler({ memoryStore: store });
+
+    const preview = await handler(
+      { content: "集合時間是下午兩點半", visibility: "group" },
+      context()
+    );
+
+    expect(preview.replyText).toContain("群組共用");
+    expect(preview.replyText).toContain("30 天");
+    await expect(store.summary()).resolves.toMatchObject({ textMemories: 0 });
+  });
+
+  it("makes confirmed group memory visible to another requester in the same group", async () => {
+    const now = new Date("2026-07-08T00:00:00.000Z");
+    const store = new InMemoryAgentMemoryStore({ now: () => now });
+    const save = createSaveMemoryHandler({ memoryStore: store, now: () => now });
+    const retrieve = createRetrieveMemoryHandler({ memoryStore: store });
+
+    await save({ content: "集合時間是下午兩點半", visibility: "group", confirm: true }, context());
+    const otherContext = {
+      ...context(),
+      event: {
+        ...context().event,
+        source: { type: "group" as const, groupId: "C1", userId: "U2" }
+      }
+    };
+
+    await expect(retrieve({ query: "集合時間" }, otherContext)).resolves.toMatchObject({
+      replyText: expect.stringContaining("下午兩點半")
+    });
+  });
+
+  it("keeps private group memory hidden from another requester", async () => {
+    const store = new InMemoryAgentMemoryStore();
+    const save = createSaveMemoryHandler({ memoryStore: store });
+    const retrieve = createRetrieveMemoryHandler({ memoryStore: store });
+
+    await save({ content: "我的私人提醒", confirm: true }, context());
+    const otherContext = {
+      ...context(),
+      event: {
+        ...context().event,
+        source: { type: "group" as const, groupId: "C1", userId: "U2" }
+      }
+    };
+
+    await expect(retrieve({ query: "私人提醒" }, otherContext)).resolves.toMatchObject({
+      replyText: "我目前找不到符合的記憶。"
+    });
+  });
+
+  it("does not allow group visibility from a direct chat", async () => {
+    const store = new InMemoryAgentMemoryStore();
+    const handler = createSaveMemoryHandler({ memoryStore: store });
+    const directContext = {
+      ...context(),
+      event: {
+        ...context().event,
+        source: { type: "user" as const, userId: "U1" }
+      }
+    };
+
+    const preview = await handler(
+      { content: "集合時間是下午兩點半", visibility: "group" },
+      directContext
+    );
+
+    expect(preview.replyText).toContain("僅你可查");
+    expect(preview.replyText).not.toContain("群組共用");
+  });
+
   it("returns opaque structured results when retrieving explicit text memories", async () => {
     const now = new Date("2026-07-08T00:00:00.000Z");
     const store = new InMemoryAgentMemoryStore({ now: () => now });

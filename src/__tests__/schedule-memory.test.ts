@@ -59,6 +59,7 @@ function context(text = "小哈記住這份晨更服事表"): FunctionHandlerCon
   return {
     profile: profile(),
     requestId: "req-1",
+    requesterIsAdmin: true,
     event: {
       type: "message",
       replyToken: "reply-token",
@@ -340,6 +341,46 @@ describe("schedule memory", () => {
     ).resolves.toEqual([
       expect.objectContaining({ serviceDate: "2026-07-18", assignee: "世緯家園" })
     ]);
+  });
+
+  it("allows granted writers to replace or add but reserves update and delete for admins", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+    await save(
+      { content: "7/17五世緯家園", scheduleType: "morning_prayer_family", confirm: true },
+      context()
+    );
+    const writerContext = { ...context(), requesterIsAdmin: false };
+
+    await expect(
+      save(
+        {
+          operation: "update_entry",
+          targetQuery: "世緯家園",
+          changes: { serviceDate: "2026-07-18" }
+        },
+        writerContext
+      )
+    ).resolves.toMatchObject({ replyText: expect.stringContaining("只有管理員") });
+    await expect(
+      save({ operation: "delete_entry", targetQuery: "世緯家園" }, writerContext)
+    ).resolves.toMatchObject({ replyText: expect.stringContaining("只有管理員") });
+    await expect(
+      save(
+        {
+          operation: "add_entry",
+          scheduleType: "morning_prayer_family",
+          entry: {
+            serviceDate: "2026-07-24",
+            meetingName: "晨更",
+            assignee: "新婦家族"
+          }
+        },
+        writerContext
+      )
+    ).resolves.toMatchObject({ replyText: expect.stringContaining("請確認這筆新服事") });
   });
 
   it("previews and confirms adding and deleting schedule entries", async () => {

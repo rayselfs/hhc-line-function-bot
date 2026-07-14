@@ -27,7 +27,8 @@ export function createSaveMemoryHandler(options: AgentMemoryFunctionOptions): Fu
       return { ok: true, replyText: "請直接告訴我要記住的內容。" };
     }
     const title = args.title?.trim() || inferTitle(content);
-    const visibility = args.visibility ?? "private";
+    const visibility =
+      context.event.source.type === "group" && args.visibility === "group" ? "group" : "private";
     if (!args.confirm) {
       if (options.sessionStore) {
         await storePendingFunctionQuery({
@@ -45,6 +46,7 @@ export function createSaveMemoryHandler(options: AgentMemoryFunctionOptions): Fu
           "請確認要記住這段資訊：",
           `名稱：${title}`,
           `可見範圍：${visibility === "group" ? "群組共用" : "僅你可查"}`,
+          "保存期限：30 天",
           "要保存嗎？"
         ].join("\n"),
         quickReplies: [

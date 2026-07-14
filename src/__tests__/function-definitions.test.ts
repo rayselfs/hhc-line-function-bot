@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { FUNCTION_DEFINITIONS, getFunctionDefinition } from "../functions/definitions.js";
+import {
+  FUNCTION_DEFINITIONS,
+  getFunctionDefinition,
+  isFunctionGrantableForPrincipal
+} from "../functions/definitions.js";
 import { FUNCTION_NAMES } from "../types.js";
 
 describe("function definitions", () => {
@@ -60,5 +64,13 @@ describe("function definitions", () => {
     });
     expect(definition?.description).toContain("流行歌譜");
     expect(definition?.keywordFallback?.keywords).toContain("樂譜");
+  });
+
+  it("keeps shared write functions user-grant-only", () => {
+    for (const name of ["save_schedule", "save_memory"] as const) {
+      expect(isFunctionGrantableForPrincipal(name, "user")).toBe(true);
+      expect(isFunctionGrantableForPrincipal(name, "group")).toBe(false);
+    }
+    expect(isFunctionGrantableForPrincipal("find_ppt_slides", "group")).toBe(true);
   });
 });

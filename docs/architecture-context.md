@@ -119,6 +119,10 @@ Profiles are independent bot configurations served by one process. In practice:
 - group-specific function grants are additive and stored by profile/group.
 - user-specific function grants are additive and stored by profile/user. They
   apply to direct chat and to that requester inside a registered group.
+- Function definitions may narrow grant principals. `save_schedule` and
+  `save_memory` accept user grants but reject group grants and group role
+  capabilities, so write authority follows the requester rather than every
+  member of a registered group.
 - future role/capability bindings are documented in
   [`docs/rbac-capability-model.md`](rbac-capability-model.md), but v1 runtime
   behavior still uses explicit function grants as the operative override

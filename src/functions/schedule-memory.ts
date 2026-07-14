@@ -172,6 +172,9 @@ async function handleScheduleMutation(input: {
   requestIdFactory: () => string;
 }): Promise<FunctionExecutionResult> {
   const { args, context, options } = input;
+  if (args.operation !== "add_entry" && context.requesterIsAdmin !== true) {
+    return { ok: true, replyText: "只有管理員可以修改或刪除既有服事內容。" };
+  }
   if (args.operation === "add_entry") {
     if (!args.entry || !args.scheduleType) {
       return { ok: true, replyText: "請告訴我要新增的日期、服事項目和家族或同工。" };

@@ -1163,6 +1163,76 @@ describe("LINE entrance", () => {
     );
   });
 
+  it.each(["save_schedule", "save_memory"])(
+    "rejects slash-command group grants for user-scoped write function %s",
+    async (functionName) => {
+      const config = testConfig();
+      config.profiles[0].enabledFunctions = ["query_service_schedule", functionName] as never;
+      const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
+      const accessStore = defaultAccessStore();
+      const app = createTestApp(config, {
+        router: { route: vi.fn() },
+        accessStore,
+        createLineReplyClient: () => ({ replyText })
+      });
+      const body = lineBody({
+        type: "message",
+        replyToken: "grant-reply",
+        source: { type: "group", groupId: "Cmain", userId: "Uadmin" },
+        message: { type: "text", text: `/function-grant ${functionName}` }
+      });
+
+      await app.inject({
+        method: "POST",
+        url: "/api/line/webhook/main",
+        headers: signedHeaders(body, "main-secret"),
+        payload: body
+      });
+
+      expect(replyText.mock.calls[0]?.[1]).toContain("只能開放給指定使用者");
+      await expect(accessStore.listGroupFunctionGrants("main", "Cmain")).resolves.toEqual([]);
+    }
+  );
+
+  it("applies a save-memory user grant when the requester uses a registered group", async () => {
+    const config = testConfig();
+    config.profiles[0].enabledFunctions = ["retrieve_memory", "save_memory"];
+    const route = vi.fn<FunctionRouterPort["route"]>().mockResolvedValue({
+      type: "deny",
+      reason: "not_matched",
+      provider: "ollama"
+    });
+    const accessStore = defaultAccessStore();
+    await accessStore.addUserFunctionGrant({
+      profileName: "main",
+      userId: "Uallowed",
+      functionName: "save_memory",
+      createdBy: "Uadmin"
+    });
+    const app = createTestApp(config, {
+      router: { route },
+      accessStore,
+      createLineReplyClient: () => ({ replyText: vi.fn().mockResolvedValue(undefined) })
+    });
+    const body = lineBody({
+      type: "message",
+      replyToken: "route-reply",
+      source: { type: "group", groupId: "Cmain", userId: "Uallowed" },
+      message: { type: "text", text: "小哈幫我記住集合時間" }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/line/webhook/main",
+      headers: signedHeaders(body, "main-secret"),
+      payload: body
+    });
+
+    expect(route).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledFunctions: ["retrieve_memory", "save_memory"] })
+    );
+  });
+
   it("passes only the effective requester grants and source to enabled controlled routing", async () => {
     const config = testConfig();
     config.profiles[0] = {

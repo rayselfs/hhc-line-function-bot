@@ -63,9 +63,14 @@ export interface FunctionMemoryPolicy {
   kind: "none" | "resource_metadata" | "explicit_text" | "retrieve_text";
 }
 
+export interface FunctionGrantPolicy {
+  principals: Array<"user" | "group">;
+}
+
 export interface AgentCapabilityContract {
   intents: string[];
   candidateHints: string[];
+  genericWriteFallback?: boolean;
   argumentEvidence?: AgentArgumentEvidenceContract;
   retrievalEvidence?: { provider: string };
   entityTypes?: string[];
@@ -105,6 +110,7 @@ export interface FunctionDefinition {
   requiredSlots: FunctionRequiredSlot[];
   resourcePolicy: FunctionResourcePolicy;
   memoryPolicy: FunctionMemoryPolicy;
+  grantPolicy?: FunctionGrantPolicy;
   clarificationPrompt: string;
   description: string;
   argumentSchema: z.ZodType;
@@ -386,6 +392,24 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     ],
     resourcePolicy: { kind: "none", remember: false, alias: false },
     memoryPolicy: { kind: "explicit_text" },
+    grantPolicy: { principals: ["user"] },
+    agentCapability: {
+      intents: [
+        "服事表",
+        "幫我記住服事表",
+        "記住服事表",
+        "保存服事表",
+        "儲存服事表",
+        "新增服事",
+        "修改服事",
+        "刪除服事"
+      ],
+      candidateHints: ["服事表"],
+      entityTypes: ["schedule"],
+      refinableFields: ["content", "scheduleType", "operation", "targetQuery"],
+      operations: [],
+      ambiguity: "clarify"
+    },
     clarificationPrompt: "請貼上要記住的服事表文字內容。",
     description:
       '- save_schedule: manage the profile-shared canonical service schedule. Use operation "replace" with content for a full pasted schedule; "add_entry" with scheduleType and entry; "update_entry" with targetQuery and changes; "delete_entry" with targetQuery; or "delete_schedule" with targetQuery. Every write previews first unless confirm is true. Never invent content, targets, titles, or changes.',
@@ -766,6 +790,16 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
     ],
     resourcePolicy: { kind: "none", remember: false, alias: false },
     memoryPolicy: { kind: "explicit_text" },
+    grantPolicy: { principals: ["user"] },
+    agentCapability: {
+      intents: ["幫我記住", "記住這個", "幫我保存", "幫我儲存", "保存這段資訊"],
+      candidateHints: ["記住", "保存", "儲存"],
+      genericWriteFallback: true,
+      entityTypes: ["memory"],
+      refinableFields: ["title", "content", "visibility"],
+      operations: [],
+      ambiguity: "clarify"
+    },
     clarificationPrompt: "請直接告訴我要記住的內容。",
     description:
       '- save_memory: save explicit user-provided text memory only when the user clearly asks the bot to remember/save/store information. Arguments: {"title":"short optional title", "content":"the exact text to remember", "query":"optional lookup phrase"}. Do not use for passive group chatter.',
@@ -901,6 +935,18 @@ export function getFunctionDefinitions(names: FunctionName[]): FunctionDefinitio
 
 export function isGrantableFunctionName(name: FunctionName): boolean {
   return !getFunctionDefinition(name)?.deprecated;
+}
+
+export function isFunctionGrantableForPrincipal(
+  name: FunctionName,
+  principal: "user" | "group"
+): boolean {
+  const definition = getFunctionDefinition(name);
+  return Boolean(
+    definition &&
+    !definition.deprecated &&
+    (definition.grantPolicy?.principals ?? ["user", "group"]).includes(principal)
+  );
 }
 
 export function userFacingFunctionNames(): FunctionName[] {

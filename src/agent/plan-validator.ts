@@ -18,6 +18,7 @@ import {
 } from "./capability-candidates.js";
 import { groundPlanRecord, hasActiveEntityTextEvidence, liveActiveTask } from "./plan-evidence.js";
 import { findMissingRequiredSlot } from "./slot-clarification.js";
+import { hasWriteIntent } from "./knowledge-evidence-guard.js";
 
 export interface AgentPlanValidationCandidate {
   capability: FunctionName;
@@ -419,11 +420,13 @@ function revalidatedExplicitCandidates(input: ValidateAgentPlanInput): FunctionN
     return Boolean(
       definition &&
       !definition.deprecated &&
-      definition.sideEffectLevel === "read" &&
       definition.agentCapability &&
       sourceAllowed(definition, input.sourceType) &&
-      (definition.agentCapability.intents.some((intent) => textContains(input.text, intent)) ||
-        hasDeclarativeArgumentEvidence(definition, input.text))
+      (definition.sideEffectLevel === "read"
+        ? definition.agentCapability.intents.some((intent) => textContains(input.text, intent)) ||
+          hasDeclarativeArgumentEvidence(definition, input.text)
+        : hasWriteIntent(input.text) &&
+          definition.agentCapability.intents.some((intent) => textContains(input.text, intent)))
     );
   });
 }
@@ -434,11 +437,15 @@ function revalidatedDisabledExplicitCandidates(input: ValidateAgentPlanInput): F
     (definition) =>
       !enabled.has(definition.name) &&
       !definition.deprecated &&
-      definition.sideEffectLevel === "read" &&
       Boolean(definition.agentCapability) &&
       sourceAllowed(definition, input.sourceType) &&
-      (definition.agentCapability?.intents.some((intent) => textContains(input.text, intent)) ||
-        hasDeclarativeArgumentEvidence(definition, input.text))
+      (definition.sideEffectLevel === "read"
+        ? definition.agentCapability?.intents.some((intent) => textContains(input.text, intent)) ||
+          hasDeclarativeArgumentEvidence(definition, input.text)
+        : hasWriteIntent(input.text) &&
+          Boolean(
+            definition.agentCapability?.intents.some((intent) => textContains(input.text, intent))
+          ))
   ).map(({ name }) => name);
 }
 

@@ -58,16 +58,31 @@ export function normalizeFunctionArguments(
       return normalizeServiceScheduleArguments(args, input);
     case "query_knowledge":
       return normalizeKnowledgeArguments(args, input);
+    case "save_memory":
+      return normalizeSaveMemoryArguments(args, input);
     default:
       return args;
   }
 }
 
+function normalizeSaveMemoryArguments(
+  args: JsonRecord,
+  input: FunctionArgumentNormalizationInput
+): JsonRecord {
+  if (/(?:群組共用|群組共享|大家都可以查|大家可查)/u.test(input.text)) {
+    return { ...args, visibility: "group" };
+  }
+  if (/(?:私人|只有我|僅我|自己可查)/u.test(input.text)) {
+    return { ...args, visibility: "private" };
+  }
+  return args;
+}
+
 export function hasExplicitWriteEvidence(text: string, args: JsonRecord): boolean {
   const normalized = text.normalize("NFKC");
   const evidence = writeEvidenceStrings(args);
-  return (
-    evidence.length > 0 &&
+  if (evidence.length === 0) return false;
+  if (
     normalized
       .split(writeClauseSeparatorPattern)
       .some(
@@ -75,6 +90,14 @@ export function hasExplicitWriteEvidence(text: string, args: JsonRecord): boolea
           hasUnnegatedWriteAction(clause) &&
           evidence.every((value) => stringHasEvidence(clause, value))
       )
+  ) {
+    return true;
+  }
+  return evidence.every(
+    (value) =>
+      writeClauseSeparatorPattern.test(value) &&
+      stringHasEvidence(normalized, value) &&
+      hasUnnegatedWriteAction(normalized.slice(0, normalized.indexOf(value.normalize("NFKC"))))
   );
 }
 
