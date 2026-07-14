@@ -92,7 +92,7 @@ stages:
             displayName: Validate production profile config
 
           - script: pnpm eval:agent
-            displayName: Router eval replay
+            displayName: Controlled agent eval
 
           - script: pnpm build
             displayName: Build app
