@@ -297,6 +297,7 @@ export function createFindPptSlidesTextMessageHandler(
   const now = options.now ?? (() => new Date());
 
   return {
+    turnStage: "resolution",
     matches: async (request, context) =>
       context.profile.enabledFunctions.includes("find_ppt_slides") &&
       numericSelectionToIndex(request.text) !== undefined &&
@@ -553,10 +554,7 @@ async function createSharingLinkReply(
   };
 }
 
-function pptSuccessEnvelope(
-  resourceId: string,
-  reference: JsonRecord
-) {
+function pptSuccessEnvelope(resourceId: string, reference: JsonRecord) {
   return {
     status: "success" as const,
     replyText: "投影片查詢完成。",

@@ -382,6 +382,7 @@ export function createFindPopSheetMusicTextMessageHandler(
   const now = options.now ?? (() => new Date());
 
   return {
+    turnStage: "resolution",
     matches: async (request, context) =>
       sheetMusicFunctionEnabled(context.profile.enabledFunctions) &&
       (Boolean(
@@ -701,10 +702,7 @@ async function createSharingLinkReply(
   };
 }
 
-function sheetMusicSuccessEnvelope(
-  resourceId: string,
-  reference: JsonRecord
-) {
+function sheetMusicSuccessEnvelope(resourceId: string, reference: JsonRecord) {
   return {
     status: "success" as const,
     replyText: "歌譜查詢完成。",

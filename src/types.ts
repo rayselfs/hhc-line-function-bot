@@ -690,7 +690,11 @@ export interface TextMessageContext {
   requesterIsAdmin?: boolean;
 }
 
+export type ControlledTurnStage =
+  "pending_function" | "resolution" | "attachment" | "pre_route_recall";
+
 export interface TextMessageHandler {
+  turnStage: ControlledTurnStage;
   matches(request: TextMessageRequest, context: TextMessageContext): Promise<boolean> | boolean;
   handle(
     request: TextMessageRequest,

@@ -48,16 +48,14 @@ import type {
   TextMessageHandlerRegistry
 } from "../types.js";
 import type { AgentRuntime } from "./agent-runtime.js";
-import {
-  createCapabilityResolution,
-  resumeCapabilityResolution
-} from "./capability-resolution.js";
+import { createCapabilityResolution, resumeCapabilityResolution } from "./capability-resolution.js";
 import { projectAgentReply } from "./response-projector.js";
 import {
   type AgentTraceStore,
   type AgentTurnTraceRecord,
   type AgentTurnTraceStep
 } from "./trace-store.js";
+import { orderTurnHandlers } from "./turn-state-machine.js";
 
 export interface AgentTurnRuntimeOptions {
   functionRegistry: FunctionRegistry;
@@ -1015,7 +1013,7 @@ async function matchingTextMessageHandler(
   if (event.type !== "message" || event.message?.type !== "text" || !text) {
     return undefined;
   }
-  for (const [name, handler] of Object.entries(textMessageHandlers)) {
+  for (const { name, handler } of orderTurnHandlers(textMessageHandlers)) {
     if (
       await handler.matches({ text }, { profile, event, requesterDisplayName, requesterIsAdmin })
     ) {

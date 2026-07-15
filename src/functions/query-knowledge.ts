@@ -221,6 +221,7 @@ export function createQueryKnowledgeTextMessageHandler(
   options: QueryKnowledgeOptions & { sessionStore: SessionStore }
 ): TextMessageHandler {
   return {
+    turnStage: "resolution",
     matches: async (request, context) =>
       context.profile.enabledFunctions.includes("query_knowledge") &&
       numericSelectionToIndex(request.text) !== undefined &&
