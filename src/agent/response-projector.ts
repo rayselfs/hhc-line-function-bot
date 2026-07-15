@@ -34,7 +34,9 @@ function projectNamedRecord(text: string, records: JsonRecord[]): string | undef
   const matches = records.flatMap((record) => {
     const role = printableValue(record.role);
     const people = printableValue(record.people ?? record.assignee ?? record.value);
-    return role && people && normalizedText.includes(normalize(role)) ? [{ record, role, people }] : [];
+    return role && people && normalizedText.includes(normalize(role))
+      ? [{ record, role, people }]
+      : [];
   });
   if (matches.length === 0) return undefined;
   if (matches.length === 1) return `${matches[0].role}：${matches[0].people}`;
@@ -83,5 +85,8 @@ function withProjection(
 }
 
 function normalize(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[\s,，、:：。.!！?？/\\_-]+/gu, "");
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s,，、:：。.!！?？/\\_-]+/gu, "");
 }

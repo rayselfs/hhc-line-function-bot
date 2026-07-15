@@ -21,7 +21,10 @@ export function createCatalogEvidenceProvider(
         itemKinds: filter.itemKinds,
         limit
       });
-      return opaqueEvidence(records.map(({ id }) => id), limit);
+      return opaqueEvidence(
+        records.map(({ id }) => id),
+        limit
+      );
     }
   };
 }
@@ -39,7 +42,10 @@ export function createMemoryEvidenceProvider(memory: AgentMemoryStore): AgentEvi
         query: input.text,
         limit
       });
-      return opaqueEvidence(records.map(({ id }) => id), limit);
+      return opaqueEvidence(
+        records.map(({ id }) => id),
+        limit
+      );
     }
   };
 }
@@ -61,7 +67,10 @@ export function createResourceMemoryEvidenceProvider(
         resourceTypes,
         limit
       });
-      return opaqueEvidence(records.map(({ id }) => id), limit);
+      return opaqueEvidence(
+        records.map(({ id }) => id),
+        limit
+      );
     }
   };
 }
@@ -73,10 +82,7 @@ export function createCombinedEvidenceProvider(
     async probe(input) {
       const limit = boundedLimit(input.maxResults);
       const results = await Promise.all(providers.map((provider) => provider.probe(input)));
-      return opaqueEvidence(
-        [...new Set(results.flatMap(({ opaqueIds }) => opaqueIds))],
-        limit
-      );
+      return opaqueEvidence([...new Set(results.flatMap(({ opaqueIds }) => opaqueIds))], limit);
     }
   };
 }
@@ -94,7 +100,11 @@ export function createScheduleEvidenceProvider(memory: AgentMemoryStore): AgentE
         query: input.text,
         limit
       });
-      if (direct.length > 0) return opaqueEvidence(direct.map(({ id }) => id), limit);
+      if (direct.length > 0)
+        return opaqueEvidence(
+          direct.map(({ id }) => id),
+          limit
+        );
 
       // Date punctuation and conversational words frequently differ from stored ISO dates.
       // A bounded local comparison provides evidence only; actual execution still performs
@@ -107,7 +117,10 @@ export function createScheduleEvidenceProvider(memory: AgentMemoryStore): AgentE
       });
       const tokens = evidenceTokens(input.text);
       const matched = candidates.filter((record) => scheduleMatchesTokens(record, tokens));
-      return opaqueEvidence(matched.map(({ id }) => id), limit);
+      return opaqueEvidence(
+        matched.map(({ id }) => id),
+        limit
+      );
     }
   };
 }
@@ -140,7 +153,10 @@ function evidenceTokens(text: string): string[] {
   return words.map(normalizeLookupText).filter((word) => word && !ignored.has(word));
 }
 
-function scheduleMatchesTokens(record: AgentScheduleEntryRecord, tokens: readonly string[]): boolean {
+function scheduleMatchesTokens(
+  record: AgentScheduleEntryRecord,
+  tokens: readonly string[]
+): boolean {
   if (tokens.length === 0) return false;
   const text = normalizeLookupText(
     [

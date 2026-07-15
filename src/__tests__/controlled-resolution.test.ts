@@ -23,10 +23,7 @@ describe("capability resolution", () => {
       now
     });
 
-    expect(reply?.quickReplies?.map(({ label }) => label)).toEqual([
-      "查服事表",
-      "查記住的資訊"
-    ]);
+    expect(reply?.quickReplies?.map(({ label }) => label)).toEqual(["查服事表", "查記住的資訊"]);
     await expect(
       resumeCapabilityResolution({
         sessionStore: store,

@@ -76,9 +76,7 @@ function scheduleReplyData(rows: ScheduleResultRow[]) {
     },
     records: rows.map((row) => ({
       ...(row.date || row.serviceDate ? { date: row.date ?? row.serviceDate } : {}),
-      ...(row.meeting || row.meetingName
-        ? { meeting: row.meeting ?? row.meetingName }
-        : {}),
+      ...(row.meeting || row.meetingName ? { meeting: row.meeting ?? row.meetingName } : {}),
       ...(row.role ? { role: row.role } : {}),
       ...(row.person || row.assignee || row.familyName
         ? { people: row.person ?? row.assignee ?? row.familyName }

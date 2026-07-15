@@ -28,6 +28,7 @@
 ### Task 1: Extend Capability and Result Contracts
 
 **Files:**
+
 - Modify: `src/functions/definitions.ts`
 - Modify: `src/agent/result-envelope.ts`
 - Modify: `src/types.ts`
@@ -35,6 +36,7 @@
 - Test: `src/__tests__/function-contracts.test.ts`
 
 **Interfaces:**
+
 - Produces: `AgentOperation`, `AgentResponseProjection`, `AgentCapabilityHandoff`, `AgentReplyData`, and extended `AgentCapabilityContract` / `AgentResultEnvelope`.
 - Consumes: existing `FunctionName`, `JsonRecord`, `QuickReplyItem`, and Zod argument schemas.
 
@@ -97,7 +99,7 @@ Extend `AgentCapabilityContract` with `semanticDescription`, `responseProjection
 Give every read capability a bounded semantic description, declared output fields, and meaningful operations. Add declarative handoffs:
 
 ```ts
-handoffs: [{ on: "success", to: "query_schedule", map: { scheduleType: "scheduleType" } }]
+handoffs: [{ on: "success", to: "query_schedule", map: { scheduleType: "scheduleType" } }];
 ```
 
 For `save_resource`, use three handoffs with `when: { resourceKind: ... }`. Do not add branching in the router.
@@ -113,6 +115,7 @@ Commit: `git commit -am "feat: extend agent capability contracts"`
 ### Task 2: Replace Active Task Version 1 with Task Frame Version 2
 
 **Files:**
+
 - Create: `src/agent/task-frame.ts`
 - Create: `src/agent/task-frame-codec.ts`
 - Modify: `src/agent/active-task-transition.ts`
@@ -127,6 +130,7 @@ Commit: `git commit -am "feat: extend agent capability contracts"`
 - Test: `src/__tests__/config.test.ts`
 
 **Interfaces:**
+
 - Produces: `AgentTaskFrame`, `taskFrameFromResult()`, `prepareTaskFrameForStorage()`, and `agentTaskFrameSeconds` profile config.
 - Consumes: Task 1 `AgentOperation`, `AgentResultEnvelope`, `FunctionName`, and existing requester-scoped `ConversationWindowStore`.
 
@@ -193,6 +197,7 @@ Commit: `git add src config && git commit -m "feat: add typed agent task frames"
 ### Task 3: Make Planner Summaries Contract-Complete but Content-Free
 
 **Files:**
+
 - Modify: `src/agent/planner.ts`
 - Modify: `src/agent/plan-validator.ts`
 - Modify: `src/agent/capability-candidates.ts`
@@ -201,6 +206,7 @@ Commit: `git add src config && git commit -m "feat: add typed agent task frames"
 - Test: `src/__tests__/capability-candidates.test.ts`
 
 **Interfaces:**
+
 - Produces: bounded `CandidateSummary` containing semantic description, required slot names, output field names, and operations.
 - Consumes: Task 1 contracts and Task 2 `AgentTaskFrame`.
 
@@ -247,6 +253,7 @@ Commit: `git commit -am "feat: enrich safe planner capability summaries"`
 ### Task 4: Add Catalog, Schedule, and Memory Evidence Providers
 
 **Files:**
+
 - Create: `src/agent/evidence/types.ts`
 - Create: `src/agent/evidence/registry.ts`
 - Create: `src/agent/evidence/catalog-provider.ts`
@@ -261,6 +268,7 @@ Commit: `git commit -am "feat: enrich safe planner capability summaries"`
 - Create: `src/__tests__/evidence-providers.test.ts`
 
 **Interfaces:**
+
 - Produces: `CapabilityEvidenceProvider`, `CapabilityEvidenceProbe`, `createCapabilityEvidenceRegistry()`.
 - Consumes: catalog, schedule, agent-memory stores and the existing knowledge evidence behavior.
 
@@ -318,6 +326,7 @@ Commit: `git add src && git commit -m "feat: add bounded capability evidence reg
 ### Task 5: Implement Resumable Cross-Capability Resolution
 
 **Files:**
+
 - Create: `src/agent/capability-resolution.ts`
 - Modify: `src/functions/pending-resolution.ts`
 - Modify: `src/agent/turn-runtime.ts`
@@ -327,6 +336,7 @@ Commit: `git add src && git commit -m "feat: add bounded capability evidence reg
 - Test: `src/__tests__/agent-turn-runtime.test.ts`
 
 **Interfaces:**
+
 - Produces: `PendingCapabilityResolution`, `createCapabilityResolutionReply()`, and `resumeCapabilityResolution()`.
 - Consumes: requester-scoped session/selection store and deterministic plan validator.
 
@@ -373,6 +383,7 @@ Commit: `git add src && git commit -m "feat: resume cross-capability clarificati
 ### Task 6: Add Generic Focused Response Projection
 
 **Files:**
+
 - Create: `src/agent/response-projector.ts`
 - Modify: `src/agent/turn-runtime.ts`
 - Modify: `src/functions/query-schedule.ts`
@@ -386,6 +397,7 @@ Commit: `git add src && git commit -m "feat: resume cross-capability clarificati
 - Create: `src/__tests__/response-projector.test.ts`
 
 **Interfaces:**
+
 - Produces: `projectAgentReply(input): FunctionExecutionResult`.
 - Consumes: Task 1 response fields/reply data and normalized current user text.
 
@@ -432,6 +444,7 @@ Commit: `git add src && git commit -m "feat: project focused function replies"`
 ### Task 7: Add Read Continuations and Write-to-Read Handoffs
 
 **Files:**
+
 - Modify: `src/agent/task-frame.ts`
 - Modify: `src/agent/active-task-transition.ts`
 - Modify: `src/agent/turn-runtime.ts`
@@ -445,6 +458,7 @@ Commit: `git add src && git commit -m "feat: project focused function replies"`
 - Create: `src/__tests__/agent-journeys.test.ts`
 
 **Interfaces:**
+
 - Produces: task frames for all successful reads and validated declarative handoffs after successful writes.
 - Consumes: Task 1 handoffs, Task 2 frames, Task 6 structured reply data.
 
@@ -487,6 +501,7 @@ Commit: `git add src && git commit -m "feat: connect function results through ta
 ### Task 8: Upgrade Explicit Memory to Hybrid Grounded Retrieval
 
 **Files:**
+
 - Modify: `src/agent/migrations.ts`
 - Modify: `src/agent/postgres-store.ts`
 - Modify: `src/agent/memory-store.ts`
@@ -498,6 +513,7 @@ Commit: `git add src && git commit -m "feat: connect function results through ta
 - Test: `src/__tests__/stores.test.ts`
 
 **Interfaces:**
+
 - Produces: `searchVisibleMemoryHybrid()` and idempotent embedding backfill.
 - Consumes: existing Ollama embedding client, 1024-dimensional `bge-m3`, visibility rules, and grounded text generator.
 
@@ -536,6 +552,7 @@ Commit: `git add src && git commit -m "feat: add hybrid explicit-memory retrieva
 ### Task 9: Consolidate the Turn State Machine and Remove Legacy Paths
 
 **Files:**
+
 - Create: `src/agent/turn-state-machine.ts`
 - Modify: `src/agent/turn-runtime.ts`
 - Modify: `src/server.ts`
@@ -551,6 +568,7 @@ Commit: `git add src && git commit -m "feat: add hybrid explicit-memory retrieva
 - Test: `src/__tests__/profile-config-deployment-contract.test.ts`
 
 **Interfaces:**
+
 - Produces: deterministic `decideTurnState()` with documented precedence.
 - Consumes: pending confirmation, capability resolution, slot collection, attachment flow, task frame, and new planning.
 
@@ -598,12 +616,14 @@ Commit: `git add src aca.containerapp.yaml .env.example README.md docs AGENTS.md
 ### Task 10: Complete Evals, Verification, PR, Release, and Production Smoke Test
 
 **Files:**
+
 - Modify: module-owned router eval cases under `src/functions/`
 - Modify: `src/tools/agent-planner-eval.ts`
 - Modify: `.github/workflows/ci.yml` only if a new deterministic script is added
 - Modify: design/plan checkboxes after execution
 
 **Interfaces:**
+
 - Produces: offline deterministic regression coverage and deployed verified behavior.
 - Consumes: all prior tasks.
 

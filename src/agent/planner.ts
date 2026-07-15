@@ -2,10 +2,7 @@ import { z } from "zod";
 
 import type { ActiveTaskContext } from "./active-task.js";
 import type { CapabilityCandidateReason } from "./capability-candidates.js";
-import {
-  getFunctionDefinition,
-  type AgentCapabilityContract
-} from "../functions/definitions.js";
+import { getFunctionDefinition, type AgentCapabilityContract } from "../functions/definitions.js";
 import {
   AGENT_PLAN_DISPOSITIONS,
   FUNCTION_NAMES,
@@ -386,8 +383,8 @@ function summarizeContract(
     contract.semanticDescription ?? "",
     LIMITS.descriptionCharacters
   );
-  const requiredSlots = getFunctionDefinition(capability)?.requiredSlots
-    .slice(0, LIMITS.contractFields)
+  const requiredSlots = getFunctionDefinition(capability)
+    ?.requiredSlots.slice(0, LIMITS.contractFields)
     .map(({ name }) => sanitizeText(name, LIMITS.metadataCharacters))
     .filter(Boolean);
   const responseFields = Object.keys(contract.responseProjection?.fields ?? {})

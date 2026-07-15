@@ -312,10 +312,7 @@ describe("AgentTurnRuntime controlled path", () => {
       requestId: "ambiguous-2"
     });
 
-    expect(first?.quickReplies?.map(({ label }) => label)).toEqual([
-      "查服事表",
-      "查記住的資訊"
-    ]);
+    expect(first?.quickReplies?.map(({ label }) => label)).toEqual(["查服事表", "查記住的資訊"]);
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(resolve).toHaveBeenNthCalledWith(
       2,

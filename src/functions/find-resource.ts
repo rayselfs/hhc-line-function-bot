@@ -117,10 +117,7 @@ async function createCatalogItemReply(
   };
 }
 
-function catalogItemEnvelope(
-  resourceId: string,
-  reference: Record<string, string>
-) {
+function catalogItemEnvelope(resourceId: string, reference: Record<string, string>) {
   return {
     status: "success" as const,
     replyText: "教會資料查詢完成。",

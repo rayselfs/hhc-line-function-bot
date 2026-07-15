@@ -19,10 +19,9 @@ describe("controlled read capability contracts", () => {
       expect(typeof definition.argumentSchema.safeParse, definition.name).toBe("function");
       expect(Array.isArray(definition.agentCapability?.operations), definition.name).toBe(true);
       expect(definition.agentCapability?.semanticDescription, definition.name).toBeTruthy();
-      expect(
-        definition.agentCapability?.responseProjection?.defaultMode,
-        definition.name
-      ).toMatch(/^(focused|full)$/u);
+      expect(definition.agentCapability?.responseProjection?.defaultMode, definition.name).toMatch(
+        /^(focused|full)$/u
+      );
       expect(
         Object.keys(definition.agentCapability?.responseProjection?.fields ?? {}).length,
         definition.name

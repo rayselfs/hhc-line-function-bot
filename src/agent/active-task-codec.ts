@@ -22,7 +22,9 @@ const LIMITS = {
 type NormalizeMode = "sanitize" | "strict";
 
 const ACTIVE_TASK_KEYS = new Set(
-  "version currentCapability allowedCapabilities capability anchors entities references supportedOperations responseContext createdAt expiresAt".split(" ")
+  "version currentCapability allowedCapabilities capability anchors entities references supportedOperations responseContext createdAt expiresAt".split(
+    " "
+  )
 );
 const ENTITY_KEYS = new Set("type key label aliases".split(" "));
 const REFERENCE_KEYS = new Set(
