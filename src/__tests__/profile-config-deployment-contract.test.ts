@@ -13,7 +13,9 @@ describe("production profile configuration deployment contract", () => {
   it("ships file-backed profiles and does not deploy an ACA profile secret", () => {
     const dockerfile = readProjectFile("Dockerfile");
     const manifest = readProjectFile("aca.containerapp.yaml");
-    const pipeline = readProjectFile("azure-pipelines.yml");
+    const workflow = readProjectFile(".github/workflows/hhc-line-function-bot.yml");
+    const deployment = readProjectFile("scripts/deploy-aca.sh");
+    const azureFallback = readProjectFile("azure-pipelines.yml");
     const profiles = JSON.parse(readProjectFile("config/profiles.json")) as Array<{
       name: string;
       allowedMessageTypes: string[];
@@ -58,24 +60,26 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).toContain("name: EXTERNAL_RESOURCE_MAX_REDIRECTS");
     expect(manifest).not.toContain("BOT_PROFILES_BASE64_JSON");
     expect(manifest).not.toContain("bot-profiles-base64-json");
-    expect(pipeline).toContain("- config/**");
-    expect(pipeline).toContain("pnpm config:validate");
-    expect(pipeline).toContain("PROFILE_CONFIG_PATH=/app/config/profiles.json");
-    expect(pipeline).toContain("--remove-env-vars");
-    expect(pipeline).toContain("az containerapp dapr enable");
-    expect(pipeline).toContain('--dapr-app-id "hhc-line-function-bot"');
-    expect(pipeline).toContain("--dapr-app-port 3000");
-    expect(pipeline).not.toContain("az containerapp dapr disable");
-    expect(pipeline).toContain("SEARXNG_BASE_URL=http://172.16.65.5:8888");
-    expect(pipeline).toContain("CLAMAV_HOST=172.16.65.5");
-    expect(pipeline).toContain("MAX_ATTACHMENT_BYTES=26214400");
-    expect(pipeline).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
-    expect(pipeline).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
-    expect(pipeline).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
-    expect(pipeline).toContain("OLLAMA_EMBEDDING_MODEL=bge-m3");
-    expect(pipeline).toContain("EMBEDDING_BATCH_SIZE=16");
-    expect(pipeline).toContain("EMBEDDING_TIMEOUT_MS=30000");
-    expect(pipeline).toContain("EMBEDDING_KEEP_ALIVE=1m");
+    expect(workflow).toContain("- config/**");
+    expect(workflow).toContain("pnpm config:validate");
+    expect(deployment).toContain("PROFILE_CONFIG_PATH=/app/config/profiles.json");
+    expect(deployment).toContain("--remove-env-vars");
+    expect(deployment).toContain("az containerapp dapr enable");
+    expect(deployment).toContain('--dapr-app-id "hhc-line-function-bot"');
+    expect(deployment).toContain("--dapr-app-port 3000");
+    expect(deployment).not.toContain("az containerapp dapr disable");
+    expect(deployment).toContain("SEARXNG_BASE_URL=http://172.16.65.5:8888");
+    expect(deployment).toContain("CLAMAV_HOST=172.16.65.5");
+    expect(deployment).toContain("MAX_ATTACHMENT_BYTES=26214400");
+    expect(deployment).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
+    expect(deployment).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
+    expect(deployment).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
+    expect(deployment).toContain("OLLAMA_EMBEDDING_MODEL=bge-m3");
+    expect(deployment).toContain("EMBEDDING_BATCH_SIZE=16");
+    expect(deployment).toContain("EMBEDDING_TIMEOUT_MS=30000");
+    expect(deployment).toContain("EMBEDDING_KEEP_ALIVE=1m");
+    expect(azureFallback).toContain("trigger: none");
+    expect(azureFallback).toContain("pr: none");
     expect(helper?.enabledFunctions).toEqual(
       expect.arrayContaining(["find_resource", "save_resource", "save_memory", "retrieve_memory"])
     );
@@ -99,7 +103,7 @@ describe("production profile configuration deployment contract", () => {
 
   it("defines a scheduled ACA catalog sync job that reuses the app image", () => {
     const job = readProjectFile("aca.catalog-sync-job.yaml");
-    const pipeline = readProjectFile("azure-pipelines.yml");
+    const workflow = readProjectFile(".github/workflows/hhc-line-function-bot.yml");
     const readme = readProjectFile("README.md");
 
     expect(job).toContain("type: Microsoft.App/jobs");
@@ -137,7 +141,7 @@ describe("production profile configuration deployment contract", () => {
     expect(job).toContain("name: EMBEDDING_TIMEOUT_MS");
     expect(job).toContain("name: EMBEDDING_KEEP_ALIVE");
     expect(job).not.toContain("ingress:");
-    expect(pipeline).toContain("- aca.catalog-sync-job.yaml");
+    expect(workflow).toContain("- aca.catalog-sync-job.yaml");
     expect(readme).toContain("aca.catalog-sync-job.yaml");
     expect(readme).toContain("node dist/tools/sync-catalog.js");
   });
