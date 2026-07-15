@@ -23,6 +23,13 @@
 - Existing `bge-m3` and 1024-dimensional pgvector storage are reused; no second embedding model is added.
 - Every task follows red-green-refactor and ends with independently passing targeted tests.
 
+## Execution Record
+
+- Implemented Tasks 1-9 on `codex/contract-agent-kernel` with targeted red/green tests and task-scoped commits.
+- Full local gate on 2026-07-16: formatting, typecheck, lint, 89 test files / 806 tests, production profile validation, deterministic agent eval 19/19, and build all passed.
+- Live planner eval was attempted but the isolated worktree does not contain the uncommitted `LINE_HELPER_CHANNEL_SECRET` environment reference; no CI or runtime policy was weakened to bypass it.
+- Task 10 PR, required `PR CI`, squash merge, GitHub release, ACA revision check, and production smoke test remain the final release steps after this execution record is committed.
+
 ---
 
 ### Task 1: Extend Capability and Result Contracts
