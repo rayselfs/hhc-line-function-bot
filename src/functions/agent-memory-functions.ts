@@ -93,6 +93,18 @@ export function createRetrieveMemoryHandler(options: AgentMemoryFunctionOptions)
     return {
       ok: true,
       replyText: ["我找到這些記住的資訊：", ...memories.map(formatTextMemory)].join("\n"),
+      responseData: {
+        kind: "memory",
+        fields: {
+          ...(memories.length === 1
+            ? { title: memories[0].title ?? "已保存資訊", answer: memories[0].content }
+            : {})
+        },
+        records: memories.map((memory) => ({
+          title: memory.title ?? "已保存資訊",
+          answer: memory.content
+        }))
+      },
       agentResult: {
         status: "success",
         replyText: "記憶查詢完成。",

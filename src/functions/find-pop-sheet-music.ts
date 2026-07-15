@@ -509,6 +509,10 @@ async function createRememberedReferenceReply(
         query: resource.query,
         storage: resource.storage
       },
+      responseData: {
+        kind: "resource",
+        fields: { title: resource.title, link: resource.storage.url }
+      },
       agentResult: sheetMusicSuccessEnvelope(resourceId, { resourceId })
     };
   }
@@ -688,6 +692,7 @@ async function createSharingLinkReply(
       title: item.name,
       storage: { provider: "graph", driveId: item.driveId ?? "", itemId: item.id }
     },
+    responseData: { kind: "resource", fields: { title: item.name, link } },
     agentResult: sheetMusicSuccessEnvelope(resourceId, {
       resourceId,
       driveId: item.driveId ?? "",
@@ -696,7 +701,10 @@ async function createSharingLinkReply(
   };
 }
 
-function sheetMusicSuccessEnvelope(resourceId: string, reference: JsonRecord) {
+function sheetMusicSuccessEnvelope(
+  resourceId: string,
+  reference: JsonRecord
+) {
   return {
     status: "success" as const,
     replyText: "歌譜查詢完成。",

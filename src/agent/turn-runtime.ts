@@ -52,6 +52,7 @@ import {
   createCapabilityResolution,
   resumeCapabilityResolution
 } from "./capability-resolution.js";
+import { projectAgentReply } from "./response-projector.js";
 import {
   type AgentTraceStore,
   type AgentTurnTraceRecord,
@@ -549,9 +550,14 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
 
       const functionStartedAt = Date.now();
       try {
-        const result = await handler(normalizedArguments, {
+        const rawResult = await handler(normalizedArguments, {
           ...context,
           activeTask: controlledContinuationAuthorized ? activeTaskView(activeTask) : undefined
+        });
+        const result = projectAgentReply({
+          capability: route.action,
+          text: routingText,
+          result: rawResult
         });
         {
           const lifecycleOutcome = await applyActiveTaskTransition({

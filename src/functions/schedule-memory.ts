@@ -402,7 +402,9 @@ export function createQueryScheduleMemoryHandler(
       entries.map((entry) => ({
         date: entry.serviceDate,
         meeting: entry.meetingName,
-        role: entry.role
+        role: entry.role,
+        assignee: entry.assignee,
+        familyName: entry.familyName
       })),
       { replyText, role: args.role }
     );

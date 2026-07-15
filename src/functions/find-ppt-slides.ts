@@ -433,6 +433,10 @@ async function createRememberedReferenceReply(
         query: resource.query,
         storage: resource.storage
       },
+      responseData: {
+        kind: "resource",
+        fields: { title: resource.title, link: resource.storage.url }
+      },
       agentResult: pptSuccessEnvelope(resourceId, { resourceId })
     };
   }
@@ -540,6 +544,7 @@ async function createSharingLinkReply(
       title: item.name,
       storage: { provider: "graph", driveId, itemId: item.id }
     },
+    responseData: { kind: "resource", fields: { title: item.name, link } },
     agentResult: pptSuccessEnvelope(resourceId, {
       resourceId,
       driveId,
@@ -548,7 +553,10 @@ async function createSharingLinkReply(
   };
 }
 
-function pptSuccessEnvelope(resourceId: string, reference: JsonRecord) {
+function pptSuccessEnvelope(
+  resourceId: string,
+  reference: JsonRecord
+) {
   return {
     status: "success" as const,
     replyText: "投影片查詢完成。",

@@ -187,6 +187,7 @@ export function createQueryKnowledgeHandler(options: QueryKnowledgeOptions): Fun
       ok: true,
       executedAction: "query_knowledge",
       agentResult,
+      responseData: { kind: "knowledge", fields: { answer } },
       replyText
     };
   };

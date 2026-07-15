@@ -91,6 +91,10 @@ async function createCatalogItemReply(
     return {
       ok: true,
       replyText: [item.title, item.storageRef.url].join("\n"),
+      responseData: {
+        kind: "resource",
+        fields: { title: item.title, link: item.storageRef.url }
+      },
       agentResult: catalogItemEnvelope(item.id, { resourceId: item.id })
     };
   }
@@ -104,6 +108,7 @@ async function createCatalogItemReply(
   return {
     ok: true,
     replyText: [item.title, link].join("\n"),
+    responseData: { kind: "resource", fields: { title: item.title, link } },
     agentResult: catalogItemEnvelope(item.id, {
       resourceId: item.id,
       driveId: item.storageRef.driveId,
@@ -112,7 +117,10 @@ async function createCatalogItemReply(
   };
 }
 
-function catalogItemEnvelope(resourceId: string, reference: Record<string, string>) {
+function catalogItemEnvelope(
+  resourceId: string,
+  reference: Record<string, string>
+) {
   return {
     status: "success" as const,
     replyText: "教會資料查詢完成。",

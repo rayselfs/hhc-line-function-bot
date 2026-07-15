@@ -1,4 +1,4 @@
-import type { AgentResultEnvelope } from "./agent/result-envelope.js";
+import type { AgentReplyData, AgentResultEnvelope } from "./agent/result-envelope.js";
 
 export const FUNCTION_NAMES = [
   "find_ppt_slides",
@@ -606,6 +606,8 @@ export interface FunctionExecutionResult {
   writePhase?: "preview" | "commit";
   quickReplies?: QuickReplyItem[];
   agentResult?: AgentResultEnvelope;
+  /** Ephemeral response-only data. Never persist in task frames or traces. */
+  responseData?: AgentReplyData;
   agentResource?: AgentResourceReference;
   smallTalkTrace?: {
     lane: "smart_talk";
