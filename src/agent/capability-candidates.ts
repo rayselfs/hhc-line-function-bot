@@ -375,7 +375,28 @@ function cloneContract(contract: AgentCapabilityContract): AgentCapabilityContra
   return {
     intents: [...contract.intents],
     candidateHints: [...contract.candidateHints],
+    semanticDescription: contract.semanticDescription,
     operations: [...contract.operations],
+    responseProjection: {
+      defaultMode: contract.responseProjection.defaultMode,
+      fields: Object.fromEntries(
+        Object.entries(contract.responseProjection.fields).map(([key, field]) => [
+          key,
+          { label: field.label, aliases: [...field.aliases] }
+        ])
+      )
+    },
+    ...(contract.handoffs
+      ? {
+          handoffs: contract.handoffs.map((handoff) => ({
+            on: handoff.on,
+            to: handoff.to,
+            map: { ...handoff.map },
+            ...(handoff.when ? { when: { ...handoff.when } } : {})
+          }))
+        }
+      : {}),
+    ...(contract.genericWriteFallback ? { genericWriteFallback: true } : {}),
     ...(contract.entityTypes ? { entityTypes: [...contract.entityTypes] } : {}),
     ...(contract.argumentEvidence
       ? {
