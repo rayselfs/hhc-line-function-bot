@@ -13,6 +13,13 @@ import { createAgentMemoryStore } from "./agent/create-agent-memory-store.js";
 import { createAgentRuntime } from "./agent/agent-runtime.js";
 import { createAgentPlanner } from "./agent/planner.js";
 import { createControlledAgentRouter } from "./agent/controlled-agent-router.js";
+import {
+  createCatalogEvidenceProvider,
+  createCombinedEvidenceProvider,
+  createMemoryEvidenceProvider,
+  createResourceMemoryEvidenceProvider,
+  createScheduleEvidenceProvider
+} from "./agent/evidence/providers.js";
 import { createWikipediaSummarizer } from "./wikipedia/summarizer.js";
 import { RedisAgentJobStore } from "./agent/jobs.js";
 import { RedisConversationWindowStore } from "./agent/context-manager.js";
@@ -168,7 +175,24 @@ const controlledAgentRouter = createControlledAgentRouter({
     }
   },
   retrievalEvidenceProviders: {
-    knowledge: createKnowledgeRetrievalEvidenceProvider(knowledgeStore)
+    knowledge: createKnowledgeRetrievalEvidenceProvider(knowledgeStore),
+    schedule: createScheduleEvidenceProvider(memoryStore),
+    memory: createMemoryEvidenceProvider(memoryStore),
+    catalog_presentation: createCombinedEvidenceProvider(
+      createCatalogEvidenceProvider(catalog, {
+        domains: ["presentation"],
+        itemKinds: ["ppt_slide"]
+      }),
+      createResourceMemoryEvidenceProvider(memoryStore, ["ppt_slide"])
+    ),
+    catalog_sheet_music: createCombinedEvidenceProvider(
+      createCatalogEvidenceProvider(catalog, { domains: ["sheet_music"] }),
+      createResourceMemoryEvidenceProvider(memoryStore, ["sheet_music"])
+    ),
+    catalog_general: createCombinedEvidenceProvider(
+      createCatalogEvidenceProvider(catalog, { domains: ["general", "audio"] }),
+      createResourceMemoryEvidenceProvider(memoryStore, ["general_resource"])
+    )
   }
 });
 await knowledgeStore.purgeExpired(new Date());

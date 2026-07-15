@@ -792,6 +792,8 @@ async function resolveControlledPlan(
       text,
       enabledFunctions: input.profile.enabledFunctions,
       sourceType: input.event.source.type,
+      sourceId: controlledSourceId(input.event.source),
+      requesterUserId: input.event.source.userId,
       activeTask,
       maxCandidates: input.profile.controlledAgent?.maxCandidates ?? 3,
       minPlannerConfidence: input.profile.controlledAgent?.minPlannerConfidence ?? 0.65
@@ -802,6 +804,12 @@ async function resolveControlledPlan(
   } catch {
     return { disposition: "clarify", reasonCode: "planner_unavailable" };
   }
+}
+
+function controlledSourceId(source: LineSource): string | undefined {
+  if (source.type === "group") return source.groupId;
+  if (source.type === "user") return source.userId;
+  return undefined;
 }
 
 function resultEnvelopeTraceStep(result: FunctionExecutionResult): AgentTurnTraceStep {

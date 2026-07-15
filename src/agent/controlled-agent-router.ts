@@ -9,24 +9,21 @@ import {
 import type { AgentPlanner } from "./planner.js";
 import { validateAgentPlan, type ValidatedAgentPlan } from "./plan-validator.js";
 import type { AgentTurnTraceStep, AgentValidatorReason } from "./trace-store.js";
+import type { AgentEvidenceProvider } from "./evidence/types.js";
 
 export interface DynamicKnowledgeMetadataProvider {
   list(profileName: string, limit: number): Promise<readonly KnowledgeSourceMetadata[]>;
 }
 
-export interface RetrievalEvidenceProvider {
-  probe(input: {
-    profileName: string;
-    text: string;
-    maxSources: number;
-  }): Promise<{ matched: boolean; count?: number; opaqueIds?: readonly string[] }>;
-}
+export type RetrievalEvidenceProvider = AgentEvidenceProvider;
 
 export interface ControlledAgentRouterInput {
   profileName: string;
   text: string;
   enabledFunctions: readonly FunctionName[];
   sourceType: string;
+  sourceId?: string;
+  requesterUserId?: string;
   activeTask?: ActiveTaskContext;
   maxCandidates: number;
   minPlannerConfidence: number;
@@ -170,7 +167,10 @@ async function readRetrievalEvidence(
       const evidence = await provider.probe({
         profileName: input.profileName,
         text: input.text,
-        maxSources: KNOWLEDGE_METADATA_LIMIT
+        source,
+        sourceId: input.sourceId,
+        requesterUserId: input.requesterUserId,
+        maxResults: KNOWLEDGE_METADATA_LIMIT
       });
       if (evidence.matched) for (const capability of capabilities) matched.add(capability);
     } catch {
