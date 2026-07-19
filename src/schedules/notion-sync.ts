@@ -3,6 +3,7 @@ import type { CatalogSourceRecord } from "../catalog/store.js";
 import type { NotionConfig, NotionDatabaseClient } from "../types.js";
 import { normalizeNotionSchedulePage } from "./notion-adapter.js";
 import type { ScheduleStore } from "./store.js";
+import type { ScheduleItemInput } from "./store.js";
 
 export interface SyncNotionScheduleSourceOptions {
   schedules: ScheduleStore;
@@ -24,8 +25,7 @@ export async function syncNotionScheduleSource(
   options: SyncNotionScheduleSourceOptions
 ): Promise<SyncNotionScheduleSourceResult> {
   const pages = await options.notion.queryDatabase(options.databaseId);
-  const liveExternalKeys: string[] = [];
-  let upserted = 0;
+  const snapshotItems: ScheduleItemInput[] = [];
   let skipped = 0;
   let malformed = 0;
 
@@ -50,8 +50,7 @@ export async function syncNotionScheduleSource(
       continue;
     }
     for (const assignment of normalized.meeting.assignments) {
-      liveExternalKeys.push(assignment.externalKey);
-      await options.schedules.upsertItem({
+      snapshotItems.push({
         profileName: options.source.profileName,
         sourceKey: options.source.sourceKey,
         origin: "notion",
@@ -62,19 +61,25 @@ export async function syncNotionScheduleSource(
         role: assignment.role,
         assignee: assignment.assignees.join(",")
       });
-      upserted += 1;
     }
   }
 
-  const tombstoned = await options.schedules.tombstoneMissingExternalKeys({
+  const publishedAt = (options.now ?? (() => new Date()))().toISOString();
+  const publication = await options.schedules.publishSnapshot({
     profileName: options.source.profileName,
     sourceKey: options.source.sourceKey,
     origin: "notion",
-    liveExternalKeys,
-    deletedAt: (options.now ?? (() => new Date()))().toISOString()
+    revision: `${options.source.id}:${publishedAt}`,
+    items: snapshotItems,
+    publishedAt
   });
 
-  return { upserted, skipped, tombstoned, malformed };
+  return {
+    upserted: publication.published,
+    skipped,
+    tombstoned: Math.max(0, publication.replaced - publication.published),
+    malformed
+  };
 }
 
 function extractDateKey(value: string): string {

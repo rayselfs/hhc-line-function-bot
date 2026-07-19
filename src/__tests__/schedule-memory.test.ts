@@ -7,6 +7,7 @@ import {
   parseScheduleMemoryContent
 } from "../functions/schedule-memory.js";
 import type { BotProfileConfig, FunctionHandlerContext } from "../types.js";
+import { DEFAULT_SCHEDULE_DOMAINS } from "../schedules/domain-registry.js";
 
 const morningPrayerText = `👉週二、週五〝全教會〞實體晨更，週三、週四各家族線上晨更，隔週四有仙履奇緣。
 
@@ -143,6 +144,74 @@ describe("schedule memory", () => {
     await expect(
       store.searchScheduleEntries({ profileName: "helper", source: context().event.source })
     ).resolves.toEqual([]);
+  });
+
+  it("rejects a preview after its schedule domain revision changes", async () => {
+    const store = new InMemoryAgentMemoryStore();
+    const handler = createSaveScheduleMemoryHandler({ memoryStore: store });
+    const result = await handler(
+      {
+        content: morningPrayerText,
+        domainKey: "morning_prayer_family",
+        domainRevision: "old-revision",
+        confirm: true
+      },
+      {
+        ...context(),
+        profile: {
+          ...profile(),
+          schedulePolicy: { meetingWindows: [], domains: DEFAULT_SCHEDULE_DOMAINS }
+        }
+      }
+    );
+
+    expect(result.replyText).toContain("設定已更新");
+    await expect(store.listScheduleMemories({ profileName: "helper", limit: 10 })).resolves.toEqual(
+      []
+    );
+  });
+
+  it("enforces the domain write policy before parsing content", async () => {
+    const handler = createSaveScheduleMemoryHandler({
+      memoryStore: new InMemoryAgentMemoryStore()
+    });
+    const result = await handler(
+      { content: "7/21 音控：Ray", domainKey: "media_team_service", confirm: true },
+      {
+        ...context(),
+        profile: {
+          ...profile(),
+          schedulePolicy: { meetingWindows: [], domains: DEFAULT_SCHEDULE_DOMAINS }
+        }
+      }
+    );
+    expect(result.replyText).toContain("只能查詢");
+  });
+
+  it("saves a new existing-schema domain without a handler or router branch", async () => {
+    const store = new InMemoryAgentMemoryStore({
+      now: () => new Date("2026-07-20T00:00:00.000Z")
+    });
+    const save = createSaveScheduleMemoryHandler({ memoryStore: store });
+    const query = createQueryScheduleMemoryHandler({
+      memoryStore: store,
+      now: () => new Date("2026-07-20T00:00:00.000Z")
+    });
+    const ctx = {
+      ...context("保存兒童主日服事"),
+      profile: {
+        ...profile(),
+        schedulePolicy: { meetingWindows: [], domains: DEFAULT_SCHEDULE_DOMAINS }
+      }
+    };
+    const saved = await save({ content: "7/26 兒童主日 主領：Ray", confirm: true }, ctx);
+    const found = await query(
+      { query: "兒童主日", scheduleType: "children_sunday", dateIntent: "next_meeting" },
+      ctx
+    );
+
+    expect(saved.replyText).toContain("已保存 1 筆");
+    expect(found.replyText).toContain("主領：Ray");
   });
 
   it("saves and queries schedule entries by type without mixing service schedules", async () => {

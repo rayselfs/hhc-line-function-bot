@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createNotionDatabaseClient } from "../clients/notion.js";
 import { createQueryServiceScheduleHandler } from "../functions/query-service-schedule.js";
 import { readTimeZone } from "../time-zone.js";
+import { DEFAULT_SCHEDULE_DOMAINS } from "../schedules/domain-registry.js";
 import type { BotProfileConfig, FunctionHandlerContext, NotionConfig } from "../types.js";
 
 const requiredEnvNames = [
@@ -217,7 +218,7 @@ function handlerContext(): FunctionHandlerContext {
       maxCandidates: 3,
       minPlannerConfidence: 0.65
     },
-    schedulePolicy: { meetingWindows: [] }
+    schedulePolicy: { meetingWindows: [], domains: DEFAULT_SCHEDULE_DOMAINS }
   };
 
   return {

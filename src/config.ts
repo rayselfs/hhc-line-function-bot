@@ -8,6 +8,7 @@ import { providerCapabilities } from "./llm/provider-metadata.js";
 import { normalizeProviderPolicy } from "./llm/provider-policy.js";
 import { FUNCTION_NAMES, MODEL_PROVIDER_LANE_NAMES, MODEL_PROVIDER_NAMES } from "./types.js";
 import { DEFAULT_MEETING_WINDOWS } from "./schedules/occurrence-policy.js";
+import { DEFAULT_SCHEDULE_DOMAINS } from "./schedules/domain-registry.js";
 import type {
   AppConfig,
   FunctionName,
@@ -44,9 +45,53 @@ const meetingWindowSchema = z
 
 const schedulePolicySchema = z
   .object({
-    meetingWindows: z.array(meetingWindowSchema).min(1)
+    meetingWindows: z.array(meetingWindowSchema).min(1),
+    domains: z
+      .array(
+        z.object({
+          key: z
+            .string()
+            .trim()
+            .regex(/^[a-z][a-z0-9_]*$/u)
+            .max(80),
+          displayName: z.string().trim().min(1).max(80),
+          aliases: z.array(z.string().trim().min(1).max(80)).min(1),
+          routingHints: z.array(z.string().trim().min(1).max(80)).default([]),
+          schemaVersion: z.number().int().positive(),
+          inputSchema: z.enum(["assignment_rows_v1", "family_rotation_v1"]),
+          occurrencePolicy: z.string().trim().min(1).max(80),
+          binding: z.discriminatedUnion("kind", [
+            z.object({
+              kind: z.literal("canonical"),
+              sourceKeys: z.array(z.string().trim().min(1).max(100)).min(1),
+              allowLiveFallback: z.boolean().default(false)
+            }),
+            z.object({
+              kind: z.literal("saved_schedule"),
+              scheduleType: z
+                .string()
+                .trim()
+                .regex(/^[a-z][a-z0-9_]*$/u)
+                .max(80)
+            })
+          ]),
+          origins: z.array(z.enum(["notion", "line"])).min(1),
+          writePolicy: z.object({
+            mode: z.enum(["read_only", "replace_add"]),
+            allowedOperations: z.array(z.enum(["replace", "add_entry"]))
+          }),
+          priority: z.number().int().min(0).max(1000),
+          revision: z.string().trim().min(1).max(80),
+          freshnessPolicy: z.object({
+            maxAgeSeconds: z.number().int().positive(),
+            staleBehavior: z.enum(["reject", "allow_with_notice"])
+          })
+        })
+      )
+      .min(1)
+      .default(DEFAULT_SCHEDULE_DOMAINS)
   })
-  .superRefine(({ meetingWindows }, ctx) => {
+  .superRefine(({ meetingWindows, domains }, ctx) => {
     const keys = new Set<string>();
     const aliases = new Set<string>();
     for (const [index, window] of meetingWindows.entries()) {
@@ -68,6 +113,24 @@ const schedulePolicySchema = z
           });
         }
         aliases.add(normalized);
+      }
+    }
+    const domainKeys = new Set<string>();
+    for (const [index, domain] of domains.entries()) {
+      if (domainKeys.has(domain.key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["domains", index, "key"],
+          message: "Duplicate schedule domain key"
+        });
+      }
+      domainKeys.add(domain.key);
+      if (domain.writePolicy.mode === "read_only" && domain.writePolicy.allowedOperations.length) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["domains", index, "writePolicy"],
+          message: "Read-only domains cannot allow writes"
+        });
       }
     }
   });
@@ -129,7 +192,8 @@ const profileSchema = z.object({
     })
     .default({ taskFrameSeconds: 600 }),
   schedulePolicy: schedulePolicySchema.default({
-    meetingWindows: DEFAULT_MEETING_WINDOWS
+    meetingWindows: DEFAULT_MEETING_WINDOWS,
+    domains: DEFAULT_SCHEDULE_DOMAINS
   }),
   generalAgent: z
     .object({

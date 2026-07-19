@@ -183,6 +183,42 @@ export interface MeetingWindowRule {
 
 export interface SchedulePolicyConfig {
   meetingWindows: MeetingWindowRule[];
+  domains: ScheduleDomainConfig[];
+}
+
+export type ScheduleDomainInputSchema = "assignment_rows_v1" | "family_rotation_v1";
+
+export type ScheduleDomainBinding =
+  | {
+      kind: "canonical";
+      sourceKeys: string[];
+      allowLiveFallback: boolean;
+    }
+  | {
+      kind: "saved_schedule";
+      scheduleType: string;
+    };
+
+export interface ScheduleDomainConfig {
+  key: string;
+  displayName: string;
+  aliases: string[];
+  routingHints: string[];
+  schemaVersion: number;
+  inputSchema: ScheduleDomainInputSchema;
+  occurrencePolicy: string;
+  binding: ScheduleDomainBinding;
+  origins: Array<"notion" | "line">;
+  writePolicy: {
+    mode: "read_only" | "replace_add";
+    allowedOperations: Array<"replace" | "add_entry">;
+  };
+  priority: number;
+  revision: string;
+  freshnessPolicy: {
+    maxAgeSeconds: number;
+    staleBehavior: "reject" | "allow_with_notice";
+  };
 }
 
 export interface LongRunningJobsConfig {

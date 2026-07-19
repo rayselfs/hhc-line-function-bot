@@ -37,6 +37,14 @@ export interface ScheduleSearchInput {
 }
 
 export interface ScheduleStore {
+  publishSnapshot(input: {
+    profileName: string;
+    sourceKey: string;
+    origin: ScheduleOrigin;
+    revision: string;
+    items: ScheduleItemInput[];
+    publishedAt: string;
+  }): Promise<{ published: number; replaced: number }>;
   upsertItem(input: ScheduleItemInput): Promise<ScheduleItemRecord>;
   tombstoneMissingExternalKeys(input: {
     profileName: string;
@@ -49,7 +57,51 @@ export interface ScheduleStore {
 }
 
 export class InMemoryScheduleStore implements ScheduleStore {
-  private readonly items = new Map<string, ScheduleItemRecord>();
+  private items = new Map<string, ScheduleItemRecord>();
+
+  async publishSnapshot(input: {
+    profileName: string;
+    sourceKey: string;
+    origin: ScheduleOrigin;
+    revision: string;
+    items: ScheduleItemInput[];
+    publishedAt: string;
+  }): Promise<{ published: number; replaced: number }> {
+    const previous = Array.from(this.items.values()).filter(
+      (item) =>
+        item.profileName === input.profileName &&
+        item.sourceKey === input.sourceKey &&
+        item.origin === input.origin &&
+        !item.deletedAt
+    ).length;
+    const next = new Map(
+      Array.from(this.items.entries()).filter(
+        ([, item]) =>
+          !(
+            item.profileName === input.profileName &&
+            item.sourceKey === input.sourceKey &&
+            item.origin === input.origin
+          )
+      )
+    );
+    for (const item of input.items) {
+      if (
+        item.profileName !== input.profileName ||
+        item.sourceKey !== input.sourceKey ||
+        item.origin !== input.origin
+      ) {
+        throw new Error("Schedule snapshot item scope does not match publication scope");
+      }
+      const record: ScheduleItemRecord = {
+        ...item,
+        id: randomUUID(),
+        normalizedSearchText: searchableScheduleText(item)
+      };
+      next.set(record.id, record);
+    }
+    this.items = next;
+    return { published: input.items.length, replaced: previous };
+  }
 
   async upsertItem(input: ScheduleItemInput): Promise<ScheduleItemRecord> {
     const identity = scheduleItemIdentity(input);

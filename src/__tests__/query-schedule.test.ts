@@ -68,7 +68,7 @@ function scheduleTask(result: Awaited<ReturnType<ReturnType<typeof createQuerySc
 }
 
 describe("query_schedule", () => {
-  it("asks for a domain only when both schedule resolvers have matching data", async () => {
+  it("uses an explicit domain alias even when another domain has matching meeting text", async () => {
     const now = () => new Date("2026-07-15T00:00:00.000Z");
     const memoryStore = new InMemoryAgentMemoryStore({ now });
     await memoryStore.saveScheduleMemory({
@@ -109,9 +109,10 @@ describe("query_schedule", () => {
 
     const result = await query({ query: "7/21晨更服事" }, context("7/21晨更服事"));
 
+    expect(result.replyText).toContain("黃弘家族1");
     expect(result.agentResult).toMatchObject({
-      status: "ambiguous",
-      clarification: { choices: ["影視團隊服事", "晨更家族服事"] }
+      status: "success",
+      anchors: { domainKey: "morning_prayer_family" }
     });
     await expect(
       sessionStore.findPendingResolution({
@@ -119,10 +120,7 @@ describe("query_schedule", () => {
         source: { type: "group", groupId: "C1", userId: "U1" },
         requesterUserId: "U1"
       })
-    ).resolves.toMatchObject({
-      capability: "query_schedule",
-      groundedArguments: expect.objectContaining({ specificDate: "2026-07-21" })
-    });
+    ).resolves.toBeUndefined();
   });
 
   it("clarifies a generic next-service request when multiple schedule domains match", async () => {
@@ -177,7 +175,7 @@ describe("query_schedule", () => {
     expect(result.replyText).not.toContain("黃弘家族1");
   });
 
-  it("uses role evidence to query only the media schedule resolver", async () => {
+  it("clarifies when current text names one domain but a role identifies another", async () => {
     const scheduleStore = new InMemoryScheduleStore();
     await scheduleStore.upsertItem({
       profileName: "helper",
@@ -198,8 +196,10 @@ describe("query_schedule", () => {
 
     const result = await query({ query: "晨更音控是誰" }, context("晨更音控是誰"));
 
-    expect(result.replyText).toContain("音控：資恆");
-    expect(result.agentResult?.anchors).toMatchObject({ domainKey: "media_team_service" });
+    expect(result.agentResult).toMatchObject({
+      status: "ambiguous",
+      clarification: { choices: ["影視團隊服事", "晨更家族服事"] }
+    });
   });
 
   it("skips a same-day meeting after its configured end time in the read model", async () => {
@@ -929,7 +929,7 @@ describe("query_schedule", () => {
     expect(result.quickReplies?.map((item) => item.label)).toEqual(["下一場", "本週", "主日"]);
   });
 
-  it("aggregates saved and synchronized schedule results into one structured result", async () => {
+  it("clarifies a generic query when saved and synchronized domains both match", async () => {
     const now = () => new Date("2026-07-13T00:00:00.000Z");
     const memoryStore = new InMemoryAgentMemoryStore({ now });
     await memoryStore.saveScheduleMemory({
@@ -968,29 +968,13 @@ describe("query_schedule", () => {
       context("查7月19日主日服事")
     );
 
-    expect(result.replyText).toContain("主日：保存同工");
-    expect(result.replyText).toContain("音控：同步同工");
     expect(result.agentResult).toMatchObject({
-      status: "success",
-      entities: expect.arrayContaining([
-        expect.objectContaining({ type: "role", label: "招待" }),
-        expect.objectContaining({ type: "role", label: "音控" })
-      ]),
-      supportedOperations: ["continue", "refine", "advance"]
-    });
-    expect(result.agentResult).toMatchObject({
-      anchors: {
-        date: "2026-07-19",
-        meeting: "主日"
-      },
-      entities: expect.arrayContaining([
-        expect.objectContaining({ type: "role", label: "招待" }),
-        expect.objectContaining({ type: "role", label: "音控" })
-      ])
+      status: "ambiguous",
+      clarification: { choices: ["影視團隊服事", "其他服事"] }
     });
   });
 
-  it("preserves ambiguity when partial role candidates come from different schedule sources", async () => {
+  it("clarifies the domain before resolving roles from different schedule sources", async () => {
     const now = () => new Date("2026-07-13T00:00:00.000Z");
     const memoryStore = new InMemoryAgentMemoryStore({ now });
     await memoryStore.saveScheduleMemory({
@@ -1031,7 +1015,7 @@ describe("query_schedule", () => {
 
     expect(result.agentResult).toMatchObject({
       status: "ambiguous",
-      clarification: { choices: ["前攝影", "後攝影"] }
+      clarification: { choices: ["影視團隊服事", "其他服事"] }
     });
     expect(result.replyText).not.toContain("前方同工");
     expect(result.replyText).not.toContain("後方同工");

@@ -26,7 +26,6 @@ import { readTimeZone } from "../time-zone.js";
 import {
   extractScheduleRoleFocus,
   isScheduleAdvanceFollowUp,
-  MEDIA_TEAM_SCHEDULE_SOURCE_KEYS,
   refineScheduleQuery
 } from "./schedule-query-refinement.js";
 import {
@@ -36,12 +35,15 @@ import {
 } from "./schedule-result.js";
 import { selectFirstUpcomingOccurrence } from "../schedules/occurrence-policy.js";
 import type { MeetingWindowRule } from "../types.js";
-import {
-  resolveScheduleDomain,
-  scheduleDomainChoices,
-  SCHEDULE_DOMAIN_KEYS
-} from "./schedule-resolver.js";
+import { resolveScheduleDomain, scheduleDomainChoices } from "./schedule-resolver.js";
+import type { ScheduleDomainConfig } from "../types.js";
+import { DEFAULT_SCHEDULE_DOMAINS } from "../schedules/domain-registry.js";
 import { storePendingResolution } from "./pending-resolution.js";
+
+const DEFAULT_MEDIA_SOURCE_KEYS = (() => {
+  const binding = DEFAULT_SCHEDULE_DOMAINS.find(({ key }) => key === "media_team_service")?.binding;
+  return binding?.kind === "canonical" ? binding.sourceKeys : ["media_team_service_schedule"];
+})();
 
 export interface QueryScheduleFunctionOptions {
   memoryStore: AgentMemoryStore;
@@ -58,6 +60,120 @@ export interface QueryScheduleFunctionOptions {
   sessionStore?: SessionStore;
   now?: () => Date;
   requestIdFactory?: () => string;
+}
+
+async function queryScheduleDomain(input: {
+  domain: ScheduleDomainConfig;
+  args: QueryScheduleArguments;
+  context: FunctionHandlerContext;
+  options: QueryScheduleFunctionOptions;
+  memoryHandler: FunctionHandler;
+  serviceHandler?: FunctionHandler;
+  now: Date;
+  timeZone: string;
+  afterDate?: string;
+}): Promise<FunctionExecutionResult> {
+  const domainArgs = queryScheduleArgumentsSchema.parse({
+    ...input.args,
+    query: stripDomainAliases(input.args.query, input.domain.aliases),
+    domainKey: input.domain.key,
+    scheduleType:
+      input.domain.binding.kind === "saved_schedule" ? input.domain.binding.scheduleType : undefined
+  });
+  if (input.domain.binding.kind === "saved_schedule") {
+    return withScheduleDomain(
+      await input.memoryHandler(domainArgs, input.context),
+      input.domain.key
+    );
+  }
+
+  const readModel = input.options.scheduleStore
+    ? await queryScheduleReadModel({
+        scheduleStore: input.options.scheduleStore,
+        args: domainArgs,
+        profileName: input.context.profile.name,
+        now: input.now,
+        timeZone: input.timeZone,
+        afterDate: input.afterDate,
+        availableRoles: activeTaskRoles(input.context.activeTask),
+        sourceKeys: input.domain.binding.sourceKeys,
+        meetingWindows: input.context.profile.schedulePolicy?.meetingWindows
+      })
+    : undefined;
+  if (readModel && !isNoScheduleResult(readModel.replyText)) {
+    return withScheduleDomain(readModel, input.domain.key);
+  }
+  if (input.domain.binding.allowLiveFallback && input.serviceHandler) {
+    return withScheduleDomain(
+      await input.serviceHandler(domainArgs, input.context),
+      input.domain.key
+    );
+  }
+  return withScheduleDomain(
+    readModel ?? {
+      ok: true,
+      replyText: "查不到符合的服事表。",
+      agentResult: scheduleResultEnvelope([], { replyText: "查不到符合的服事表。" })
+    },
+    input.domain.key
+  );
+}
+
+function stripDomainAliases(query: string, aliases: string[]): string {
+  return [...aliases]
+    .sort((left, right) => right.length - left.length)
+    .reduce((value, alias) => value.replaceAll(alias, " "), query)
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+async function storeAndReplyWithDomainClarification(input: {
+  candidates: ReturnType<typeof scheduleDomainChoices>;
+  args: QueryScheduleArguments;
+  context: FunctionHandlerContext;
+  options: QueryScheduleFunctionOptions;
+  now: Date;
+}): Promise<FunctionExecutionResult> {
+  await storePendingResolution({
+    sessionStore: input.options.sessionStore,
+    requestId: input.options.requestIdFactory?.() ?? input.context.requestId ?? randomUUID(),
+    capability: "query_schedule",
+    groundedArguments: input.args,
+    candidates: input.candidates,
+    context: input.context,
+    now: input.now
+  });
+  const replyText = `你要查哪一類服事：${input.candidates
+    .map((item) => item.displayName)
+    .join("、")}？`;
+  return {
+    ok: true,
+    replyText,
+    quickReplies: input.candidates.map((item) => ({
+      label: item.displayName,
+      action: { type: "message", label: item.displayName, text: item.displayName }
+    })),
+    agentResult: {
+      status: "ambiguous",
+      replyText,
+      clarification: {
+        prompt: replyText,
+        choices: input.candidates.map((item) => item.displayName)
+      }
+    }
+  };
+}
+
+function domainKeyForScheduleType(
+  domains: ScheduleDomainConfig[],
+  scheduleType?: string
+): string | undefined {
+  return scheduleType
+    ? domains.find(
+        (domain) =>
+          domain.binding.kind === "saved_schedule" && domain.binding.scheduleType === scheduleType
+      )?.key
+    : undefined;
 }
 
 export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions): FunctionHandler {
@@ -78,7 +194,7 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
           sessionStore: options.sessionStore,
           now,
           requestIdFactory: options.requestIdFactory,
-          sourceKeys: [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS]
+          sourceKeys: DEFAULT_MEDIA_SOURCE_KEYS
         })
       : undefined;
 
@@ -113,95 +229,46 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
       ...(roleFocus ? { role: roleFocus } : {}),
       query: roleFocus ? "" : refinement.residualQuery
     });
-    const resolution =
-      refinedArgs.scheduleType && refinedArgs.scheduleType !== "morning_prayer_family"
-        ? ({ status: "not_found" } as const)
-        : resolveScheduleDomain({
-            text: args.query,
-            requestedDomainKey: refinedArgs.domainKey,
-            activeDomainKey: activeTaskDomainKey(context.activeTask?.anchors)
-          });
-    const selectedDomain =
-      resolution.status === "selected" ? resolution.candidate.domainKey : undefined;
-    const ambiguousDomains = resolution.status === "ambiguous";
-    const memorySpecific =
-      selectedDomain === SCHEDULE_DOMAIN_KEYS.family ||
-      Boolean(refinedArgs.scheduleType) ||
-      isMemorySpecificRequest(args.query);
-    const afterDate = scheduleAdvanceDate(args, context.activeTask?.anchors);
-    const results: Array<{ domainKey: string; result: FunctionExecutionResult }> = [];
-    const familyArgs = queryScheduleArgumentsSchema.parse({
-      ...refinedArgs,
-      scheduleType: "morning_prayer_family",
-      domainKey: SCHEDULE_DOMAIN_KEYS.family
+    const domains = context.profile.schedulePolicy?.domains ?? DEFAULT_SCHEDULE_DOMAINS;
+    const requestedDomainKey =
+      refinedArgs.domainKey ?? domainKeyForScheduleType(domains, refinedArgs.scheduleType);
+    const resolution = resolveScheduleDomain({
+      domains,
+      text: args.query,
+      requestedDomainKey,
+      activeDomainKey: activeTaskDomainKey(context.activeTask?.anchors)
     });
-    const mediaArgs = queryScheduleArgumentsSchema.parse({
-      ...refinedArgs,
-      scheduleType: undefined,
-      domainKey: SCHEDULE_DOMAIN_KEYS.media
-    });
-    const includeFamily =
-      selectedDomain === SCHEDULE_DOMAIN_KEYS.family ||
-      ambiguousDomains ||
-      (!selectedDomain && refinement.structuredArguments.scheduleCategory !== "media_team");
-    const includeMedia =
-      selectedDomain === SCHEDULE_DOMAIN_KEYS.media ||
-      ambiguousDomains ||
-      (!selectedDomain && !memorySpecific);
-
-    if (includeFamily) {
-      const memoryArgs =
-        selectedDomain === SCHEDULE_DOMAIN_KEYS.family || ambiguousDomains
-          ? familyArgs
-          : refinedArgs;
-      const memoryResult = await memoryHandler(memoryArgs, context);
-      const memoryDomainKey =
-        selectedDomain === SCHEDULE_DOMAIN_KEYS.family ||
-        ambiguousDomains ||
-        memoryResult.agentResult?.anchors?.scheduleType === "morning_prayer_family"
-          ? SCHEDULE_DOMAIN_KEYS.family
-          : "saved_schedule";
-      results.push({
-        domainKey: memoryDomainKey,
-        result:
-          memoryDomainKey === SCHEDULE_DOMAIN_KEYS.family
-            ? withScheduleDomain(memoryResult, SCHEDULE_DOMAIN_KEYS.family)
-            : memoryResult
+    if (resolution.status === "ambiguous") {
+      return storeAndReplyWithDomainClarification({
+        candidates: resolution.candidates,
+        args: refinedArgs,
+        context,
+        options,
+        now: now()
       });
     }
-    if (includeMedia) {
-      const readModel = options.scheduleStore
-        ? await queryScheduleReadModel({
-            scheduleStore: options.scheduleStore,
-            args: mediaArgs,
-            profileName: context.profile.name,
-            now: now(),
-            timeZone,
-            afterDate,
-            availableRoles: activeTaskRoles(context.activeTask),
-            sourceKeys: [...MEDIA_TEAM_SCHEDULE_SOURCE_KEYS],
-            meetingWindows: context.profile.schedulePolicy?.meetingWindows
-          })
-        : undefined;
-      if (readModel && !isNoScheduleResult(readModel.replyText)) {
-        results.push({
-          domainKey: SCHEDULE_DOMAIN_KEYS.media,
-          result: withScheduleDomain(readModel, SCHEDULE_DOMAIN_KEYS.media)
-        });
-      } else if (serviceHandler) {
-        results.push({
-          domainKey: SCHEDULE_DOMAIN_KEYS.media,
-          result: withScheduleDomain(
-            await serviceHandler(mediaArgs, context),
-            SCHEDULE_DOMAIN_KEYS.media
-          )
-        });
-      } else if (readModel) {
-        results.push({
-          domainKey: SCHEDULE_DOMAIN_KEYS.media,
-          result: withScheduleDomain(readModel, SCHEDULE_DOMAIN_KEYS.media)
-        });
-      }
+    const selectedDomainKey =
+      resolution.status === "selected" ? resolution.candidate.domainKey : undefined;
+    const afterDate = scheduleAdvanceDate(args, context.activeTask?.anchors);
+    const results: Array<{ domainKey: string; result: FunctionExecutionResult }> = [];
+    const eligibleDomains = selectedDomainKey
+      ? domains.filter(({ key }) => key === selectedDomainKey)
+      : domains;
+    for (const domain of eligibleDomains) {
+      results.push({
+        domainKey: domain.key,
+        result: await queryScheduleDomain({
+          domain,
+          args: refinedArgs,
+          context,
+          options,
+          memoryHandler,
+          serviceHandler,
+          now: now(),
+          timeZone,
+          afterDate
+        })
+      });
     }
 
     const found = results.filter(({ result }) => !isNoScheduleResult(result.replyText));
@@ -224,38 +291,21 @@ export function createQueryScheduleHandler(options: QueryScheduleFunctionOptions
       };
     }
     const foundDomainKeys = new Set(found.map(({ domainKey }) => domainKey));
-    const unresolvedGenericDomain =
-      resolution.status === "not_found" &&
-      !memorySpecific &&
-      refinedArgs.dateIntent === "next_meeting" &&
-      !isExplicitAllScheduleDomainsRequest(args.query);
-    if ((ambiguousDomains || unresolvedGenericDomain) && foundDomainKeys.size > 1) {
-      const candidates = (
-        resolution.status === "ambiguous" ? resolution.candidates : scheduleDomainChoices()
-      ).filter((candidate) => foundDomainKeys.has(candidate.domainKey));
-      await storePendingResolution({
-        sessionStore: options.sessionStore,
-        requestId: options.requestIdFactory?.() ?? context.requestId ?? randomUUID(),
-        capability: "query_schedule",
-        groundedArguments: refinedArgs,
+    if (
+      !selectedDomainKey &&
+      foundDomainKeys.size > 1 &&
+      !isExplicitAllScheduleDomainsRequest(args.query)
+    ) {
+      const candidates = scheduleDomainChoices(domains).filter((candidate) =>
+        foundDomainKeys.has(candidate.domainKey)
+      );
+      return storeAndReplyWithDomainClarification({
         candidates,
+        args: refinedArgs,
         context,
+        options,
         now: now()
       });
-      const replyText = `你要查哪一類服事：${candidates.map((item) => item.displayName).join("、")}？`;
-      return {
-        ok: true,
-        replyText,
-        quickReplies: candidates.map((item) => ({
-          label: item.displayName,
-          action: { type: "message", label: item.displayName, text: item.displayName }
-        })),
-        agentResult: {
-          status: "ambiguous",
-          replyText,
-          clarification: { prompt: replyText, choices: candidates.map((item) => item.displayName) }
-        }
-      };
     }
     if (found.length === 1) {
       return found[0].result;
@@ -304,10 +354,6 @@ function activeTaskRoles(activeTask: FunctionHandlerContext["activeTask"]): stri
 
 function isScheduleListRequest(query: string): boolean {
   return /(?:有|已)?(?:存|保存|記住).*(?:哪些|什麼|清單|列表)|有哪些.*服事表/u.test(query);
-}
-
-function isMemorySpecificRequest(query: string): boolean {
-  return /舉牌|為耶穌|晨更家族|家族晨更|仙履奇緣|家族|家園/u.test(query);
 }
 
 function isExplicitAllScheduleDomainsRequest(query: string): boolean {

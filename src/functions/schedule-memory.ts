@@ -25,6 +25,10 @@ import { resolveScheduleResultRows, scheduleResultEnvelope } from "./schedule-re
 import { selectFirstUpcomingOccurrence } from "../schedules/occurrence-policy.js";
 import type { MeetingWindowRule } from "../types.js";
 import { readTimeZone } from "../time-zone.js";
+import { DEFAULT_SCHEDULE_DOMAINS } from "../schedules/domain-registry.js";
+import { resolveScheduleDomain, scheduleDomainCandidate } from "../schedules/domain-registry.js";
+import { storePendingResolution } from "./pending-resolution.js";
+import type { ScheduleDomainConfig } from "../types.js";
 
 const SCHEDULE_MEMORY_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -78,9 +82,51 @@ export function createSaveScheduleMemoryHandler(
       return { ok: true, replyText: "好，我先不保存。" };
     }
 
-    if (args.operation && args.operation !== "replace") {
+    const domainResolution = resolveSaveScheduleDomain({ args, context, content });
+    if (domainResolution.status === "ambiguous") {
+      await storePendingResolution({
+        sessionStore: options.sessionStore,
+        requestId: requestIdFactory(),
+        capability: action,
+        groundedArguments: args,
+        candidates: domainResolution.domains.map(scheduleDomainCandidate),
+        context,
+        now: now()
+      });
+      const choices = domainResolution.domains.map(({ displayName }) => displayName);
+      return {
+        ok: true,
+        replyText: `這份內容要保存到哪一類服事：${choices.join("、")}？`,
+        quickReplies: choices.map((choice) => ({
+          label: choice,
+          action: { type: "message" as const, label: choice, text: choice }
+        }))
+      };
+    }
+    const domain = domainResolution.domain;
+    if (domain && domain.writePolicy.mode === "read_only") {
+      return { ok: true, replyText: `「${domain.displayName}」目前只能查詢，不能從 LINE 覆寫。` };
+    }
+    if (args.domainRevision && domain?.revision !== args.domainRevision) {
+      return { ok: true, replyText: "服事類型設定已更新，請重新送出內容並確認。" };
+    }
+    const effectiveArgs = saveScheduleMemoryArgumentsSchema.parse({
+      ...args,
+      ...(domain
+        ? {
+            domainKey: domain.key,
+            domainRevision: domain.revision,
+            scheduleType:
+              domain.binding.kind === "saved_schedule"
+                ? domain.binding.scheduleType
+                : args.scheduleType
+          }
+        : {})
+    });
+
+    if (effectiveArgs.operation && effectiveArgs.operation !== "replace") {
       return handleScheduleMutation({
-        args,
+        args: effectiveArgs,
         context,
         options,
         now: now(),
@@ -96,8 +142,8 @@ export function createSaveScheduleMemoryHandler(
     const parsed = parseScheduleMemoryContent({
       content,
       now: now(),
-      scheduleType: args.scheduleType,
-      title: args.title
+      scheduleType: effectiveArgs.scheduleType,
+      title: effectiveArgs.title
     });
 
     if (parsed.entries.length === 0) {
@@ -107,7 +153,7 @@ export function createSaveScheduleMemoryHandler(
       };
     }
 
-    if (!args.confirm && !isConfirmText(args.query)) {
+    if (!effectiveArgs.confirm && !isConfirmText(effectiveArgs.query)) {
       const periodKey = parsed.entries[0]?.serviceDate.slice(0, 7);
       const existing = periodKey
         ? (
@@ -127,6 +173,8 @@ export function createSaveScheduleMemoryHandler(
           action,
           arguments: {
             scheduleType: parsed.scheduleType,
+            domainKey: effectiveArgs.domainKey,
+            domainRevision: effectiveArgs.domainRevision,
             title: parsed.title,
             content,
             confirm: true
@@ -178,6 +226,42 @@ export function createSaveScheduleMemoryHandler(
       }
     };
   };
+}
+
+function resolveSaveScheduleDomain(input: {
+  args: SaveScheduleMemoryArguments;
+  context: FunctionHandlerContext;
+  content: string;
+}):
+  | { status: "selected"; domain: ScheduleDomainConfig }
+  | { status: "ambiguous"; domains: ScheduleDomainConfig[] }
+  | { status: "not_found"; domain?: undefined } {
+  const domains = input.context.profile.schedulePolicy?.domains ?? DEFAULT_SCHEDULE_DOMAINS;
+  const requestedDomainKey =
+    input.args.domainKey ??
+    (input.args.scheduleType
+      ? domains.find(
+          (domain) =>
+            domain.binding.kind === "saved_schedule" &&
+            domain.binding.scheduleType === input.args.scheduleType
+        )?.key
+      : undefined);
+  const text = [input.args.query, input.args.title, input.content].filter(Boolean).join("\n");
+  const resolution = resolveScheduleDomain({ domains, text, requestedDomainKey });
+  if (resolution.status === "ambiguous") {
+    return {
+      status: "ambiguous",
+      domains: resolution.candidates
+        .map((candidate) => domains.find(({ key }) => key === candidate.domainKey))
+        .filter((domain): domain is ScheduleDomainConfig => Boolean(domain))
+    };
+  }
+  if (resolution.status === "selected") {
+    const selected = domains.find(({ key }) => key === resolution.candidate.domainKey);
+    return selected ? { status: "selected", domain: selected } : { status: "not_found" };
+  }
+  const custom = domains.find(({ key }) => key === "custom_service_schedule");
+  return custom ? { status: "selected", domain: custom } : { status: "not_found" };
 }
 
 async function handleScheduleMutation(input: {
@@ -519,6 +603,25 @@ function parseScheduleLine(
     };
   }
 
+  const assignment = rest.match(/^(?<label>[^:：]+)[:：](?<assignee>.+)$/u);
+  if (assignment?.groups?.assignee) {
+    const labels = assignment.groups.label.trim().split(/\s+/u);
+    const assignee = cleanupScheduleAssignee(assignment.groups.assignee);
+    if (labels.length > 1 && assignee) {
+      const role = labels.pop()!;
+      return {
+        serviceDate,
+        weekday,
+        meetingName: labels.join(" "),
+        role,
+        assignee
+      };
+    }
+    if (labels[0] && assignee) {
+      return { serviceDate, weekday, meetingName: labels[0], assignee };
+    }
+  }
+
   return {
     serviceDate,
     weekday,
@@ -553,6 +656,10 @@ function defaultScheduleTitle(scheduleType: AgentScheduleType): string {
       return "晨更家族服事表";
     case "street_sign_service":
       return "為耶穌舉牌服事表";
+    case "children_sunday":
+      return "兒童主日服事表";
+    case "prayer_meeting_family":
+      return "禱告會家族服事表";
     default:
       return "服事表";
   }
@@ -591,7 +698,8 @@ function formatSchedulePreview(parsed: ParsedScheduleMemory, replacingTitle?: st
 
 function formatScheduleEntry(entry: AgentScheduleEntryRecord): string {
   const notes = entry.notes ? `（${entry.notes}）` : "";
-  return `- ${formatMonthDay(entry.serviceDate)} ${entry.meetingName}：${entry.assignee}${notes}`;
+  const role = entry.role && !/^(?:帶領家族|服事家族)$/u.test(entry.role) ? ` ${entry.role}` : "";
+  return `- ${formatMonthDay(entry.serviceDate)} ${entry.meetingName}${role}：${entry.assignee}${notes}`;
 }
 
 function inferQueryDate(args: QueryScheduleMemoryArguments, now: Date): string | undefined {

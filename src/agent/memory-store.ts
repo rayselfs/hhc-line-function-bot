@@ -4,8 +4,7 @@ import type { AgentResourceReference, AgentResourceType, LineSource } from "../t
 
 export type AgentMemoryScopeType = "user" | "group" | "room" | "profile";
 export type AgentMemoryVisibility = "private" | "group" | "profile";
-export type AgentScheduleType =
-  "morning_prayer_family" | "street_sign_service" | "custom_service_schedule";
+export type AgentScheduleType = string;
 
 export interface AgentMemoryScope {
   type: AgentMemoryScopeType;

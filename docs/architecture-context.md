@@ -455,20 +455,19 @@ the scheduled sync job writes them into `schedule_items` as read-model rows with
 live Notion. LINE-created schedules remain write-controlled through the schedule
 memory flow and must not write back to Notion-origin rows.
 
-`query_schedule` is also the first adopter of the reusable query-refinement and
-domain-resolution contracts. Router-provided arguments remain useful LLM
-evidence, while the schedule adapter deterministically fills recognizable date,
-month, meeting, role, participant, schedule-type, and source-category values.
-The media-team and morning-prayer-family resolvers expose product concepts, not
-storage implementation names. Typed evidence selects one domain; when both
-domains actually contain a match and the request is still ambiguous, the bot
-asks which schedule the requester means and resumes the original grounded
-arguments after the choice. Terms consumed by structured values are removed
-before residual text reaches in-memory or PostgreSQL search. A genuinely
-separate future query behavior may add its own refinement adapter, resolver,
-and capability contract, but arbitrary knowledge topics remain inside
-`query_knowledge`. The generic router must not accumulate function-specific
-residual-query rules.
+`query_schedule` is also the first adopter of the reusable field-interpretation
+and domain-resolution contracts. Router-provided arguments remain useful LLM
+evidence, while the field interpreter deterministically fills recognizable
+dates, months, meetings, roles, and participants without selecting storage.
+The profile registry exposes product concepts and bindings rather than storage
+implementation names. One grounded match selects a domain; multiple matches
+always ask which schedule the requester means and resume the original grounded
+arguments after the choice. Terms consumed by typed fields and the selected
+domain alias are removed before residual text reaches search. A genuinely
+separate future query behavior may add an adapter and capability contract, but
+new existing-schema schedule domains change registry data only, and arbitrary
+knowledge topics remain inside `query_knowledge`. The generic router must not
+accumulate function-specific residual-query rules.
 
 LINE attachment handling is gated before storage. If a profile explicitly allows
 `image` or `file` messages and the requester has effective `save_resource`

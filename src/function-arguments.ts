@@ -11,11 +11,11 @@ const numericLimitSchema = z.preprocess((value) => {
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const monthKeySchema = z.string().regex(/^\d{4}-\d{2}$/);
-export const scheduleTypeSchema = z.enum([
-  "morning_prayer_family",
-  "street_sign_service",
-  "custom_service_schedule"
-]);
+export const scheduleTypeSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z][a-z0-9_]*$/u)
+  .max(80);
 
 export const findPptSlidesArgumentsSchema = z
   .object({
@@ -177,6 +177,13 @@ export const saveScheduleMemoryArgumentsSchema = z
       .enum(["replace", "add_entry", "update_entry", "delete_entry", "delete_schedule"])
       .optional(),
     scheduleType: scheduleTypeSchema.optional(),
+    domainKey: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9_]*$/u)
+      .max(80)
+      .optional(),
+    domainRevision: z.string().trim().min(1).max(80).optional(),
     title: z.string().optional(),
     content: z.string().optional().default(""),
     query: z.string().optional(),
