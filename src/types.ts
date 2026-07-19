@@ -310,6 +310,11 @@ export interface AppConfig {
   access?: AccessConfig;
   rateLimit?: RateLimitConfig;
   lastErrors?: LastErrorsConfig;
+  observability: ObservabilityConfig;
+}
+
+export interface ObservabilityConfig {
+  hmacKey?: string;
 }
 
 export interface KnowledgeConfig {
