@@ -117,6 +117,10 @@ const migrations = [
   )
   `,
   `
+  alter table agent_schedule_memories
+    drop constraint if exists agent_schedule_memories_schedule_type_check
+  `,
+  `
   create index if not exists agent_schedule_memories_lookup_idx
   on agent_schedule_memories (profile_name, scope_type, scope_id, schedule_type, created_at desc)
   where deleted_at is null

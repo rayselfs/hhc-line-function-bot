@@ -3,10 +3,6 @@ import type { JsonRecord } from "../types.js";
 import { buildResidualQuery, type QueryRefinement } from "./query-refinement.js";
 import { extractKnownScheduleRole } from "./query-service-schedule.js";
 
-export type ScheduleCategory = "media_team" | "saved_schedule";
-
-export const MEDIA_TEAM_SCHEDULE_SOURCE_KEYS = ["media_team_service_schedule"] as const;
-
 export type QueryScheduleStructuredArguments = JsonRecord & {
   date?: string;
   dateIntent?: QueryScheduleArguments["dateIntent"];
@@ -17,7 +13,6 @@ export type QueryScheduleStructuredArguments = JsonRecord & {
   participant?: string;
   domainKey?: string;
   scheduleType?: QueryScheduleArguments["scheduleType"];
-  scheduleCategory?: ScheduleCategory;
   limit?: number;
 };
 
@@ -66,8 +61,6 @@ const DATE_INTENT_TERMS: Array<{
     terms: ["最近一場", "下一次", "下一場", "下次", "下場"]
   }
 ];
-
-const MEDIA_TERMS = ["影視團隊", "影音團隊", "媒體團隊", "影視"];
 
 export function refineScheduleQuery(
   args: QueryScheduleArguments,
@@ -125,20 +118,6 @@ export function refineScheduleQuery(
       structuredArguments.month = `${year}-${String(Number(month)).padStart(2, "0")}`;
       consumedTerms.push(`${month}月`);
     }
-  }
-
-  const mediaTerm = MEDIA_TERMS.find((term) => originalQuery.includes(term));
-  if (mediaTerm) {
-    structuredArguments.scheduleCategory = "media_team";
-    consumedTerms.push(mediaTerm);
-  }
-
-  const scheduleTypeMatch = inferScheduleType(originalQuery);
-  if (!structuredArguments.scheduleType && scheduleTypeMatch) {
-    structuredArguments.scheduleType = scheduleTypeMatch.scheduleType;
-  }
-  if (scheduleTypeMatch) {
-    consumedTerms.push(scheduleTypeMatch.term);
   }
 
   consumeIfPresent(originalQuery, structuredArguments.specificDate, consumedTerms);
@@ -287,18 +266,4 @@ function consumeIfPresent(query: string, value: string | undefined, consumedTerm
   if (value && query.includes(value)) {
     consumedTerms.push(value);
   }
-}
-
-function inferScheduleType(query: string):
-  | {
-      scheduleType: NonNullable<QueryScheduleArguments["scheduleType"]>;
-      term: string;
-    }
-  | undefined {
-  for (const term of ["為耶穌", "舉牌"]) {
-    if (query.includes(term)) {
-      return { scheduleType: "street_sign_service", term };
-    }
-  }
-  return undefined;
 }

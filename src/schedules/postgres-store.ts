@@ -39,6 +39,70 @@ type ScheduleItemRow = {
 export class PostgresScheduleStore implements ScheduleStore {
   constructor(private readonly db: PgQueryable) {}
 
+  async publishSnapshot(input: {
+    profileName: string;
+    sourceKey: string;
+    origin: ScheduleOrigin;
+    revision: string;
+    items: ScheduleItemInput[];
+    publishedAt: string;
+  }): Promise<{ published: number; replaced: number }> {
+    for (const item of input.items) {
+      if (
+        item.profileName !== input.profileName ||
+        item.sourceKey !== input.sourceKey ||
+        item.origin !== input.origin
+      ) {
+        throw new Error("Schedule snapshot item scope does not match publication scope");
+      }
+    }
+    const payload = input.items.map((item) => ({
+      id: randomUUID(),
+      externalId: item.externalId ?? null,
+      externalKey: item.externalKey ?? null,
+      serviceDate: item.serviceDate,
+      meeting: item.meeting,
+      role: item.role,
+      assignee: item.assignee,
+      notes: item.notes ?? null,
+      normalizedSearchText: searchableScheduleText(item),
+      scheduleIdentity: scheduleItemIdentity(item),
+      externalUpdatedAt: item.externalUpdatedAt ?? null
+    }));
+    const result = await this.db.query<{ replaced: string | number; published: string | number }>(
+      `
+      with removed as (
+        delete from schedule_items
+        where profile_name = $1 and source_key = $2 and origin = $3
+        returning id
+      ), incoming as (
+        select * from jsonb_to_recordset($4::jsonb) as row(
+          id uuid, "externalId" text, "externalKey" text, "serviceDate" date,
+          meeting text, role text, assignee text, notes text,
+          "normalizedSearchText" text, "scheduleIdentity" text, "externalUpdatedAt" timestamptz
+        )
+      ), inserted as (
+        insert into schedule_items
+          (id, profile_name, source_key, origin, external_id, external_key, service_date,
+           meeting, role, assignee, notes, normalized_search_text, schedule_identity,
+           external_updated_at, deleted_at, updated_at)
+        select id, $1, $2, $3, "externalId", "externalKey", "serviceDate", meeting, role,
+               assignee, notes, "normalizedSearchText", "scheduleIdentity", "externalUpdatedAt",
+               null, $5::timestamptz
+        from incoming
+        returning id
+      )
+      select (select count(*) from removed) as replaced,
+             (select count(*) from inserted) as published
+      `,
+      [input.profileName, input.sourceKey, input.origin, JSON.stringify(payload), input.publishedAt]
+    );
+    return {
+      published: Number(result.rows[0]?.published ?? 0),
+      replaced: Number(result.rows[0]?.replaced ?? 0)
+    };
+  }
+
   async upsertItem(input: ScheduleItemInput): Promise<ScheduleItemRecord> {
     const normalizedSearchText = searchableScheduleText(input);
     const result = await this.db.query<ScheduleItemRow>(

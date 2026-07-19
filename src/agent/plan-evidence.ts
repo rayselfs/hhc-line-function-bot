@@ -26,6 +26,8 @@ const RELATIVE_VALUE_EVIDENCE: Readonly<Record<string, readonly string[]>> = {
   upcoming: ["近期", "接下來"],
   morning_prayer_family: ["晨更", "晨更家族"],
   street_sign_service: ["舉牌", "為耶穌舉牌"],
+  children_sunday: ["兒童主日", "兒主"],
+  prayer_meeting_family: ["禱告會家族", "禱告會服事家族"],
   custom_service_schedule: ["自訂服事", "其他服事"],
   ppt_slide: ["投影片", "簡報", "ppt"],
   sheet_music: ["歌譜", "樂譜"],

@@ -32,10 +32,9 @@ describe("query refinement", () => {
       { query: "給我下一場影視團隊的服事表" },
       {
         structuredArguments: {
-          dateIntent: "next_meeting",
-          scheduleCategory: "media_team"
+          dateIntent: "next_meeting"
         },
-        residualQuery: ""
+        residualQuery: "影視團隊"
       }
     ],
     [

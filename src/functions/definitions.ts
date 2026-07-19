@@ -265,7 +265,13 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         scheduleType: {
           type: "string",
           authority: "model_grounded",
-          values: ["morning_prayer_family", "street_sign_service", "custom_service_schedule"]
+          values: [
+            "morning_prayer_family",
+            "street_sign_service",
+            "children_sunday",
+            "prayer_meeting_family",
+            "custom_service_schedule"
+          ]
         },
         limit: { type: "number", authority: "explicit_current_text" }
       },
@@ -462,7 +468,13 @@ export const FUNCTION_DEFINITIONS: FunctionDefinition[] = [
         scheduleType: {
           type: "string",
           authority: "model_grounded",
-          values: ["morning_prayer_family", "street_sign_service", "custom_service_schedule"]
+          values: [
+            "morning_prayer_family",
+            "street_sign_service",
+            "children_sunday",
+            "prayer_meeting_family",
+            "custom_service_schedule"
+          ]
         },
         title: { type: "string", authority: "explicit_current_text" },
         content: { type: "string", authority: "explicit_current_text" },
