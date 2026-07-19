@@ -91,6 +91,34 @@ describe("observability sanitization", () => {
     expect(JSON.stringify(sanitized)).not.toContain("token=secret");
   });
 
+  it("keeps only bounded retrieval diagnostics", () => {
+    const sanitized = sanitizeActionTelemetryEvent({
+      kind: "function_result",
+      requestId: "req-1",
+      profileName: "helper",
+      sourceType: "user",
+      executionMode: "catalog_snapshot_read",
+      stateAgeBucket: "under_10m",
+      freshnessStatus: "fresh",
+      sourceRevision: "present",
+      queryFingerprint: "0123456789abcdef",
+      referenceFingerprint: "fedcba9876543210",
+      rawQuery: "牧師師母五十週年",
+      title: "private-title.pptx",
+      url: "https://example.invalid/private"
+    });
+
+    expect(sanitized).toMatchObject({
+      executionMode: "catalog_snapshot_read",
+      stateAgeBucket: "under_10m",
+      freshnessStatus: "fresh",
+      sourceRevision: "present",
+      queryFingerprint: "0123456789abcdef",
+      referenceFingerprint: "fedcba9876543210"
+    });
+    expect(JSON.stringify(sanitized)).not.toMatch(/牧師|private-title|example\.invalid/u);
+  });
+
   it("fails closed for arbitrary strings in non-controlled telemetry", () => {
     const sanitized = sanitizeActionTelemetryEvent({
       kind: "function_error",

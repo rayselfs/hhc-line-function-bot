@@ -288,7 +288,12 @@ describe("LINE entrance", () => {
     });
     const findPptSlides = vi.fn().mockResolvedValue({
       ok: true,
-      replyText: "已找到詩歌投影片"
+      replyText: "已找到詩歌投影片",
+      diagnostics: {
+        executionMode: "catalog_snapshot_read",
+        stateAgeBucket: "under_10m",
+        freshnessStatus: "fresh"
+      }
     });
     const routeObserver = vi.fn().mockResolvedValue(undefined);
     const replyText = vi.fn<LineReplyClient["replyText"]>().mockResolvedValue(undefined);
@@ -328,7 +333,10 @@ describe("LINE entrance", () => {
         kind: "function_result",
         profileName: "configured",
         action: "find_ppt_slides",
-        ok: true
+        ok: true,
+        executionMode: "catalog_snapshot_read",
+        stateAgeBucket: "under_10m",
+        freshnessStatus: "fresh"
       })
     );
     const serializedEvents = JSON.stringify(routeObserver.mock.calls.map(([event]) => event));

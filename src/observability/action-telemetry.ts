@@ -10,6 +10,11 @@ import {
 import type { LastErrorRecord } from "./last-error-store.js";
 import type { LastRouteRecord } from "./last-route-store.js";
 import { createSupportId } from "./opaque-identifiers.js";
+import {
+  FRESHNESS_STATUSES,
+  RETRIEVAL_EXECUTION_MODES,
+  STATE_AGE_BUCKETS
+} from "./retrieval-diagnostics.js";
 
 type TelemetryInput = object;
 
@@ -97,6 +102,17 @@ function sanitizeTelemetryValueForKey(key: string, value: unknown): unknown {
       return allowedString(value, RESULT_STATUSES);
     case "lifecycleOutcome":
       return allowedString(value, LIFECYCLE_OUTCOMES);
+    case "executionMode":
+      return allowedString(value, new Set(RETRIEVAL_EXECUTION_MODES));
+    case "stateAgeBucket":
+      return allowedString(value, new Set(STATE_AGE_BUCKETS));
+    case "freshnessStatus":
+      return allowedString(value, new Set(FRESHNESS_STATUSES));
+    case "sourceRevision":
+      return allowedString(value, new Set(["present", "missing"]));
+    case "queryFingerprint":
+    case "referenceFingerprint":
+      return typeof value === "string" && /^[a-f0-9]{16}$/u.test(value) ? value : undefined;
     default:
       return undefined;
   }

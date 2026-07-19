@@ -19,6 +19,7 @@ import {
 import { createIntroReply } from "../intro.js";
 import { createQueryClarificationReply } from "../query-clarification.js";
 import { sanitizeActionTelemetryEvent } from "../observability/action-telemetry.js";
+import { stateAgeBucket } from "../observability/retrieval-diagnostics.js";
 import type { LastErrorStore } from "../observability/last-error-store.js";
 import type { LastRouteRecord, LastRouteStore } from "../observability/last-route-store.js";
 import { normalizeFunctionArguments } from "../functions/argument-normalization.js";
@@ -288,7 +289,10 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
             phase: "active_task",
             outcome: activeTask ? "present" : "missing",
             action: activeTask?.currentCapability,
-            lifecycleOutcome: activeTask ? "read" : "missing"
+            lifecycleOutcome: activeTask ? "read" : "missing",
+            stateAgeBucket: activeTask
+              ? stateAgeBucket(activeTask.createdAt, now())
+              : undefined
           });
         }
         plan = await resolveControlledPlan(
@@ -472,7 +476,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           outcome: "hit",
           action: route.action,
           ok: memoryAlias.ok,
-          query: queryMarker(normalizedArguments)
+          query: queryMarker(normalizedArguments),
+          ...memoryAlias.diagnostics
         });
         await emitRouteEvent(options.routeObserver, {
           kind: "function_result",
@@ -481,7 +486,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           requestId: input.requestId,
           action: route.action,
           ok: memoryAlias.ok,
-          dedup: "agent_memory"
+          dedup: "agent_memory",
+          ...memoryAlias.diagnostics
         });
         return finish(input, steps, memoryAlias);
       }
@@ -579,7 +585,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           action: route.action,
           ok: result.ok,
           query: queryMarker(normalizedArguments),
-          durationMs
+          durationMs,
+          ...result.diagnostics
         });
         await emitRouteEvent(options.routeObserver, {
           kind: "function_result",
@@ -590,7 +597,8 @@ export function createAgentTurnRuntime(options: AgentTurnRuntimeOptions): AgentT
           ok: result.ok,
           dedup: inFlight ? "started" : undefined,
           queryHash: inFlight?.queryHash,
-          durationMs
+          durationMs,
+          ...result.diagnostics
         });
         await options.lastRouteStore.record({
           requestId: input.requestId,
@@ -853,7 +861,8 @@ function resultEnvelopeTraceStep(result: FunctionExecutionResult): AgentTurnTrac
     phase: "result_envelope",
     resultStatus: envelope?.status ?? "unavailable",
     anchorCount: Object.keys(envelope?.anchors ?? {}).length,
-    entityTypes: [...new Set((envelope?.entities ?? []).map(({ type }) => type))]
+    entityTypes: [...new Set((envelope?.entities ?? []).map(({ type }) => type))],
+    ...result.diagnostics
   };
 }
 

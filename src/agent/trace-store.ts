@@ -1,5 +1,6 @@
 import { sanitizeActionTelemetryEvent } from "../observability/action-telemetry.js";
 import type { AgentPlanDisposition, FunctionName } from "../types.js";
+import type { RetrievalDiagnostics } from "../observability/retrieval-diagnostics.js";
 
 export type AgentTurnTracePhase =
   | "context"
@@ -46,6 +47,12 @@ export interface AgentTurnTraceStep {
   anchorCount?: number;
   entityTypes?: string[];
   lifecycleOutcome?: AgentTaskLifecycleOutcome;
+  executionMode?: RetrievalDiagnostics["executionMode"];
+  stateAgeBucket?: RetrievalDiagnostics["stateAgeBucket"];
+  freshnessStatus?: RetrievalDiagnostics["freshnessStatus"];
+  sourceRevision?: RetrievalDiagnostics["sourceRevision"];
+  queryFingerprint?: string;
+  referenceFingerprint?: string;
 }
 
 export type AgentTaskLifecycleOutcome =
@@ -236,7 +243,11 @@ function formatStep(step: AgentTurnTraceStep): string {
     step.resultStatus ? `status:${step.resultStatus}` : undefined,
     typeof step.anchorCount === "number" ? `anchors:${step.anchorCount}` : undefined,
     step.entityTypes?.length ? `entities:${step.entityTypes.join(",")}` : undefined,
-    step.lifecycleOutcome ? `lifecycle:${step.lifecycleOutcome}` : undefined
+    step.lifecycleOutcome ? `lifecycle:${step.lifecycleOutcome}` : undefined,
+    step.executionMode ? `mode:${step.executionMode}` : undefined,
+    step.stateAgeBucket ? `age:${step.stateAgeBucket}` : undefined,
+    step.freshnessStatus ? `freshness:${step.freshnessStatus}` : undefined,
+    step.sourceRevision ? `revision:${step.sourceRevision}` : undefined
   ]
     .filter(Boolean)
     .join(":");
