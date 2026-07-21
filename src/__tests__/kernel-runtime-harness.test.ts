@@ -173,7 +173,7 @@ describe("Kernel real-turn runtime harness", () => {
         requestId: "kernel-turn-3"
       },
       {
-        text: "音控是誰",
+        text: "那一位呢",
         requesterUserId: "U_SYNTHETIC_2",
         requestId: "kernel-turn-4"
       }
