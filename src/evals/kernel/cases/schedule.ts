@@ -1,0 +1,263 @@
+import { InMemoryAgentMemoryStore } from "../../../agent/memory-store.js";
+import type { AgentPlanner } from "../../../agent/planner.js";
+import { createPendingResolutionTextMessageHandler } from "../../../functions/pending-resolution.js";
+import { createQueryScheduleHandler } from "../../../functions/query-schedule.js";
+import { InMemoryScheduleStore } from "../../../schedules/store.js";
+import { InMemorySessionStore } from "../../../state/session-store.js";
+import type {
+  BotProfileConfig,
+  FunctionRegistry,
+  ScheduleDomainConfig
+} from "../../../types.js";
+import type {
+  KernelAcceptanceCase,
+  KernelCaseContext,
+  KernelCaseObservation,
+  RecurrenceFamily
+} from "../contracts.js";
+import { createKernelRuntimeHarness } from "../runtime-harness.js";
+
+const DOMAIN_MATRIX = [
+  { alias: "影視團隊", role: "音控", assignee: "人員甲" },
+  { alias: "晨更家族", role: "帶領家族", assignee: "家族乙" },
+  { alias: "兒童主日", role: "主持", assignee: "人員丙" },
+  { alias: "禱告會", role: "敬拜", assignee: "人員丁" },
+  { alias: "主日", role: "導播", assignee: "人員戊" }
+] as const;
+
+const WORDING_MATRIX = [
+  "下一場{domain}服事的{role}是誰",
+  "請幫我查{domain}下一次{role}",
+  "我想知道下一場{domain}的{role}",
+  "{domain}下一場服事，{role}是誰",
+  "幫我找{domain}服事表裡下一場的{role}",
+  "下一次{domain}{role}",
+  "查詢{domain}下一場{role}",
+  "麻煩給我{domain}下一場的{role}",
+  "下一場{domain}聚會由誰負責{role}",
+  "{domain}下回{role}是哪位"
+] as const;
+
+const canonicalCases = DOMAIN_MATRIX.flatMap((domain, domainIndex) =>
+  WORDING_MATRIX.map((wording, wordingIndex) =>
+    canonicalScheduleCase({
+      id: `kernel-v1/schedule/d${domainIndex + 1}-w${wordingIndex + 1}@1`,
+      text: wording.replace("{domain}", domain.alias).replace("{role}", domain.role),
+      alias: domain.alias,
+      role: domain.role,
+      assignee: domain.assignee,
+      recurrenceFamily:
+        wordingIndex % 2 === 0 ? "wrapper_words_hide_subject" : "explicit_domain_lost"
+    })
+  )
+);
+
+const ambiguityCases: KernelAcceptanceCase[] = [
+  ambiguityCase("generic-1", "下一場服事", "generic_schedule_domain_ambiguity", true),
+  ambiguityCase("generic-2", "請查最近的服事安排", "generic_schedule_domain_ambiguity", true),
+  ambiguityCase("generic-3", "本週有哪些服事", "generic_schedule_domain_ambiguity", true),
+  ambiguityCase("role-follow-up", "下一場音控", "role_follow_up_lost", true),
+  ambiguityCase("missing-domain", "查服事表", "required_slot_misrouted", false)
+];
+
+export const SCHEDULE_KERNEL_CASES: KernelAcceptanceCase[] = [
+  ...canonicalCases,
+  ...ambiguityCases
+];
+
+function canonicalScheduleCase(input: {
+  id: string;
+  text: string;
+  alias: string;
+  role: string;
+  assignee: string;
+  recurrenceFamily: RecurrenceFamily;
+}): KernelAcceptanceCase {
+  return {
+    id: input.id,
+    version: 1,
+    journey: "schedule",
+    recurrenceFamily: input.recurrenceFamily,
+    boundary: "response_projection",
+    async run(context) {
+      const harness = await scheduleHarness(context, input.role);
+      const [result] = await harness.runTurns([
+        { text: input.text, requesterUserId: "U_SYNTHETIC_1", requestId: input.id }
+      ]);
+      const passed =
+        result?.resultStatus === "success" && result.replyText === `${input.role}：${input.assignee}`;
+      return observation(input.id, input.recurrenceFamily, {
+        passed,
+        scheduleAssertions: [{ passed }],
+        coreJourneySucceeded: passed,
+        elapsedMs: result?.elapsedMs ?? 9_000
+      });
+    }
+  };
+}
+
+function ambiguityCase(
+  slug: string,
+  text: string,
+  recurrenceFamily: RecurrenceFamily,
+  shouldResolve: boolean
+): KernelAcceptanceCase {
+  const id = `kernel-v1/schedule/${slug}@1`;
+  return {
+    id,
+    version: 1,
+    journey: "schedule",
+    recurrenceFamily,
+    boundary: "slot_ambiguity_resolution",
+    async run(context) {
+      const harness = await scheduleHarness(context);
+      const results = await harness.runTurns([
+        { text, requesterUserId: "U_SYNTHETIC_1", requestId: `${id}-ask` },
+        {
+          text: shouldResolve ? "影視團隊服事" : "不知道",
+          requesterUserId: "U_SYNTHETIC_1",
+          requestId: `${id}-answer`
+        }
+      ]);
+      const firstIsAmbiguous = results[0]?.resultStatus === "ambiguous";
+      const resolved = shouldResolve && results[1]?.resultStatus === "success";
+      const passed = firstIsAmbiguous && (shouldResolve ? resolved : !resolved);
+      return observation(id, recurrenceFamily, {
+        passed,
+        coreJourneySucceeded: passed,
+        ambiguityEligible: true,
+        ambiguityResolvedWithinTwoTurns: resolved,
+        elapsedMs: results.reduce((total, result) => total + result.elapsedMs, 0)
+      });
+    }
+  };
+}
+
+async function scheduleHarness(context: KernelCaseContext, requestedRole?: string) {
+  const store = new InMemoryScheduleStore();
+  const domains = DOMAIN_MATRIX.map((entry, index) => scheduleDomain(entry, index));
+  for (const [index, entry] of DOMAIN_MATRIX.entries()) {
+    await store.upsertItem({
+      profileName: "helper",
+      sourceKey: `source_${index + 1}`,
+      origin: "line",
+      externalId: `entry_${index + 1}`,
+      serviceDate: "2026-07-17",
+      meeting: entry.alias,
+      role: entry.role,
+      assignee: entry.assignee
+    });
+  }
+  const sessionStore = new InMemorySessionStore();
+  const handler = createQueryScheduleHandler({
+    memoryStore: new InMemoryAgentMemoryStore({ now: context.now }),
+    scheduleStore: store,
+    sessionStore,
+    now: context.now,
+    timeZone: "Asia/Taipei"
+  });
+  const functions: FunctionRegistry = { query_schedule: handler };
+  return createKernelRuntimeHarness({
+    now: context.now,
+    profile: scheduleProfile(domains),
+    functionRegistry: functions,
+    textMessageHandlers: {
+      pending_resolution: createPendingResolutionTextMessageHandler({
+        sessionStore,
+        functions
+      })
+    },
+    sessionStore,
+    planner: schedulePlanner(requestedRole),
+    elapsedMs: () => 25
+  });
+}
+
+function schedulePlanner(requestedRole?: string): AgentPlanner {
+  return {
+    propose: async ({ text }) => ({
+      status: "proposed",
+      version: 1,
+      disposition: "execute",
+      capability: "query_schedule",
+      arguments: {
+        query: text,
+        dateIntent: "next_meeting",
+        ...(requestedRole ? { role: requestedRole } : {})
+      },
+      confidence: 0.98,
+      provider: "deepseek",
+      attempts: []
+    })
+  };
+}
+
+function scheduleDomain(
+  entry: (typeof DOMAIN_MATRIX)[number],
+  index: number
+): ScheduleDomainConfig {
+  return {
+    key: `domain_${index + 1}`,
+    displayName: `${entry.alias}服事`,
+    aliases: [entry.alias],
+    routingHints: [entry.role],
+    schemaVersion: 1,
+    inputSchema: "assignment_rows_v1",
+    occurrencePolicy: "profile_meeting_windows_v1",
+    binding: {
+      kind: "canonical",
+      sourceKeys: [`source_${index + 1}`],
+      allowLiveFallback: false
+    },
+    origins: ["line"],
+    writePolicy: { mode: "read_only", allowedOperations: [] },
+    priority: 100 - index,
+    revision: "1",
+    freshnessPolicy: { maxAgeSeconds: 86_400, staleBehavior: "reject" }
+  };
+}
+
+function scheduleProfile(domains: ScheduleDomainConfig[]): BotProfileConfig {
+  return {
+    name: "helper",
+    webhookPath: "/api/line/webhook/helper",
+    channelSecret: "synthetic-secret",
+    channelAccessToken: "synthetic-token",
+    allowDirectUser: true,
+    allowRooms: false,
+    allowedMessageTypes: ["text"],
+    groupRequireWakeWord: false,
+    wakeKeywords: [],
+    acceptMention: true,
+    enabledFunctions: ["query_schedule"],
+    allowedProviders: ["deepseek", "ollama"],
+    allowSubscriptionProviders: false,
+    controlledAgent: { maxCandidates: 3, minPlannerConfidence: 0.65 },
+    schedulePolicy: { meetingWindows: [], domains }
+  };
+}
+
+function observation(
+  caseId: string,
+  recurrenceFamily: RecurrenceFamily,
+  override: Partial<KernelCaseObservation>
+): KernelCaseObservation {
+  return {
+    caseId,
+    passed: false,
+    boundary: "response_projection",
+    recurrenceFamily,
+    scheduleAssertions: [],
+    coreJourneyEligible: true,
+    coreJourneySucceeded: false,
+    unavailableEligible: false,
+    unavailableMisclassified: false,
+    ambiguityEligible: false,
+    ambiguityResolvedWithinTwoTurns: false,
+    securityViolations: [],
+    performanceEligible: true,
+    elapsedMs: 0,
+    returnedRetrievableJob: false,
+    ...override
+  };
+}
