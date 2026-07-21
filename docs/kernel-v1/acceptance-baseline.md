@@ -1,19 +1,19 @@
 # Kernel v1 Acceptance Baseline
 
-- Commit under test: `ddb546b8b001c0c19d6de3cb1db2680eeb877c7f`
+- Commit under test: `fff4d006985ead9697af0afe2cd95fe59232190d`
 - Corpus schema: `1`
 - Case version: `1`
-- Case count: `85`
+- Case count: `98`
 - Result: `PASS`
 
 | Metric                          | Numerator | Denominator |  Value |
 | ------------------------------- | --------: | ----------: | -----: |
 | `schedule_accuracy`             |        50 |          50 | 1.0000 |
-| `core_journey_success`          |        85 |          85 | 1.0000 |
-| `unavailable_misclassification` |         0 |          10 | 0.0000 |
+| `core_journey_success`          |        98 |          98 | 1.0000 |
+| `unavailable_misclassification` |         0 |          12 | 0.0000 |
 | `ambiguity_resolution`          |         4 |           5 | 0.8000 |
 | `security_violations`           |         0 |           1 | 0.0000 |
-| `core_read_completion`          |        75 |          75 | 1.0000 |
+| `core_read_completion`          |        88 |          88 | 1.0000 |
 | `recurrence_coverage`           |        12 |          12 | 1.0000 |
 
 - Failed case IDs: none.
