@@ -35,6 +35,16 @@ function acceptanceCase(id: string, run: KernelAcceptanceCase["run"]): KernelAcc
 }
 
 describe("Kernel v1 evaluator", () => {
+  it("rejects an invalid or incomplete corpus before executing it", async () => {
+    await expect(
+      evaluateKernelGate({
+        cases: [acceptanceCase("invalid private id", async () => observation("ignored", true))],
+        requiredFamilies: ["stale_result_replay"],
+        now: () => new Date("2026-07-21T00:00:00.000Z")
+      })
+    ).rejects.toThrow("invalid_kernel_corpus");
+  });
+
   it("sorts cases and passes complete successful observations", async () => {
     const report = await evaluateKernelGate({
       cases: [

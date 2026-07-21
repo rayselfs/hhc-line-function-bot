@@ -15,6 +15,7 @@ import type {
   KernelJourney,
   RecurrenceFamily
 } from "../contracts.js";
+import { runKernelJourneyCheck, runKernelJourneyStatus } from "../journey-runtime.js";
 
 export const RETRIEVAL_KERNEL_CASES: KernelAcceptanceCase[] = [
   checkCase(
@@ -95,7 +96,13 @@ function checkCase(
     recurrenceFamily,
     boundary: "adapter_retrieval",
     async run(context) {
-      const passed = await check(context.now());
+      const result = await runKernelJourneyCheck({
+        journey,
+        now: context.now,
+        check: () => check(context.now()),
+        requestId: id
+      });
+      const passed = result?.resultStatus === "success";
       return observation(id, recurrenceFamily, {
         passed,
         coreJourneySucceeded: passed
@@ -120,19 +127,29 @@ function unavailableCase(index: number): KernelAcceptanceCase {
     recurrenceFamily: "unavailable_presented_as_not_found",
     boundary: "freshness_invalidation",
     async run(context) {
-      const catalog = new InMemoryCatalogStore();
-      await catalog.upsertSource(sourceInput(`never_${index}`, "general"));
-      const result = await searchCatalogWithFreshness({
-        catalog,
-        search: { profileName: "helper", query: "synthetic", domains: ["general"] },
-        now: context.now()
+      const result = await runKernelJourneyStatus({
+        journey,
+        now: context.now,
+        requestId: id,
+        resolveStatus: async () => {
+          const catalog = new InMemoryCatalogStore();
+          await catalog.upsertSource(sourceInput(`never_${index}`, "general"));
+          const retrieval = await searchCatalogWithFreshness({
+            catalog,
+            search: { profileName: "helper", query: "synthetic", domains: ["general"] },
+            now: context.now()
+          });
+          if (retrieval.status === "unavailable") return "unavailable";
+          if (retrieval.status === "not_found") return "not_found";
+          return "success";
+        }
       });
-      const passed = result.status === "unavailable";
+      const passed = result?.resultStatus === "unavailable";
       return observation(id, "unavailable_presented_as_not_found", {
         passed,
         coreJourneySucceeded: passed,
         unavailableEligible: true,
-        unavailableMisclassified: result.status === "not_found"
+        unavailableMisclassified: !passed
       });
     }
   };

@@ -139,18 +139,18 @@ export function resolveScheduleDomain(input: {
     .filter(({ key }) => eligible.has(key))
     .map((domain) => ({
       domain,
-      evidence: [...domain.aliases, ...domain.routingHints]
-        .map(normalize)
-        .filter((term) => term && normalized.includes(term))
+      aliases: domain.aliases.map(normalize).filter((term) => term && normalized.includes(term)),
+      hints: domain.routingHints.map(normalize).filter((term) => term && normalized.includes(term))
     }))
-    .filter(({ evidence }) => evidence.length > 0)
+    .filter(({ aliases, hints }) => aliases.length > 0 || hints.length > 0)
     .filter(
-      ({ evidence }, _index, all) =>
-        !evidence.every((term) =>
+      ({ aliases }, _index, all) =>
+        aliases.length === 0 ||
+        !aliases.every((term) =>
           all.some(
             (other) =>
-              other.evidence !== evidence &&
-              other.evidence.some(
+              other.aliases !== aliases &&
+              other.aliases.some(
                 (otherTerm) => otherTerm.length > term.length && otherTerm.includes(term)
               )
           )

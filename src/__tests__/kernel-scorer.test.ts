@@ -30,6 +30,20 @@ function observation(
 }
 
 describe("Kernel v1 gate scorer", () => {
+  it("fails closed when a case fails even if aggregate thresholds still pass", () => {
+    const observations = Array.from({ length: 100 }, (_, index) =>
+      observation(`case-${index + 1}`, {
+        passed: index !== 0,
+        scheduleAssertions: [{ passed: true }],
+        unavailableEligible: true,
+        ambiguityEligible: true,
+        ambiguityResolvedWithinTwoTurns: true
+      })
+    );
+
+    expect(scoreKernelGate(observations, families).passed).toBe(false);
+  });
+
   it("passes metrics at their approved boundaries while incomplete metrics fail closed", () => {
     const observations = Array.from({ length: 100 }, (_, index) =>
       observation(`case-${index + 1}`, {

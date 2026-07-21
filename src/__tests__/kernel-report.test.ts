@@ -42,7 +42,7 @@ const report: KernelGateReport = {
 };
 
 describe("Kernel v1 redacted reports", () => {
-  it("renders only allowlisted metric and failure metadata", () => {
+  it("renders only allowlisted metric and failure metadata", async () => {
     const markdown = renderKernelReportMarkdown(report);
     expect(markdown).toContain("schedule_accuracy");
     expect(markdown).toContain("kernel-v1/resource/failure@1");
@@ -50,6 +50,12 @@ describe("Kernel v1 redacted reports", () => {
     expect(() =>
       assertKernelReportSafe(JSON.stringify({ ...report, queryText: "private" }))
     ).toThrow("kernel_report_contains_forbidden_data");
+    await expect(
+      writeKernelReport(
+        { ...report, failedCaseIds: ["kernel-v1/resource/U1234567890abcdef@1"] },
+        "unused"
+      )
+    ).rejects.toThrow("kernel_report_contains_forbidden_data");
   });
 
   it("writes deterministic JSON and Markdown artifact names", async () => {

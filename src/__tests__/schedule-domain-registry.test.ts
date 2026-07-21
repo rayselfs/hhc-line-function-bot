@@ -47,6 +47,21 @@ describe("schedule domain registry", () => {
     });
   });
 
+  it("does not let a generic domain routing hint defeat a longer explicit alias", () => {
+    const domains = DEFAULT_SCHEDULE_DOMAINS.filter(
+      ({ key }) => key === "children_sunday" || key === "custom_service_schedule"
+    ).map((domain) =>
+      domain.key === "custom_service_schedule"
+        ? { ...domain, aliases: [...domain.aliases, "主日"], routingHints: ["音控"] }
+        : domain
+    );
+
+    expect(resolveScheduleDomain({ domains, text: "兒童主日音控" })).toMatchObject({
+      status: "selected",
+      candidate: { domainKey: "children_sunday" }
+    });
+  });
+
   it("adds future existing-schema domains through data only", () => {
     expect(
       scheduleDomainChoices(DEFAULT_SCHEDULE_DOMAINS).map(({ domainKey }) => domainKey)

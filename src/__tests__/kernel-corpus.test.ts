@@ -13,7 +13,7 @@ describe("Kernel v1 versioned acceptance corpus", () => {
     expect(validateKernelCorpus(KERNEL_ACCEPTANCE_CASES)).toEqual([]);
   });
 
-  it("contains fifty canonical schedule assertions and five ambiguity cases", async () => {
+  it("contains fifty canonical schedule assertions and five ambiguity/lifecycle cases", async () => {
     const observations = await Promise.all(
       SCHEDULE_KERNEL_CASES.map((entry) =>
         entry.run({ now: () => new Date("2026-07-16T08:00:00Z") })
@@ -25,6 +25,12 @@ describe("Kernel v1 versioned acceptance corpus", () => {
     expect(
       ambiguity.filter(({ ambiguityResolvedWithinTwoTurns }) => ambiguityResolvedWithinTwoTurns)
     ).toHaveLength(4);
+    expect(
+      observations.filter(
+        ({ boundary, recurrenceFamily }) =>
+          boundary === "active_task_lifecycle" && recurrenceFamily === "role_follow_up_lost"
+      )
+    ).toHaveLength(2);
   });
 
   it("covers the schedule-owned recurrence families", () => {

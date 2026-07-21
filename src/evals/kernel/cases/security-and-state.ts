@@ -1,16 +1,25 @@
 import type { ActiveTaskContext } from "../../../agent/active-task.js";
-import { buildCapabilityCandidates } from "../../../agent/capability-candidates.js";
 import { InMemoryConversationWindowStore } from "../../../agent/context-manager.js";
-import { validateAgentPlan } from "../../../agent/plan-validator.js";
-import { orderTurnHandlers } from "../../../agent/turn-state-machine.js";
+import type { AgentPlanner } from "../../../agent/planner.js";
+import { InMemoryCatalogStore } from "../../../catalog/store.js";
 import { isSupportedAttachment } from "../../../functions/pending-attachment.js";
+import { createResourceBinaryPublisher } from "../../../functions/resource-binary-publisher.js";
 import { InMemorySessionStore } from "../../../state/session-store.js";
-import type { TextMessageHandler } from "../../../types.js";
+import type {
+  BotProfileConfig,
+  FunctionName,
+  FunctionRegistry,
+  GraphDriveClient,
+  TextMessageHandlerRegistry,
+  VirusScanner
+} from "../../../types.js";
 import type {
   KernelAcceptanceCase,
   KernelCaseObservation,
   RecurrenceFamily
 } from "../contracts.js";
+import { runKernelJourneyCheck } from "../journey-runtime.js";
+import { createKernelRuntimeHarness } from "../runtime-harness.js";
 
 export const SECURITY_AND_STATE_KERNEL_CASES: KernelAcceptanceCase[] = [
   safetyCase(
@@ -26,7 +35,7 @@ export const SECURITY_AND_STATE_KERNEL_CASES: KernelAcceptanceCase[] = [
   safetyCase(
     "kernel-v1/write/scan-unavailable-fails-closed@1",
     "write_safety_bypass",
-    async () => (await syntheticScan()).status === "unavailable"
+    scanUnavailableFailsClosed
   ),
   safetyCase(
     "kernel-v1/write/group-attachment-without-intent-silent@1",
@@ -77,85 +86,137 @@ function safetyCase(
     recurrenceFamily,
     boundary: id.includes("/state/") ? "active_task_lifecycle" : "write_workflow",
     async run(context) {
-      const passed = await check(context.now());
-      return observation(id, recurrenceFamily, passed);
+      const result = await runKernelJourneyCheck({
+        journey: id.includes("/state/") ? "memory" : "write",
+        now: context.now,
+        check: () => check(context.now()),
+        requestId: id
+      });
+      const passed = result?.resultStatus === "success";
+      return observation(id, recurrenceFamily, passed, result?.elapsedMs ?? 9_000);
     }
   };
 }
 
-async function pendingConfirmationPrecedesRecall(): Promise<boolean> {
-  const handler = (turnStage: TextMessageHandler["turnStage"]): TextMessageHandler => ({
-    turnStage,
-    matches: async () => false,
-    handle: async () => undefined
+async function pendingConfirmationPrecedesRecall(now: Date): Promise<boolean> {
+  const handlers: TextMessageHandlerRegistry = {
+    pending: {
+      turnStage: "pending_function",
+      matches: ({ text }) => text === "保存",
+      handle: async () => ({ ok: true, replyText: "pending-confirmation" })
+    },
+    recall: {
+      turnStage: "pre_route_recall",
+      matches: ({ text }) => text === "保存",
+      handle: async () => ({ ok: true, replyText: "incorrect-recall" })
+    }
+  };
+  const harness = createKernelRuntimeHarness({
+    now: () => now,
+    profile: kernelProfile([]),
+    functionRegistry: {},
+    textMessageHandlers: handlers,
+    planner: noPlanPlanner()
   });
-  return (
-    orderTurnHandlers({
-      recall: handler("pre_route_recall"),
-      attachment: handler("attachment"),
-      pending: handler("pending_function"),
-      resolution: handler("resolution")
-    })
-      .map(({ name }) => name)
-      .join(",") === "pending,resolution,attachment,recall"
-  );
+  const [result] = await harness.runTurns([
+    { text: "保存", requesterUserId: "U_SYNTHETIC_1", requestId: "pending-precedence" }
+  ]);
+  return result?.replyText === "pending-confirmation";
 }
 
 async function unauthorizedWriteDenied(now: Date): Promise<boolean> {
-  const candidates = buildCapabilityCandidates({
-    text: "保存這個檔案",
-    enabledFunctions: [],
-    knowledgeSources: [],
-    maxCandidates: 3,
-    source: "group"
-  });
-  const plan = validateAgentPlan({
-    text: "保存這個檔案",
-    enabledFunctions: [],
-    candidates,
-    proposal: {
-      status: "proposed",
-      disposition: "execute",
-      capability: "save_resource",
-      arguments: { title: "synthetic" },
-      confidence: 0.99
+  let executions = 0;
+  const harness = createKernelRuntimeHarness({
+    now: () => now,
+    profile: kernelProfile([]),
+    functionRegistry: {
+      save_resource: async () => {
+        executions += 1;
+        return { ok: true, replyText: "unsafe" };
+      }
     },
-    minConfidence: 0.65,
-    sourceType: "group",
-    now
+    planner: executePlanner("save_resource", { title: "synthetic" })
   });
-  return plan.disposition === "deny";
+  const [result] = await harness.runTurns([
+    {
+      text: "保存這個檔案",
+      requesterUserId: "U_SYNTHETIC_1",
+      requestId: "unauthorized-save"
+    }
+  ]);
+  return executions === 0 && result?.replyText !== "unsafe";
 }
 
 async function missingWriteEvidenceDenied(now: Date): Promise<boolean> {
-  const text = "這是一段普通對話";
-  const candidates = buildCapabilityCandidates({
-    text: "幫我保存一段記憶",
-    enabledFunctions: ["save_memory"],
-    knowledgeSources: [],
-    maxCandidates: 3,
-    source: "group"
-  });
-  const plan = validateAgentPlan({
-    text,
-    enabledFunctions: ["save_memory"],
-    candidates,
-    proposal: {
-      status: "proposed",
-      disposition: "execute",
-      capability: "save_memory",
-      arguments: { content: "synthetic payload" },
-      confidence: 0.99
+  let executions = 0;
+  const harness = createKernelRuntimeHarness({
+    now: () => now,
+    profile: kernelProfile(["save_memory"]),
+    functionRegistry: {
+      save_memory: async () => {
+        executions += 1;
+        return { ok: true, replyText: "unsafe" };
+      }
     },
-    minConfidence: 0.65,
-    sourceType: "group",
-    now
+    planner: executePlanner("save_memory", { content: "synthetic payload" })
   });
-  return plan.disposition === "deny";
+  const [result] = await harness.runTurns([
+    {
+      text: "這是一段普通對話",
+      requesterUserId: "U_SYNTHETIC_1",
+      requestId: "missing-write-evidence"
+    }
+  ]);
+  return executions === 0 && result?.replyText !== "unsafe";
 }
 
-async function syntheticScan(): Promise<{ status: "unavailable" }> {
-  return { status: "unavailable" };
+async function scanUnavailableFailsClosed(now: Date): Promise<boolean> {
+  const catalog = new InMemoryCatalogStore();
+  await catalog.upsertSource({
+    profileName: "helper",
+    sourceKey: "synthetic_uploads",
+    adapterType: "onedrive",
+    domain: "presentation",
+    defaultItemKind: "ppt_slide",
+    rootLocation: { driveId: "drive", folderItemId: "folder" },
+    enabled: true,
+    syncPolicy: { mode: "scheduled", intervalMinutes: 15 },
+    capabilities: { read: ["helper"], write: ["helper:ppt_slide:write"] }
+  });
+  let uploads = 0;
+  const graph: GraphDriveClient = {
+    listFolderChildren: async () => [],
+    createSharingLink: async () => "synthetic-link",
+    uploadFile: async () => {
+      uploads += 1;
+      return { id: "item", driveId: "drive", name: "synthetic.pptx", path: "synthetic.pptx" };
+    }
+  };
+  const scanner: VirusScanner = { scan: async () => ({ status: "unavailable" }) };
+  const publisher = createResourceBinaryPublisher({
+    catalog,
+    graph,
+    scanner,
+    maxBytes: 1024
+  });
+  const result = await publisher.publish({
+    binary: {
+      data: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]),
+      declaredFileName: "synthetic.pptx",
+      declaredContentType:
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      sourceKind: "line"
+    },
+    target: {
+      profileName: "helper",
+      sourceKey: "synthetic_uploads",
+      itemKind: "ppt_slide",
+      domain: "presentation",
+      title: "synthetic"
+    },
+    now
+  });
+  return uploads === 0 && result.replyText.includes("掃毒服務目前不可用");
 }
 
 async function groupWithoutIntentHasNoSession(now: Date): Promise<boolean> {
@@ -192,19 +253,39 @@ async function attachmentRequesterIsolation(now: Date): Promise<boolean> {
 }
 
 async function activeTaskRequesterIsolation(now: Date): Promise<boolean> {
-  const store = new InMemoryConversationWindowStore({ now: () => now });
-  await store.recordActiveTask({
-    scope: { profileName: "helper", sourceKey: "group:G_SYNTHETIC", requesterUserId: "U1" },
-    task: activeTask(now, 60_000),
-    ttlMs: 60_000
+  let executions = 0;
+  const functions: FunctionRegistry = {
+    retrieve_memory: async () => {
+      executions += 1;
+      return {
+        ok: true,
+        replyText: "synthetic-memory",
+        agentResult: {
+          status: "success",
+          replyText: "synthetic-memory",
+          anchors: { memoryId: "memory_opaque_1" },
+          entities: [{ type: "memory", key: "memory_opaque_1", label: "記憶" }],
+          evidence: [{ kind: "memory", reference: { memoryId: "memory_opaque_1" } }],
+          supportedOperations: ["continue", "refine", "view_full"]
+        }
+      };
+    }
+  };
+  const harness = createKernelRuntimeHarness({
+    now: () => now,
+    profile: kernelProfile(["retrieve_memory"]),
+    functionRegistry: functions,
+    planner: executePlanner("retrieve_memory", { query: "synthetic" })
   });
-  return (
-    (await store.activeTask({
-      profileName: "helper",
-      sourceKey: "group:G_SYNTHETIC",
-      requesterUserId: "U2"
-    })) === undefined
-  );
+  const results = await harness.runTurns([
+    {
+      text: "查我記住的資訊 synthetic",
+      requesterUserId: "U_SYNTHETIC_1",
+      requestId: "memory-owner"
+    },
+    { text: "那一份呢", requesterUserId: "U_SYNTHETIC_2", requestId: "memory-other-user" }
+  ]);
+  return executions === 1 && results[0]?.resultStatus === "success" && !results[1]?.resultStatus;
 }
 
 async function expiredActiveTaskRejected(now: Date): Promise<boolean> {
@@ -251,7 +332,8 @@ function activeTask(now: Date, ttlMs: number): ActiveTaskContext {
 function observation(
   caseId: string,
   recurrenceFamily: RecurrenceFamily,
-  passed: boolean
+  passed: boolean,
+  elapsedMs: number
 ): KernelCaseObservation {
   return {
     caseId,
@@ -267,7 +349,51 @@ function observation(
     ambiguityResolvedWithinTwoTurns: false,
     securityViolations: passed ? [] : ["scope_leak"],
     performanceEligible: false,
-    elapsedMs: 0,
+    elapsedMs,
     returnedRetrievableJob: false
+  };
+}
+
+function kernelProfile(enabledFunctions: FunctionName[]): BotProfileConfig {
+  return {
+    name: "helper",
+    webhookPath: "/api/line/webhook/helper",
+    channelSecret: "synthetic-secret",
+    channelAccessToken: "synthetic-token",
+    allowDirectUser: true,
+    allowRooms: false,
+    allowedMessageTypes: ["text"],
+    groupRequireWakeWord: false,
+    wakeKeywords: [],
+    acceptMention: true,
+    enabledFunctions,
+    allowedProviders: ["deepseek", "ollama"],
+    allowSubscriptionProviders: false,
+    controlledAgent: { maxCandidates: 3, minPlannerConfidence: 0.65 },
+    schedulePolicy: { meetingWindows: [], domains: [] }
+  };
+}
+
+function executePlanner(
+  capability: FunctionName,
+  argumentsRecord: Record<string, string>
+): AgentPlanner {
+  return {
+    propose: async () => ({
+      status: "proposed",
+      version: 1,
+      disposition: "execute",
+      capability,
+      arguments: argumentsRecord,
+      confidence: 0.99,
+      provider: "deepseek",
+      attempts: []
+    })
+  };
+}
+
+function noPlanPlanner(): AgentPlanner {
+  return {
+    propose: async () => ({ status: "no_plan", reasonCode: "no_candidates", attempts: [] })
   };
 }

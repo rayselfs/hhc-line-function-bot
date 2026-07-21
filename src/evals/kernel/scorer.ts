@@ -63,7 +63,9 @@ export function scoreKernelGate(
   return {
     schemaVersion: 1,
     generatedAt,
-    passed: Object.values(metrics).every((metric) => metric.passed && !metric.incomplete),
+    passed:
+      observations.every((entry) => entry.passed) &&
+      Object.values(metrics).every((metric) => metric.passed && !metric.incomplete),
     totalCases: observations.length,
     failedCaseIds: observations.filter((entry) => !entry.passed).map((entry) => entry.caseId),
     metrics,

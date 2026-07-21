@@ -1,5 +1,6 @@
 import { InMemoryAgentMemoryStore } from "../../../agent/memory-store.js";
 import type { AgentPlanner } from "../../../agent/planner.js";
+import { InMemoryConversationWindowStore } from "../../../agent/context-manager.js";
 import { createPendingResolutionTextMessageHandler } from "../../../functions/pending-resolution.js";
 import { createQueryScheduleHandler } from "../../../functions/query-schedule.js";
 import { InMemoryScheduleStore } from "../../../schedules/store.js";
@@ -52,11 +53,17 @@ const ambiguityCases: KernelAcceptanceCase[] = [
   ambiguityCase("generic-1", "下一場服事", "generic_schedule_domain_ambiguity", true),
   ambiguityCase("generic-2", "請查下一場服事安排", "generic_schedule_domain_ambiguity", true),
   ambiguityCase("generic-3", "最近一場服事表", "generic_schedule_domain_ambiguity", true),
-  ambiguityCase("role-follow-up", "下一場聚會服事", "role_follow_up_lost", true),
-  ambiguityCase("missing-domain", "幫我查下一場服事表", "required_slot_misrouted", false)
+  ambiguityCase("missing-domain", "幫我查下一場服事表", "required_slot_misrouted", true),
+  ambiguityCase("unresolved-domain", "下一場聚會服事", "required_slot_misrouted", false),
+  roleFollowUpCase()
 ];
 
-export const SCHEDULE_KERNEL_CASES: KernelAcceptanceCase[] = [...canonicalCases, ...ambiguityCases];
+export const SCHEDULE_KERNEL_CASES: KernelAcceptanceCase[] = [
+  ...canonicalCases,
+  ...ambiguityCases,
+  numericResolutionCase(),
+  expiredTaskCase()
+];
 
 function canonicalScheduleCase(input: {
   id: string;
@@ -73,7 +80,7 @@ function canonicalScheduleCase(input: {
     recurrenceFamily: input.recurrenceFamily,
     boundary: "response_projection",
     async run(context) {
-      const harness = await scheduleHarness(context, input.role);
+      const harness = await scheduleHarness(context);
       const [result] = await harness.runTurns([
         { text: input.text, requesterUserId: "U_SYNTHETIC_1", requestId: input.id }
       ]);
@@ -127,7 +134,114 @@ function ambiguityCase(
   };
 }
 
-async function scheduleHarness(context: KernelCaseContext, requestedRole?: string) {
+function roleFollowUpCase(): KernelAcceptanceCase {
+  const id = "kernel-v1/schedule/role-follow-up@1";
+  return {
+    id,
+    version: 1,
+    journey: "schedule",
+    recurrenceFamily: "role_follow_up_lost",
+    boundary: "active_task_lifecycle",
+    async run(context) {
+      const harness = await scheduleHarness(context);
+      const results = await harness.runTurns([
+        {
+          text: "下一場影視團隊服事",
+          requesterUserId: "U_SYNTHETIC_1",
+          requestId: `${id}-context`
+        },
+        {
+          text: "音控是誰",
+          requesterUserId: "U_SYNTHETIC_1",
+          requestId: `${id}-follow-up`
+        }
+      ]);
+      const passed =
+        results[0]?.resultStatus === "success" &&
+        results[1]?.resultStatus === "success" &&
+        results[1]?.replyText === "音控：人員甲";
+      return observation(id, "role_follow_up_lost", {
+        passed,
+        boundary: "active_task_lifecycle",
+        coreJourneySucceeded: passed,
+        elapsedMs: results.reduce((total, result) => total + result.elapsedMs, 0)
+      });
+    }
+  };
+}
+
+function numericResolutionCase(): KernelAcceptanceCase {
+  const id = "kernel-v1/schedule/numeric-resolution@1";
+  return {
+    id,
+    version: 1,
+    journey: "schedule",
+    recurrenceFamily: "generic_schedule_domain_ambiguity",
+    boundary: "slot_ambiguity_resolution",
+    async run(context) {
+      const harness = await scheduleHarness(context);
+      const results = await harness.runTurns([
+        { text: "下一場服事", requesterUserId: "U_SYNTHETIC_1", requestId: `${id}-ask` },
+        { text: "1", requesterUserId: "U_SYNTHETIC_1", requestId: `${id}-select` }
+      ]);
+      const passed =
+        results[0]?.resultStatus === "ambiguous" && results[1]?.resultStatus === "success";
+      return observation(id, "generic_schedule_domain_ambiguity", {
+        passed,
+        coreJourneySucceeded: passed,
+        elapsedMs: results.reduce((total, result) => total + result.elapsedMs, 0)
+      });
+    }
+  };
+}
+
+function expiredTaskCase(): KernelAcceptanceCase {
+  const id = "kernel-v1/schedule/expired-task-runtime@1";
+  return {
+    id,
+    version: 1,
+    journey: "schedule",
+    recurrenceFamily: "role_follow_up_lost",
+    boundary: "active_task_lifecycle",
+    async run(context) {
+      const conversationWindowStore = new InMemoryConversationWindowStore({ now: context.now });
+      await conversationWindowStore.recordActiveTask({
+        scope: {
+          profileName: "helper",
+          sourceKey: "group:G_SYNTHETIC",
+          requesterUserId: "U_SYNTHETIC_1"
+        },
+        task: {
+          version: 2,
+          currentCapability: "query_schedule",
+          allowedCapabilities: ["query_schedule"],
+          anchors: { domainKey: "domain_1" },
+          entities: [{ type: "schedule_domain", key: "domain_1", label: "服事類別" }],
+          supportedOperations: ["continue", "refine"],
+          createdAt: new Date(context.now().getTime() - 120_000).toISOString(),
+          expiresAt: new Date(context.now().getTime() - 60_000).toISOString()
+        },
+        ttlMs: 60_000
+      });
+      const harness = await scheduleHarness(context, conversationWindowStore);
+      const [result] = await harness.runTurns([
+        { text: "那一位呢", requesterUserId: "U_SYNTHETIC_1", requestId: id }
+      ]);
+      const passed = result?.resultStatus !== "success";
+      return observation(id, "role_follow_up_lost", {
+        passed,
+        boundary: "active_task_lifecycle",
+        coreJourneySucceeded: passed,
+        elapsedMs: result?.elapsedMs ?? 9_000
+      });
+    }
+  };
+}
+
+async function scheduleHarness(
+  context: KernelCaseContext,
+  conversationWindowStore?: InMemoryConversationWindowStore
+) {
   const store = new InMemoryScheduleStore();
   const domains = DOMAIN_MATRIX.map((entry, index) => scheduleDomain(entry, index));
   const serviceDate = new Date(context.now().getTime() + 24 * 60 * 60 * 1_000)
@@ -145,7 +259,7 @@ async function scheduleHarness(context: KernelCaseContext, requestedRole?: strin
       assignee: entry.assignee
     });
   }
-  const sessionStore = new InMemorySessionStore();
+  const sessionStore = new InMemorySessionStore({ now: context.now });
   const handler = createQueryScheduleHandler({
     memoryStore: new InMemoryAgentMemoryStore({ now: context.now }),
     scheduleStore: store,
@@ -165,27 +279,32 @@ async function scheduleHarness(context: KernelCaseContext, requestedRole?: strin
       })
     },
     sessionStore,
-    planner: schedulePlanner(requestedRole),
-    elapsedMs: () => 25
+    planner: schedulePlanner(),
+    conversationWindowStore
   });
 }
 
-function schedulePlanner(requestedRole?: string): AgentPlanner {
+function schedulePlanner(): AgentPlanner {
   return {
-    propose: async ({ text }) => ({
-      status: "proposed",
-      version: 1,
-      disposition: "execute",
-      capability: "query_schedule",
-      arguments: {
-        query: text,
-        dateIntent: "next_meeting",
-        ...(requestedRole ? { role: requestedRole } : {})
-      },
-      confidence: 0.98,
-      provider: "deepseek",
-      attempts: []
-    })
+    propose: async ({ text }) => {
+      const role = [...DOMAIN_MATRIX]
+        .sort((left, right) => right.role.length - left.role.length)
+        .find((entry) => text.includes(entry.role))?.role;
+      return {
+        status: "proposed",
+        version: 1,
+        disposition: "execute",
+        capability: "query_schedule",
+        arguments: {
+          query: text,
+          dateIntent: "next_meeting",
+          ...(role ? { role } : {})
+        },
+        confidence: 0.98,
+        provider: "deepseek",
+        attempts: []
+      };
+    }
   };
 }
 
