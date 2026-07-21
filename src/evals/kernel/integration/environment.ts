@@ -66,6 +66,8 @@ export interface KernelRedisEnvironment {
   clients: [RedisClientType, RedisClientType];
   keyPrefix: string;
   reconnectReplica(index: 0 | 1): Promise<RedisClientType>;
+  disconnectReplicas(): Promise<void>;
+  reconnectReplicas(): Promise<void>;
   cleanup(): Promise<void>;
 }
 
@@ -106,6 +108,26 @@ export async function createKernelRedisEnvironment(): Promise<KernelRedisEnviron
       }
       clients[index] = replacement;
       return replacement;
+    },
+    async disconnectReplicas() {
+      const results = await Promise.allSettled(
+        clients.map(async (client) => closeRedisClient(client))
+      );
+      if (results.some((result) => result.status === "rejected")) {
+        throw new Error("kernel_integration_redis_disconnect_failed");
+      }
+    },
+    async reconnectReplicas() {
+      for (const index of [0, 1] as const) {
+        if (clients[index].isOpen) await closeRedisClient(clients[index]);
+        const replacement = createRedisClient(url);
+        await replacement.connect();
+        if ((await replacement.ping()) !== "PONG") {
+          await closeRedisClient(replacement);
+          throw new Error("kernel_integration_redis_not_ready");
+        }
+        clients[index] = replacement;
+      }
     },
     async cleanup() {
       if (cleaned) return;

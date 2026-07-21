@@ -19,6 +19,28 @@ export interface KernelIntegrationCaseResult {
 const NOW = new Date("2026-07-21T12:00:00.000Z");
 const EXPIRES_AT = new Date(NOW.getTime() + 10 * 60_000).toISOString();
 
+export async function verifyRedisAofPolicy(client: {
+  configGet(parameters: string | string[]): Promise<Record<string, string>>;
+}): Promise<KernelIntegrationCaseResult> {
+  try {
+    const policy = await client.configGet(["appendonly", "appendfsync"]);
+    const passed = policy.appendonly === "yes" && policy.appendfsync === "always";
+    return {
+      caseId: "redis/restart/aof-policy",
+      boundary: "deployment_configuration",
+      passed,
+      ...(passed ? {} : { failureCode: "redis_aof_policy_invalid" })
+    };
+  } catch {
+    return {
+      caseId: "redis/restart/aof-policy",
+      boundary: "deployment_configuration",
+      passed: false,
+      failureCode: "redis_aof_policy_check_failed"
+    };
+  }
+}
+
 export async function runRedisIntegrationMatrix(
   environment: KernelRedisEnvironment
 ): Promise<KernelIntegrationCaseResult[]> {
@@ -85,6 +107,187 @@ export async function runRedisIntegrationMatrix(
         boundary: entry.boundary,
         passed: false,
         failureCode: "redis_contract_failed"
+      });
+    }
+  }
+  return results;
+}
+
+const RESTART_SCOPE = {
+  profileName: "kernel-restart",
+  sourceKey: "group:restart",
+  requesterUserId: "requester-a"
+};
+
+export async function prepareRedisServerRestartState(
+  environment: KernelRedisEnvironment
+): Promise<void> {
+  const client = environment.clients[0];
+  const taskStore = new RedisConversationWindowStore({
+    client,
+    keyPrefix: environment.keyPrefix,
+    now: () => NOW
+  });
+  await taskStore.recordActiveTask({
+    scope: RESTART_SCOPE,
+    task: {
+      version: 2,
+      currentCapability: "find_resource",
+      allowedCapabilities: ["find_resource"],
+      anchors: {},
+      entities: [],
+      supportedOperations: ["filter"],
+      createdAt: NOW.toISOString(),
+      expiresAt: EXPIRES_AT
+    },
+    ttlMs: 60_000
+  });
+
+  const jobStore = new RedisAgentJobStore({
+    client,
+    keyPrefix: environment.keyPrefix,
+    now: () => NOW,
+    idFactory: () => "restart-job"
+  });
+  const job = await jobStore.createPending({
+    scope: RESTART_SCOPE,
+    label: "synthetic",
+    ttlMs: 60_000
+  });
+  await jobStore.complete(job.id, { ok: true, replyText: "synthetic" });
+
+  await new RedisWebhookEventStore(client, environment.keyPrefix).tryStart(
+    "kernel-restart",
+    "restart-event",
+    60_000
+  );
+  await new RedisCacheStore({ client, keyPrefix: environment.keyPrefix }).set(
+    "restart-cache",
+    { revision: 1 },
+    60_000
+  );
+  await new RedisSessionStore({
+    client,
+    keyPrefix: environment.keyPrefix,
+    now: () => NOW
+  }).set({
+    id: "restart-selection",
+    type: "selection",
+    action: "find_resource",
+    profileName: "kernel-restart",
+    requesterUserId: "requester-a",
+    source: { type: "group", groupId: "restart", userId: "requester-a" },
+    items: [{ id: "synthetic-item", name: "synthetic", driveId: "synthetic-drive" }],
+    expiresAt: EXPIRES_AT
+  });
+  await new RedisConfirmationStore({
+    client,
+    keyPrefix: environment.keyPrefix,
+    idFactory: () => "restart-confirmation",
+    now: () => NOW
+  }).create({
+    profileName: "kernel-restart",
+    actorUserId: "requester-a",
+    action: "invite_code_create",
+    ttlMinutes: 5
+  });
+}
+
+export async function verifyRedisServerRestartState(
+  environment: KernelRedisEnvironment
+): Promise<KernelIntegrationCaseResult[]> {
+  const [leftClient, rightClient] = environment.clients;
+  const cases: Array<{ caseId: string; boundary: KernelBoundary; run: () => Promise<void> }> = [
+    {
+      caseId: "redis/restart/task-frame-durable",
+      boundary: "active_task_lifecycle",
+      run: async () => {
+        const store = new RedisConversationWindowStore({
+          client: rightClient,
+          keyPrefix: environment.keyPrefix,
+          now: () => NOW
+        });
+        assert((await store.activeTask(RESTART_SCOPE))?.currentCapability === "find_resource");
+      }
+    },
+    {
+      caseId: "redis/restart/job-durable",
+      boundary: "external_dependency",
+      run: async () => {
+        const store = new RedisAgentJobStore({
+          client: rightClient,
+          keyPrefix: environment.keyPrefix,
+          now: () => NOW
+        });
+        assert((await store.get("restart-job", RESTART_SCOPE))?.status === "completed");
+      }
+    },
+    {
+      caseId: "redis/restart/webhook-durable",
+      boundary: "entrance_access",
+      run: async () => {
+        const store = new RedisWebhookEventStore(rightClient, environment.keyPrefix);
+        assert((await store.tryStart("kernel-restart", "restart-event", 60_000)) === "duplicate");
+      }
+    },
+    {
+      caseId: "redis/restart/cache-durable",
+      boundary: "freshness_invalidation",
+      run: async () => {
+        const store = new RedisCacheStore({
+          client: rightClient,
+          keyPrefix: environment.keyPrefix
+        });
+        assert((await store.get<{ revision: number }>("restart-cache"))?.revision === 1);
+      }
+    },
+    {
+      caseId: "redis/restart/selection-one-shot",
+      boundary: "slot_ambiguity_resolution",
+      run: async () => {
+        const stores = [leftClient, rightClient].map(
+          (client) =>
+            new RedisSessionStore({ client, keyPrefix: environment.keyPrefix, now: () => NOW })
+        );
+        const consumed = await Promise.all(
+          stores.map(async (store) => store.take("restart-selection"))
+        );
+        assert(consumed.filter(Boolean).length === 1);
+      }
+    },
+    {
+      caseId: "redis/restart/confirmation-one-shot",
+      boundary: "write_workflow",
+      run: async () => {
+        const stores = [leftClient, rightClient].map(
+          (client) =>
+            new RedisConfirmationStore({
+              client,
+              keyPrefix: environment.keyPrefix,
+              now: () => NOW
+            })
+        );
+        const consumed = await Promise.all(
+          stores.map(async (store) =>
+            store.consume("restart-confirmation", "requester-a", "kernel-restart")
+          )
+        );
+        assert(consumed.filter(Boolean).length === 1);
+      }
+    }
+  ];
+
+  const results: KernelIntegrationCaseResult[] = [];
+  for (const entry of cases) {
+    try {
+      await entry.run();
+      results.push({ caseId: entry.caseId, boundary: entry.boundary, passed: true });
+    } catch {
+      results.push({
+        caseId: entry.caseId,
+        boundary: entry.boundary,
+        passed: false,
+        failureCode: "redis_restart_contract_failed"
       });
     }
   }
