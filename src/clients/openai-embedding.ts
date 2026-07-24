@@ -40,7 +40,10 @@ export function createOpenAiEmbeddingClient(options: OpenAiEmbeddingOptions): Em
         if (!Array.isArray(payload.data) || payload.data.length !== input.length) {
           throw new Error("embedding_response_invalid");
         }
-        const vectors = Array.from({ length: input.length }, () => undefined as number[] | undefined);
+        const vectors = Array.from(
+          { length: input.length },
+          () => undefined as number[] | undefined
+        );
         for (const entry of payload.data) {
           if (!isEmbeddingEntry(entry) || entry.index >= input.length || vectors[entry.index]) {
             throw new Error("embedding_response_invalid");

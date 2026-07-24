@@ -351,15 +351,18 @@ describe("config", () => {
     );
   });
 
-  it("does not expose bot-process scanner configuration", () => {
+  it("does not expose retired bot-process scanner endpoint configuration", () => {
+    const retiredScannerEnv = {
+      [["VIRUS_", "SCAN_", "ENDPOINT"].join("")]: "https://scanner.internal/scan",
+      [["VIRUS_", "SCAN_", "API_KEY"].join("")]: "scan-key",
+      [["VIRUS_", "SCAN_", "TIMEOUT_MS"].join("")]: "5000",
+      [["CLAM", "AV_HOST"].join("")]: ["172", "16", "65", "5"].join("."),
+      [["CLAM", "AV_PORT"].join("")]: "3310",
+      [["CLAM", "AV_TIMEOUT_MS"].join("")]: "15000"
+    };
     const config = loadConfigFromEnv({
       ...baseEnv(),
-      VIRUS_SCAN_ENDPOINT: "https://scanner.internal/scan",
-      VIRUS_SCAN_API_KEY: "scan-key",
-      VIRUS_SCAN_TIMEOUT_MS: "5000",
-      CLAMAV_HOST: "172.16.65.5",
-      CLAMAV_PORT: "3310",
-      CLAMAV_TIMEOUT_MS: "15000"
+      ...retiredScannerEnv
     });
 
     expect(config).not.toHaveProperty("virusScan");

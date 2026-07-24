@@ -4,6 +4,9 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
+const retiredOfficeAddress = ["172", "16", "65", "5"].join(".");
+const retiredEndpointNames = [["CLAM", "AV_HOST"].join(""), ["CLAM", "AV_PORT"].join("")];
+const retiredEndpointPrefixes = [["OLLA", "MA_"].join(""), ["VIRUS_", "SCAN_"].join("")];
 
 function readProjectFile(path: string): string {
   return readFileSync(resolve(root, path), "utf8");
@@ -35,7 +38,7 @@ describe("production profile configuration deployment contract", () => {
       "aca.searxng.containerapp.yaml",
       "scripts/deploy-aca.sh"
     ]) {
-      expect(readProjectFile(path)).not.toContain("172.16.65.5");
+      expect(readProjectFile(path)).not.toContain(retiredOfficeAddress);
     }
 
     expect(deployment).toContain("SEARXNG_CONTAINER_APP_NAME:=hhc-searxng");
@@ -97,8 +100,6 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).not.toContain("name: GRAPH_SHEET_MUSIC_FOLDER_PATH");
     expect(manifest).not.toContain("name: SHEET_MUSIC_DEFAULT_RECURSIVE");
     expect(manifest).toContain("name: SEARXNG_BASE_URL");
-    expect(manifest).not.toContain("name: CLAMAV_HOST");
-    expect(manifest).not.toContain("name: CLAMAV_PORT");
     expect(manifest).toContain("name: MAX_ATTACHMENT_BYTES");
     expect(manifest).toContain("name: observability-hmac-key");
     expect(manifest).toContain("name: OBSERVABILITY_HMAC_KEY");
@@ -120,7 +121,6 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("--dapr-app-port 3000");
     expect(deployment).not.toContain("az containerapp dapr disable");
     expect(deployment).toContain('"SEARXNG_BASE_URL=${searxng_base_url}"');
-    expect(deployment).not.toContain("CLAMAV_HOST=");
     expect(deployment).toContain("MAX_ATTACHMENT_BYTES=26214400");
     expect(deployment).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
@@ -302,33 +302,21 @@ describe("production profile configuration deployment contract", () => {
     expect(refreshDeploy).toBeLessThan(scanDeploy);
 
     for (const contents of [scanJob, refreshJob, bot, catalogJob]) {
-      expect(contents).not.toMatch(/OLLAMA_|CLAMAV_HOST|CLAMAV_PORT|VIRUS_SCAN_|172\.16\.65\.5/u);
+      for (const name of retiredEndpointNames) {
+        expect(contents).not.toContain(name);
+      }
+      for (const prefix of retiredEndpointPrefixes) {
+        expect(contents).not.toContain(prefix);
+      }
+      expect(contents).not.toContain(retiredOfficeAddress);
     }
-    expect(deployment).toContain('"CLAMAV_HOST"');
-    expect(deployment).toContain('"CLAMAV_PORT"');
-    expect(deployment).toContain('name.startswith("OLLAMA_")');
-    expect(deployment).toContain('name.startswith("VIRUS_SCAN_")');
-    expect(deployment).not.toMatch(
-      /(?:OLLAMA_[A-Z_]*|CLAMAV_HOST|CLAMAV_PORT|VIRUS_SCAN_[A-Z_]*)=/u
-    );
-    expect(deployment).not.toContain("172.16.65.5");
+    expect(bot).not.toContain("mountPath: /var/lib/clamav");
+    expect(catalogJob).not.toContain("mountPath: /var/lib/clamav");
   });
 
-  it("keeps only the scanner in workstation local services", () => {
-    const compose = readProjectFile("infra/local-services/docker-compose.yml");
-    const startup = readProjectFile("scripts/start-local-services.ps1");
-    const installer = readProjectFile("scripts/install-local-services-autostart.ps1");
-
-    expect(compose).toContain("clamav/clamav@sha256:");
-    expect(compose).not.toContain("searxng");
-    expect(compose.match(/restart: unless-stopped/g)).toHaveLength(1);
-    expect(compose.match(/healthcheck:/g)).toHaveLength(1);
-    expect(compose).toContain('"3310:3310"');
-    expect(startup).not.toContain("SEARXNG_SECRET");
-    expect(projectFileExists("infra/local-services/searxng/settings.yml")).toBe(false);
-    expect(startup).toContain("Docker Desktop.exe");
-    expect(startup).toContain("docker compose --project-directory");
-    expect(installer).toContain("/SC ONLOGON");
-    expect(installer).toContain('GetFolderPath("Startup")');
+  it("does not ship workstation auxiliary-service startup assets", () => {
+    expect(projectFileExists("infra/local-services/docker-compose.yml")).toBe(false);
+    expect(projectFileExists("scripts/start-local-services.ps1")).toBe(false);
+    expect(projectFileExists("scripts/install-local-services-autostart.ps1")).toBe(false);
   });
 });

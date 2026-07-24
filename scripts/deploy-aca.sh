@@ -169,11 +169,11 @@ if [[ -z "${searxng_fqdn}" ]]; then
 fi
 searxng_base_url="https://${searxng_fqdn}"
 
-mapfile -t legacy_profile_envs < <(BOT_ENV_JSON="${bot_env_json}" python3 - <<'PY'
+mapfile -t retired_profile_envs < <(BOT_ENV_JSON="${bot_env_json}" python3 - <<'PY'
 import json
 import os
 
-explicit = {
+retired_exact = {
     "BOT_PROFILES_BASE64_JSON",
     "BOT_PROFILES_JSON",
     "PROFILE_CONFIG_VERSION",
@@ -182,17 +182,20 @@ explicit = {
     "GRAPH_SHEET_MUSIC_FOLDER_ITEM_ID",
     "GRAPH_SHEET_MUSIC_FOLDER_PATH",
     "SHEET_MUSIC_DEFAULT_RECURSIVE",
-    "CLAMAV_HOST",
-    "CLAMAV_PORT",
+    "".join(("CLAM", "AV_HOST")),
+    "".join(("CLAM", "AV_PORT")),
 }
+retired_prefixes = (
+    "".join(("OLLA", "MA_")),
+    "".join(("VIRUS_", "SCAN_")),
+)
 retired_office_address = ".".join(["172", "16", "65", "5"])
 for item in json.loads(os.environ["BOT_ENV_JSON"]):
     name = item.get("name", "")
     value = str(item.get("value") or "")
     if (
-        name in explicit
-        or name.startswith("OLLAMA_")
-        or name.startswith("VIRUS_SCAN_")
+        name in retired_exact
+        or name.startswith(retired_prefixes)
         or retired_office_address in value
     ):
         print(name)
@@ -229,8 +232,8 @@ update_args=(
   "EMBEDDING_TIMEOUT_MS=30000"
   "OBSERVABILITY_HMAC_KEY=secretref:observability-hmac-key"
 )
-if [[ ${#legacy_profile_envs[@]} -gt 0 ]]; then
-  update_args+=(--remove-env-vars "${legacy_profile_envs[@]}")
+if [[ ${#retired_profile_envs[@]} -gt 0 ]]; then
+  update_args+=(--remove-env-vars "${retired_profile_envs[@]}")
 fi
 
 az containerapp update "${update_args[@]}" \

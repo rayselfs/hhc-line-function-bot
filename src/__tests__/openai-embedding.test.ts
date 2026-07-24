@@ -48,9 +48,11 @@ describe("OpenAI embedding client", () => {
       model: "text-embedding-3-small",
       dimensions: 1536,
       timeoutMs: 1000,
-      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
-        new Response(JSON.stringify({ data: [{ index: 0, embedding: [0.1] }] }), { status: 200 })
-      )
+      fetchImpl: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ index: 0, embedding: [0.1] }] }), { status: 200 })
+        )
     });
 
     await expect(client.embed(["first"])).rejects.toThrow("embedding_dimension_mismatch");

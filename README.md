@@ -1,6 +1,6 @@
 # hhc-line-function-bot
 
-LINE webhook service for routing selected church bot requests to local-first functions.
+LINE webhook service for routing selected church bot requests to controlled functions.
 
 ## What It Does
 
@@ -57,6 +57,10 @@ Set the LINE webhook URL per bot profile, for example:
 - `/api/line/webhook/slides`
 
 Provider auth callbacks are not exposed by this service. LINE webhook traffic should only use the canonical profile paths above.
+
+Local development starts only the webhook service. Semantic generation and
+embeddings use the configured remote providers; external search and attachment
+scanning are production ACA workloads, not workstation services.
 
 In production, the public API Gateway forwards those webhook paths through Dapr service invocation to app id `hhc-line-function-bot`. The bot Container App therefore keeps Dapr enabled on HTTP app port 3000 while its own ingress remains internal.
 

@@ -100,7 +100,12 @@ async function probeDeepSeekChat(
     );
     const latencyMs = elapsedMs(startedAt);
     if (!response.ok) {
-      return { status: "error", httpStatus: response.status, latencyMs, detail: `http_${response.status}` };
+      return {
+        status: "error",
+        httpStatus: response.status,
+        latencyMs,
+        detail: `http_${response.status}`
+      };
     }
     await response.json();
     return { status: "ok", httpStatus: response.status, latencyMs };

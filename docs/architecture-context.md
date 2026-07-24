@@ -15,6 +15,9 @@ The service is lane-based and authority-first for controlled routing:
 
 - Every semantic lane uses DeepSeek as its sole provider.
 - `deepseek` uses `DEEPSEEK_API_KEY`.
+- The repository has no workstation auxiliary-service runtime. External search
+  is an internal ACA app, and attachment scanning/signature refresh are finite
+  ACA Jobs.
 - Provider runtimes may reason and generate text, but this bot owns authority:
   profile policy, function toggles, tool execution, memory writes, and deny or
   clarify flows remain server-side.
