@@ -17,6 +17,7 @@ set -euo pipefail
 : "${CLAMAV_SIGNATURE_STORAGE_ACCOUNT_NAME:?CLAMAV_SIGNATURE_STORAGE_ACCOUNT_NAME is required}"
 : "${CLAMAV_SIGNATURE_FILE_SHARE_NAME:?CLAMAV_SIGNATURE_FILE_SHARE_NAME is required}"
 : "${SEARXNG_CONTAINER_APP_NAME:=hhc-searxng}"
+: "${CONTAINER_APP_JOB_IDENTITY_NAME:=hhc-line-bot-jobs}"
 : "${AZURE_OPENAI_EMBEDDING_RESOURCE_NAME:=bible-text-embedding-resource}"
 : "${AZURE_OPENAI_EMBEDDING_DEPLOYMENT:=text-embedding-3-small}"
 : "${AZURE_OPENAI_EMBEDDING_API_VERSION:=2024-10-21}"
@@ -65,6 +66,16 @@ if [[ -z "${container_app_location}" ]]; then
   exit 1
 fi
 managed_environment_name="${managed_environment_id##*/}"
+container_app_job_identity_id="$(az identity show \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_JOB_IDENTITY_NAME}" \
+  --query id \
+  --output tsv \
+  --only-show-errors)"
+if [[ -z "${container_app_job_identity_id}" ]]; then
+  echo "Could not resolve the Container Apps Job identity ${CONTAINER_APP_JOB_IDENTITY_NAME}"
+  exit 1
+fi
 
 azure_openai_embedding_endpoint="$(az cognitiveservices account show \
   --resource-group "${RESOURCE_GROUP}" \
@@ -484,6 +495,7 @@ render_job_manifest() {
   JOB_IMAGE="${job_image}" \
   MANAGED_ENVIRONMENT_ID="${managed_environment_id}" \
   CONTAINER_APP_LOCATION="${container_app_location}" \
+  CONTAINER_APP_JOB_IDENTITY_ID="${container_app_job_identity_id}" \
   ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME="${ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME}" \
   ATTACHMENT_SCAN_QUEUE_NAME="${ATTACHMENT_SCAN_QUEUE_NAME}" \
   BOT_SECRETS_JSON="${bot_secrets_json}" \
@@ -531,6 +543,9 @@ text = "\n".join(rendered) + "\n"
 for placeholder, value in {
     "PLACEHOLDER_CONTAINER_APP_ENVIRONMENT_ID": os.environ["MANAGED_ENVIRONMENT_ID"],
     "PLACEHOLDER_AZURE_REGION": os.environ["CONTAINER_APP_LOCATION"],
+    "PLACEHOLDER_CONTAINER_APP_JOB_IDENTITY_ID": os.environ[
+        "CONTAINER_APP_JOB_IDENTITY_ID"
+    ],
     "PLACEHOLDER_ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME": os.environ[
         "ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME"
     ],
