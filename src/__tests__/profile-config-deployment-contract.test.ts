@@ -329,6 +329,21 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("ATTACHMENT_SCAN_JOB_NAME");
     expect(deployment).toContain("CLAMAV_SIGNATURE_REFRESH_JOB_NAME");
 
+    const retiredEnvBlock = deployment.slice(
+      deployment.indexOf("retired_exact = {"),
+      deployment.indexOf("retired_prefixes =")
+    );
+    for (const name of [
+      "LLM_PROVIDER",
+      "LLM_FALLBACK_PROVIDER",
+      "EMBEDDING_KEEP_ALIVE",
+      "CLAMAV_TIMEOUT_MS"
+    ]) {
+      expect(retiredEnvBlock).toContain(`"${name}"`);
+    }
+    expect(deployment).toContain('retired_provider_token = "".join(("OLLA", "MA"))');
+    expect(deployment).toContain('or f"_{retired_provider_token}_" in name');
+
     const queueSecretDeploy = deployment.indexOf("az containerapp secret set");
     const searxngDeploy = deployment.indexOf('az containerapp update --yaml "${searxng_manifest}"');
     const botDeploy = deployment.indexOf('az containerapp update "${update_args[@]}"');
