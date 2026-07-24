@@ -45,6 +45,15 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment.indexOf('az containerapp update --yaml "${searxng_manifest}"')).toBeLessThan(
       deployment.indexOf('az containerapp update "${update_args[@]}"')
     );
+    const searxngUpdateStart = deployment.indexOf(
+      'az containerapp update --yaml "${searxng_manifest}"'
+    );
+    const searxngUpdate = deployment.slice(
+      searxngUpdateStart,
+      deployment.indexOf("\nelse", searxngUpdateStart)
+    );
+    expect(searxngUpdate).toContain('--resource-group "${RESOURCE_GROUP}"');
+    expect(searxngUpdate).toContain('--name "${SEARXNG_CONTAINER_APP_NAME}"');
     expect(projectFileExists("infra/searxng/settings.yml")).toBe(true);
   });
 

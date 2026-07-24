@@ -80,6 +80,8 @@ if az containerapp show \
   --only-show-errors \
   --output none 2>/dev/null; then
   az containerapp update --yaml "${searxng_manifest}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${SEARXNG_CONTAINER_APP_NAME}" \
     --only-show-errors \
     --output none
 else

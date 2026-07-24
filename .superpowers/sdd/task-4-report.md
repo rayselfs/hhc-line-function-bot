@@ -65,3 +65,31 @@ The inherited Task 5 work was not edited or staged:
 No live Azure deployment was run from this task. The release script now owns
 the SearXNG lifecycle and must be exercised by the normal reviewed release
 workflow before production use.
+
+## Review Follow-up: Explicit SearXNG Update Target
+
+The SearXNG update command now passes both `--resource-group "${RESOURCE_GROUP}"`
+and `--name "${SEARXNG_CONTAINER_APP_NAME}"` alongside `--yaml`. The deployment
+contract isolates the update branch before asserting both arguments, so the
+create branch or nearby commands cannot satisfy it accidentally.
+
+The focused RED run failed as expected when the update command omitted those
+arguments:
+
+```text
+expected update command to contain --resource-group "${RESOURCE_GROUP}"
+```
+
+After restoring the explicit arguments, the focused contract suite passed:
+
+```text
+1 file, 5 tests passed
+```
+
+The final review-fix verification also passed:
+
+- full Vitest suite: 104 files, 876 tests;
+- TypeScript typecheck;
+- ESLint;
+- TypeScript build; and
+- `bash -n scripts/deploy-aca.sh`.
