@@ -365,6 +365,7 @@ export interface KnowledgeConfig {
 export interface AttachmentConfig {
   maxBytes: number;
   lineDownloadTimeoutMs: number;
+  scanQueueUrl?: string;
 }
 
 export interface ExternalResourceConfig {

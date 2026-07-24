@@ -10,6 +10,7 @@ import type { RedisLastErrorClient } from "./observability/create-last-error-sto
 import type { RedisRateLimitClient } from "./rate-limit.js";
 import type { RedisSessionClient } from "./state/redis-session-store.js";
 import type { RedisAgentJobClient } from "./agent/jobs.js";
+import type { RedisAttachmentScanWorkClient } from "./attachments/scan-work-store.js";
 import type { RedisConversationWindowClient } from "./agent/context-manager.js";
 import type { RedisAgentTraceClient } from "./agent/trace-store.js";
 import type { RedisWebhookEventClient } from "./idempotency/webhook-event-store.js";
@@ -24,6 +25,7 @@ export interface RedisRuntime {
     DiagnosticRedisClient &
     RedisInFlightClient &
     RedisAgentJobClient &
+    RedisAttachmentScanWorkClient &
     RedisAgentTraceClient &
     RedisWebhookEventClient &
     RedisConversationWindowClient;

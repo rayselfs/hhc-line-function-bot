@@ -1,5 +1,8 @@
 import type { CacheStore } from "../cache/cache-store.js";
+import type { AgentJobStore } from "../agent/jobs.js";
 import type { AgentMemoryStore } from "../agent/memory-store.js";
+import type { AttachmentScanQueue } from "../attachments/scan-queue.js";
+import type { AttachmentScanWorkStore } from "../attachments/scan-work-store.js";
 import type { SheetMusicExternalSearchSummarizer } from "../search/sheet-music-external-summarizer.js";
 import type { SessionStore } from "../state/session-store.js";
 import { FUNCTION_NAMES } from "../types.js";
@@ -70,6 +73,9 @@ export interface FunctionModuleContext {
     knowledgeStore?: KnowledgeStore;
     embedding?: EmbeddingClient;
     knowledgeTextGenerator?: TextGenerationProvider;
+    agentJobStore?: AgentJobStore;
+    attachmentScanQueue?: AttachmentScanQueue;
+    attachmentScanWorkStore?: AttachmentScanWorkStore;
     now?: () => Date;
     requestIdFactory?: () => string;
   };
@@ -845,7 +851,7 @@ export const FUNCTION_MODULES: FunctionModule[] = [
         }
       }
     ],
-    register: ({ config, clients }) => {
+    register: ({ clients }) => {
       if (!clients.memoryStore) {
         return {};
       }
@@ -859,7 +865,12 @@ export const FUNCTION_MODULES: FunctionModule[] = [
           })
         }
       };
-      if (clients.catalog && clients.graph && clients.lineContent) {
+      if (
+        clients.catalog &&
+        clients.agentJobStore &&
+        clients.attachmentScanQueue &&
+        clients.attachmentScanWorkStore
+      ) {
         registrations.textMessages = {
           upload_intent_activation: createUploadIntentTextMessageHandler({
             sessionStore: clients.sessionStore,
@@ -869,11 +880,9 @@ export const FUNCTION_MODULES: FunctionModule[] = [
           pending_attachment_answer: createPendingAttachmentTextMessageHandler({
             sessionStore: clients.sessionStore,
             catalog: clients.catalog,
-            lineContent: clients.lineContent,
-            graph: clients.graph,
-            scanner: clients.virusScanner,
-            maxBytes: config.attachments?.maxBytes ?? 25 * 1024 * 1024,
-            lineDownloadTimeoutMs: config.attachments?.lineDownloadTimeoutMs ?? 30_000,
+            agentJobStore: clients.agentJobStore,
+            scanQueue: clients.attachmentScanQueue,
+            scanWorkStore: clients.attachmentScanWorkStore,
             now: clients.now
           })
         };

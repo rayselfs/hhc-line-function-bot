@@ -1,5 +1,8 @@
 import { createGraphDriveClient } from "../clients/graph.js";
 import { createLineSdkContentClient } from "../clients/line.js";
+import type { AgentJobStore } from "../agent/jobs.js";
+import type { AttachmentScanQueue } from "../attachments/scan-queue.js";
+import type { AttachmentScanWorkStore } from "../attachments/scan-work-store.js";
 import {
   createExternalBinaryClient,
   type ExternalBinaryClient
@@ -54,6 +57,9 @@ export interface RegistryClients {
   embedding?: EmbeddingClient;
   knowledgeTextGenerator?: TextGenerationProvider;
   accessStore?: AccessStore;
+  agentJobStore?: AgentJobStore;
+  attachmentScanQueue?: AttachmentScanQueue;
+  attachmentScanWorkStore?: AttachmentScanWorkStore;
   now?: () => Date;
   requestIdFactory?: () => string;
   fetchImpl?: typeof fetch;
@@ -106,6 +112,9 @@ export function createFunctionRegistries(
       lineContent,
       externalBinary: clients.externalBinary ?? createExternalBinaryClient(),
       virusScanner: clients.virusScanner,
+      agentJobStore: clients.agentJobStore,
+      attachmentScanQueue: clients.attachmentScanQueue,
+      attachmentScanWorkStore: clients.attachmentScanWorkStore,
       now: clients.now,
       requestIdFactory: clients.requestIdFactory
     }

@@ -109,6 +109,18 @@ describe("config", () => {
     ).toEqual({ maxBytes: 1_048_576, lineDownloadTimeoutMs: 5_000 });
   });
 
+  it("loads an optional attachment scan queue URL", () => {
+    expect(
+      loadConfigFromEnv({
+        ...baseEnv(),
+        ATTACHMENT_SCAN_QUEUE_URL:
+          "https://storage.example.test/attachment-scan?sv=opaque-signature"
+      }).attachments
+    ).toMatchObject({
+      scanQueueUrl: "https://storage.example.test/attachment-scan?sv=opaque-signature"
+    });
+  });
+
   it("loads safe external resource download defaults", () => {
     expect(loadConfigFromEnv(baseEnv()).externalResources).toEqual({
       downloadTimeoutMs: 15_000,
@@ -155,6 +167,48 @@ describe("config", () => {
         });
 
         expect(config.profiles.map((profile) => profile.name)).toEqual(["helper"]);
+      }
+    );
+  });
+
+  it("requires an attachment scan queue when save_resource is enabled in production", async () => {
+    await withProfileFile(
+      [
+        {
+          name: "helper",
+          webhookPath: "/api/line/webhook/helper",
+          channelSecretEnv: "LINE_HELPER_CHANNEL_SECRET",
+          channelAccessTokenEnv: "LINE_HELPER_CHANNEL_ACCESS_TOKEN",
+          enabledFunctions: ["save_resource"]
+        }
+      ],
+      async (path) => {
+        const env = {
+          NODE_ENV: "production",
+          PROFILE_CONFIG_PATH: path,
+          LINE_HELPER_CHANNEL_SECRET: "secret",
+          LINE_HELPER_CHANNEL_ACCESS_TOKEN: "token",
+          OBSERVABILITY_HMAC_KEY: "0123456789abcdef0123456789abcdef"
+        };
+
+        expect(() => loadConfigFromEnv(env)).toThrow(
+          "ATTACHMENT_SCAN_QUEUE_URL is required in production when save_resource is enabled"
+        );
+        expect(() =>
+          loadConfigFromEnv({
+            ...env,
+            ATTACHMENT_SCAN_QUEUE_URL:
+              "https://storage.example.test/attachment-scan?sv=opaque-signature"
+          })
+        ).toThrow("REDIS_URL is required in production when save_resource is enabled");
+        expect(
+          loadConfigFromEnv({
+            ...env,
+            REDIS_URL: "redis://placeholder",
+            ATTACHMENT_SCAN_QUEUE_URL:
+              "https://storage.example.test/attachment-scan?sv=opaque-signature"
+          }).attachments.scanQueueUrl
+        ).toContain("/attachment-scan");
       }
     );
   });

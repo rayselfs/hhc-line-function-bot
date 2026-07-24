@@ -21,7 +21,12 @@ import {
   createScheduleEvidenceProvider
 } from "./agent/evidence/providers.js";
 import { createWikipediaSummarizer } from "./wikipedia/summarizer.js";
-import { RedisAgentJobStore } from "./agent/jobs.js";
+import { InMemoryAgentJobStore, RedisAgentJobStore } from "./agent/jobs.js";
+import { createAzureAttachmentScanQueue } from "./attachments/scan-queue.js";
+import {
+  InMemoryAttachmentScanWorkStore,
+  RedisAttachmentScanWorkStore
+} from "./attachments/scan-work-store.js";
 import { RedisConversationWindowStore } from "./agent/context-manager.js";
 import { RedisAgentTraceStore } from "./agent/trace-store.js";
 import { createCacheStore } from "./cache/create-cache-store.js";
@@ -215,6 +220,16 @@ const inFlightStore = createInFlightStore({ redis });
 const webhookEventStore = createWebhookEventStore(redis);
 const agentJobStore = redis
   ? new RedisAgentJobStore({ client: redis.client, keyPrefix: redis.keyPrefix })
+  : new InMemoryAgentJobStore();
+const attachmentScanWorkStore = redis
+  ? new RedisAttachmentScanWorkStore({
+      client: redis.client,
+      keyPrefix: redis.keyPrefix,
+      jobStore: agentJobStore
+    })
+  : new InMemoryAttachmentScanWorkStore({ jobStore: agentJobStore });
+const attachmentScanQueue = config.attachments.scanQueueUrl
+  ? createAzureAttachmentScanQueue(config.attachments.scanQueueUrl)
   : undefined;
 const conversationWindowStore = redis
   ? new RedisConversationWindowStore({ client: redis.client, keyPrefix: redis.keyPrefix })
@@ -244,6 +259,9 @@ const registries = createFunctionRegistries(config, {
   memoryStore,
   accessStore,
   virusScanner,
+  agentJobStore,
+  attachmentScanWorkStore,
+  attachmentScanQueue,
   webSearch,
   sheetMusicExternalSearchSummarizer: createSheetMusicExternalSearchSummarizer({
     primary: wikipediaSummaryPrimary

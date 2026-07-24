@@ -236,6 +236,18 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   const normalizedProfiles = profiles.map((profile) => normalizeProfile(profile, env));
   validateProviderPolicy(normalizedProfiles, llmProvider);
   validateAccessConfig(normalizedProfiles, env);
+  const attachmentScanQueueUrl = readAttachmentScanQueueUrl(env);
+  const requiresDurableAttachmentScanning =
+    env.NODE_ENV === "production" &&
+    normalizedProfiles.some((profile) => profile.enabledFunctions.includes("save_resource"));
+  if (requiresDurableAttachmentScanning && !attachmentScanQueueUrl) {
+    throw new Error(
+      "ATTACHMENT_SCAN_QUEUE_URL is required in production when save_resource is enabled"
+    );
+  }
+  if (requiresDurableAttachmentScanning && !env.REDIS_URL?.trim()) {
+    throw new Error("REDIS_URL is required in production when save_resource is enabled");
+  }
   const observabilityHmacKey = env.OBSERVABILITY_HMAC_KEY?.trim();
   if (observabilityHmacKey && observabilityHmacKey.length < 32) {
     throw new Error("OBSERVABILITY_HMAC_KEY must contain at least 32 characters");
@@ -254,7 +266,8 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
     maxBodyBytes: readInt(env.MAX_BODY_BYTES, 262_144),
     attachments: {
       maxBytes: readInt(env.MAX_ATTACHMENT_BYTES, 25 * 1024 * 1024),
-      lineDownloadTimeoutMs: readInt(env.LINE_CONTENT_DOWNLOAD_TIMEOUT_MS, 30_000)
+      lineDownloadTimeoutMs: readInt(env.LINE_CONTENT_DOWNLOAD_TIMEOUT_MS, 30_000),
+      ...(attachmentScanQueueUrl ? { scanQueueUrl: attachmentScanQueueUrl } : {})
     },
     externalResources: {
       downloadTimeoutMs: readInt(env.EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS, 15_000),
@@ -376,6 +389,20 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
       ...(observabilityHmacKey ? { hmacKey: observabilityHmacKey } : {})
     }
   };
+}
+
+function readAttachmentScanQueueUrl(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.ATTACHMENT_SCAN_QUEUE_URL?.trim();
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") {
+      throw new Error("invalid protocol");
+    }
+  } catch {
+    throw new Error("ATTACHMENT_SCAN_QUEUE_URL must be a valid HTTPS URL");
+  }
+  return value;
 }
 
 type ParsedProfile = z.infer<typeof profileSchema>;

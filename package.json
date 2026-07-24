@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",
+    "@azure/storage-queue": "^12.31.0",
     "@line/bot-sdk": "^10.1.1",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@notionhq/client": "^5.1.0",
