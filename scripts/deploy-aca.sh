@@ -17,6 +17,9 @@ set -euo pipefail
 : "${CLAMAV_SIGNATURE_STORAGE_ACCOUNT_NAME:?CLAMAV_SIGNATURE_STORAGE_ACCOUNT_NAME is required}"
 : "${CLAMAV_SIGNATURE_FILE_SHARE_NAME:?CLAMAV_SIGNATURE_FILE_SHARE_NAME is required}"
 : "${SEARXNG_CONTAINER_APP_NAME:=hhc-searxng}"
+: "${AZURE_OPENAI_EMBEDDING_RESOURCE_NAME:=bible-text-embedding-resource}"
+: "${AZURE_OPENAI_EMBEDDING_DEPLOYMENT:=text-embedding-3-small}"
+: "${AZURE_OPENAI_EMBEDDING_API_VERSION:=2024-10-21}"
 
 image_ref="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 scan_image_ref="${ACR_LOGIN_SERVER}/${SCAN_IMAGE_REPOSITORY}:${IMAGE_TAG}"
@@ -63,11 +66,88 @@ if [[ -z "${container_app_location}" ]]; then
 fi
 managed_environment_name="${managed_environment_id##*/}"
 
+azure_openai_embedding_endpoint="$(az cognitiveservices account show \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${AZURE_OPENAI_EMBEDDING_RESOURCE_NAME}" \
+  --query "properties.endpoint" \
+  --output tsv \
+  --only-show-errors)"
+azure_openai_embedding_deployment_json="$(az cognitiveservices account deployment list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${AZURE_OPENAI_EMBEDDING_RESOURCE_NAME}" \
+  --query "[?name=='${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}'] | [0]" \
+  --output json \
+  --only-show-errors)"
+read -r azure_openai_embedding_model azure_openai_embedding_state < <(
+  AZURE_OPENAI_EMBEDDING_DEPLOYMENT_JSON="${azure_openai_embedding_deployment_json}" python3 - <<'PY'
+import json
+import os
+
+deployment = json.loads(os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT_JSON"] or "null") or {}
+properties = deployment.get("properties") or {}
+model = properties.get("model") or {}
+print(f"{model.get('name') or ''}\t{properties.get('provisioningState') or ''}")
+PY
+)
+if [[ -z "${azure_openai_embedding_endpoint}" \
+  || "${azure_openai_embedding_model}" != "text-embedding-3-small" \
+  || "${azure_openai_embedding_state}" != "Succeeded" ]]; then
+  echo "Required Azure embedding deployment is unavailable" >&2
+  exit 1
+fi
+azure_openai_embedding_key="$(az cognitiveservices account keys list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${AZURE_OPENAI_EMBEDDING_RESOURCE_NAME}" \
+  --query key1 \
+  --output tsv \
+  --only-show-errors)"
+if [[ -z "${azure_openai_embedding_key}" ]]; then
+  echo "Required Azure embedding credential is unavailable" >&2
+  exit 1
+fi
+az containerapp secret set \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --secrets "azure-openai-embedding-key=${azure_openai_embedding_key}" \
+  --only-show-errors \
+  --output none
+unset azure_openai_embedding_key
+
 bot_env_json="$(az containerapp show \
   --resource-group "${RESOURCE_GROUP}" \
   --name "${CONTAINER_APP_NAME}" \
   --query "properties.template.containers[0].env" \
   --output json)"
+bot_secret_names_json="$(az containerapp secret list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --query "[].name" \
+  --output json)"
+mapfile -t missing_bot_secrets < <(BOT_SECRET_NAMES_JSON="${bot_secret_names_json}" python3 - <<'PY'
+import json
+import os
+
+required_bot_secrets = {
+    "line-helper-channel-secret",
+    "line-helper-channel-access-token",
+    "line-helper-admin-user-id",
+    "deepseek-api-key",
+    "azure-openai-embedding-key",
+    "notion-token",
+    "database-url",
+    "redis-url",
+    "graph-client-secret",
+    "observability-hmac-key",
+}
+present = set(json.loads(os.environ["BOT_SECRET_NAMES_JSON"]))
+for name in sorted(required_bot_secrets - present):
+    print(name)
+PY
+)
+if [[ ${#missing_bot_secrets[@]} -gt 0 ]]; then
+  echo "Required ACA secret is unavailable: ${missing_bot_secrets[0]}" >&2
+  exit 1
+fi
 
 clamav_storage_key="$(az storage account keys list \
   --resource-group "${RESOURCE_GROUP}" \
@@ -89,12 +169,44 @@ if [[ -z "${attachment_scan_queue_connection_string}" ]]; then
   echo "Required attachment queue credential is unavailable" >&2
   exit 1
 fi
+attachment_scan_storage_key="$(az storage account keys list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --account-name "${ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME}" \
+  --query "[0].value" \
+  --output tsv \
+  --only-show-errors)"
+attachment_scan_queue_endpoint="$(az storage account show \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME}" \
+  --query "primaryEndpoints.queue" \
+  --output tsv \
+  --only-show-errors)"
+if [[ -z "${attachment_scan_storage_key}" || -z "${attachment_scan_queue_endpoint}" ]]; then
+  echo "Required attachment queue producer credential is unavailable" >&2
+  exit 1
+fi
+attachment_scan_queue_sas_expiry="$(date -u -d "+1825 days" "+%Y-%m-%dT%H:%MZ")"
+attachment_scan_queue_sas="$(az storage queue generate-sas \
+  --account-name "${ATTACHMENT_SCAN_STORAGE_ACCOUNT_NAME}" \
+  --account-key "${attachment_scan_storage_key}" \
+  --name "${ATTACHMENT_SCAN_QUEUE_NAME}" \
+  --permissions a \
+  --expiry "${attachment_scan_queue_sas_expiry}" \
+  --https-only \
+  --output tsv \
+  --only-show-errors)"
+if [[ -z "${attachment_scan_queue_sas}" ]]; then
+  echo "Required attachment queue producer credential is unavailable" >&2
+  exit 1
+fi
+attachment_scan_queue_url="${attachment_scan_queue_endpoint%/}/${ATTACHMENT_SCAN_QUEUE_NAME}?${attachment_scan_queue_sas}"
 az containerapp secret set \
   --resource-group "${RESOURCE_GROUP}" \
   --name "${CONTAINER_APP_NAME}" \
-  --secrets "attachment-scan-queue-url=${attachment_scan_queue_connection_string}" \
+  --secrets "attachment-scan-queue-url=${attachment_scan_queue_url}" \
   --only-show-errors \
   --output none
+unset attachment_scan_storage_key attachment_scan_queue_sas attachment_scan_queue_url
 
 az containerapp env storage set \
   --resource-group "${RESOURCE_GROUP}" \
@@ -194,6 +306,9 @@ retired_exact = {
     "SHEET_MUSIC_DEFAULT_RECURSIVE",
     "LLM_PROVIDER",
     "LLM_FALLBACK_PROVIDER",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_EMBEDDING_MODEL",
     "EMBEDDING_KEEP_ALIVE",
     "CLAMAV_TIMEOUT_MS",
     "".join(("CLAM", "AV_HOST")),
@@ -243,7 +358,12 @@ update_args=(
   "SHEET_MUSIC_ALLOWED_EXTENSIONS=pdf,jpg,jpeg,png"
   "SEARXNG_BASE_URL=${searxng_base_url}"
   "SEARXNG_TIMEOUT_MS=8000"
-  "OPENAI_EMBEDDING_MODEL=text-embedding-3-small"
+  "EMBEDDING_PROVIDER=azure_openai"
+  "AZURE_OPENAI_EMBEDDING_API_KEY=secretref:azure-openai-embedding-key"
+  "AZURE_OPENAI_EMBEDDING_ENDPOINT=${azure_openai_embedding_endpoint}"
+  "AZURE_OPENAI_EMBEDDING_DEPLOYMENT=${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}"
+  "AZURE_OPENAI_EMBEDDING_API_VERSION=${AZURE_OPENAI_EMBEDDING_API_VERSION}"
+  "EMBEDDING_MODEL=text-embedding-3-small"
   "EMBEDDING_BATCH_SIZE=16"
   "EMBEDDING_TIMEOUT_MS=30000"
   "OBSERVABILITY_HMAC_KEY=secretref:observability-hmac-key"
@@ -514,5 +634,19 @@ deploy_job "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}" "${clamav_refresh_job_manifest
 start_job_and_wait "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}"
 deploy_job "${ATTACHMENT_SCAN_JOB_NAME}" "${attachment_scan_job_manifest}"
 deploy_job "${CATALOG_SYNC_JOB_NAME}" "${catalog_job_manifest}"
+
+legacy_openai_embedding_secret="$(az containerapp secret list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --query "[?name=='openai-api-key'].name | [0]" \
+  --output tsv)"
+if [[ -n "${legacy_openai_embedding_secret}" ]]; then
+  az containerapp secret remove \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${CONTAINER_APP_NAME}" \
+    --secret-names openai-api-key \
+    --only-show-errors \
+    --output none
+fi
 
 echo "Deployed ${image_ref} to revision ${target_revision}"

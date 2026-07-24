@@ -22,7 +22,7 @@ properties:
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: line-helper-admin-user-id
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
-      - name: openai-api-key
+      - name: azure-openai-embedding-key
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: graph-client-secret
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
@@ -79,11 +79,17 @@ properties:
             secretRef: line-helper-channel-access-token
           - name: LINE_HELPER_ADMIN_USER_ID
             secretRef: line-helper-admin-user-id
-          - name: OPENAI_API_KEY
-            secretRef: openai-api-key
-          - name: OPENAI_BASE_URL
-            value: https://api.openai.com/v1
-          - name: OPENAI_EMBEDDING_MODEL
+          - name: EMBEDDING_PROVIDER
+            value: azure_openai
+          - name: AZURE_OPENAI_EMBEDDING_API_KEY
+            secretRef: azure-openai-embedding-key
+          - name: AZURE_OPENAI_EMBEDDING_ENDPOINT
+            value: https://bible-text-embedding-resource.cognitiveservices.azure.com/
+          - name: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+            value: text-embedding-3-small
+          - name: AZURE_OPENAI_EMBEDDING_API_VERSION
+            value: "2024-10-21"
+          - name: EMBEDDING_MODEL
             value: text-embedding-3-small
           - name: EMBEDDING_BATCH_SIZE
             value: "16"

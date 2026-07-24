@@ -125,7 +125,24 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
-    expect(deployment).toContain("OPENAI_EMBEDDING_MODEL=text-embedding-3-small");
+    expect(deployment).toContain(
+      "AZURE_OPENAI_EMBEDDING_RESOURCE_NAME:=bible-text-embedding-resource"
+    );
+    expect(deployment).toContain("az cognitiveservices account deployment list");
+    expect(deployment).toContain("az cognitiveservices account keys list");
+    expect(deployment).toContain('"azure-openai-embedding-key=${azure_openai_embedding_key}"');
+    expect(deployment).toContain(
+      '"AZURE_OPENAI_EMBEDDING_API_KEY=secretref:azure-openai-embedding-key"'
+    );
+    expect(deployment).toContain("EMBEDDING_PROVIDER=azure_openai");
+    expect(deployment).toContain(
+      "AZURE_OPENAI_EMBEDDING_DEPLOYMENT=${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}"
+    );
+    expect(deployment).toContain(
+      "AZURE_OPENAI_EMBEDDING_API_VERSION=${AZURE_OPENAI_EMBEDDING_API_VERSION}"
+    );
+    expect(deployment).toContain("EMBEDDING_MODEL=text-embedding-3-small");
+    expect(deployment).not.toContain("https://api.openai.com");
     expect(deployment).toContain("EMBEDDING_BATCH_SIZE=16");
     expect(deployment).toContain("EMBEDDING_TIMEOUT_MS=30000");
     expect(deployment).not.toContain("EMBEDDING_KEEP_ALIVE=");
@@ -239,9 +256,12 @@ describe("production profile configuration deployment contract", () => {
     expect(job).toContain("name: GRAPH_CLIENT_SECRET");
     expect(job).toContain("name: NOTION_TOKEN");
     expect(job).toContain("name: NOTION_SERVICE_DATABASE_ID");
-    expect(job).toContain("name: OPENAI_API_KEY");
-    expect(job).toContain("secretRef: openai-api-key");
-    expect(job).toContain("name: OPENAI_EMBEDDING_MODEL");
+    expect(job).toContain("name: AZURE_OPENAI_EMBEDDING_API_KEY");
+    expect(job).toContain("secretRef: azure-openai-embedding-key");
+    expect(job).toContain("name: AZURE_OPENAI_EMBEDDING_ENDPOINT");
+    expect(job).toContain("name: AZURE_OPENAI_EMBEDDING_DEPLOYMENT");
+    expect(job).toContain("name: AZURE_OPENAI_EMBEDDING_API_VERSION");
+    expect(job).toContain("name: EMBEDDING_MODEL");
     expect(job).toContain("value: text-embedding-3-small");
     expect(job).toContain("name: EMBEDDING_BATCH_SIZE");
     expect(job).toContain("name: EMBEDDING_TIMEOUT_MS");
@@ -277,7 +297,7 @@ describe("production profile configuration deployment contract", () => {
     expect(scanJob).toContain("name: GRAPH_CLIENT_SECRET");
     expect(scanJob).not.toContain("name: LINE_HELPER_CHANNEL_SECRET");
     expect(scanJob).not.toContain("name: LINE_HELPER_ADMIN_USER_ID");
-    expect(scanJob).not.toContain("name: OPENAI_API_KEY");
+    expect(scanJob).not.toContain("name: AZURE_OPENAI_EMBEDDING_API_KEY");
     expect(scanJob).not.toContain("name: DEEPSEEK_API_KEY");
     expect(scanJob).not.toContain("name: NOTION_TOKEN");
     expect(scanJob).not.toContain("name: OBSERVABILITY_HMAC_KEY");
@@ -322,9 +342,20 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("--storage-name clamav-signatures-readwrite");
     expect(deployment).toContain("--access-mode ReadWrite");
     expect(deployment).toContain("az containerapp secret set");
-    expect(deployment).toContain(
+    expect(deployment).toContain("az storage queue generate-sas");
+    expect(deployment).toContain("--permissions a");
+    expect(deployment).toContain('"attachment-scan-queue-url=${attachment_scan_queue_url}"');
+    expect(deployment).not.toContain(
       '"attachment-scan-queue-url=${attachment_scan_queue_connection_string}"'
     );
+    expect(deployment).toContain("legacy_openai_embedding_secret");
+    expect(deployment).not.toContain('"OPENAI_API_KEY=secretref:openai-api-key"');
+    expect(bot).not.toContain("name: OPENAI_API_KEY");
+    expect(bot).not.toContain("name: OPENAI_BASE_URL");
+    expect(bot).not.toContain("name: OPENAI_EMBEDDING_MODEL");
+    expect(catalogJob).not.toContain("name: OPENAI_API_KEY");
+    expect(catalogJob).not.toContain("name: OPENAI_BASE_URL");
+    expect(catalogJob).not.toContain("name: OPENAI_EMBEDDING_MODEL");
     expect(deployment).toContain("az containerapp job update");
     expect(deployment).toContain("ATTACHMENT_SCAN_JOB_NAME");
     expect(deployment).toContain("CLAMAV_SIGNATURE_REFRESH_JOB_NAME");
