@@ -63,11 +63,6 @@ if [[ -z "${container_app_location}" ]]; then
 fi
 managed_environment_name="${managed_environment_id##*/}"
 
-bot_secrets_json="$(az containerapp secret list \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${CONTAINER_APP_NAME}" \
-  --show-values \
-  --output json)"
 bot_env_json="$(az containerapp show \
   --resource-group "${RESOURCE_GROUP}" \
   --name "${CONTAINER_APP_NAME}" \
@@ -94,6 +89,12 @@ if [[ -z "${attachment_scan_queue_connection_string}" ]]; then
   echo "Required attachment queue credential is unavailable" >&2
   exit 1
 fi
+az containerapp secret set \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --secrets "attachment-scan-queue-url=${attachment_scan_queue_connection_string}" \
+  --only-show-errors \
+  --output none
 
 az containerapp env storage set \
   --resource-group "${RESOURCE_GROUP}" \
@@ -248,6 +249,17 @@ fi
 az containerapp update "${update_args[@]}" \
   --only-show-errors \
   --output none
+
+bot_secrets_json="$(az containerapp secret list \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --show-values \
+  --output json)"
+bot_env_json="$(az containerapp show \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${CONTAINER_APP_NAME}" \
+  --query "properties.template.containers[0].env" \
+  --output json)"
 
 az containerapp dapr enable \
   --resource-group "${RESOURCE_GROUP}" \

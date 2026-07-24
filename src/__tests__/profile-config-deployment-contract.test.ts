@@ -321,17 +321,34 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("--access-mode ReadOnly");
     expect(deployment).toContain("--storage-name clamav-signatures-readwrite");
     expect(deployment).toContain("--access-mode ReadWrite");
+    expect(deployment).toContain("az containerapp secret set");
+    expect(deployment).toContain(
+      '"attachment-scan-queue-url=${attachment_scan_queue_connection_string}"'
+    );
     expect(deployment).toContain("az containerapp job update");
     expect(deployment).toContain("ATTACHMENT_SCAN_JOB_NAME");
     expect(deployment).toContain("CLAMAV_SIGNATURE_REFRESH_JOB_NAME");
 
+    const queueSecretDeploy = deployment.indexOf("az containerapp secret set");
     const searxngDeploy = deployment.indexOf('az containerapp update --yaml "${searxng_manifest}"');
     const botDeploy = deployment.indexOf('az containerapp update "${update_args[@]}"');
+    const refreshedSecretSnapshot = deployment.indexOf(
+      'bot_secrets_json="$(az containerapp secret list',
+      botDeploy
+    );
+    const refreshedEnvSnapshot = deployment.indexOf(
+      'bot_env_json="$(az containerapp show',
+      botDeploy
+    );
     const refreshDeploy = deployment.indexOf('deploy_job "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}"');
     const refreshBootstrap = deployment.indexOf(
       'start_job_and_wait "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}"'
     );
     const scanDeploy = deployment.indexOf('deploy_job "${ATTACHMENT_SCAN_JOB_NAME}"');
+    expect(queueSecretDeploy).toBeGreaterThanOrEqual(0);
+    expect(queueSecretDeploy).toBeLessThan(botDeploy);
+    expect(refreshedSecretSnapshot).toBeGreaterThan(botDeploy);
+    expect(refreshedEnvSnapshot).toBeGreaterThan(botDeploy);
     expect(searxngDeploy).toBeGreaterThanOrEqual(0);
     expect(searxngDeploy).toBeLessThan(botDeploy);
     expect(botDeploy).toBeLessThan(refreshDeploy);
