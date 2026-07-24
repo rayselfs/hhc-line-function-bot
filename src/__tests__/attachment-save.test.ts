@@ -14,8 +14,7 @@ import type {
   FunctionHandlerContext,
   GraphDriveClient,
   LineContentClient,
-  TextMessageHandler,
-  VirusScanner
+  TextMessageHandler
 } from "../types.js";
 
 const pptxBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
@@ -76,7 +75,6 @@ async function seedPendingAttachment(
 
 async function setup(
   options: {
-    scannerStatus?: "clean" | "infected" | "unavailable";
     pptWriteCapabilities?: string[];
   } = {}
 ): Promise<{
@@ -87,7 +85,6 @@ async function setup(
   scanQueue: InMemoryAttachmentScanQueue;
   graph: GraphDriveClient;
   lineContent: LineContentClient;
-  scanner: VirusScanner;
   handler: TextMessageHandler;
 }> {
   const sessionStore = new InMemorySessionStore({
@@ -109,9 +106,6 @@ async function setup(
       name: "SundayDeck.pptx",
       path: "SundayDeck.pptx"
     })
-  };
-  const scanner: VirusScanner = {
-    scan: vi.fn().mockResolvedValue({ status: options.scannerStatus ?? "clean" })
   };
   const agentJobStore = new RecordingAgentJobStore({
     now: () => new Date("2026-07-11T10:00:00.000Z")
@@ -183,14 +177,13 @@ async function setup(
     scanQueue,
     graph,
     lineContent,
-    scanner,
     handler
   };
 }
 
 describe("attachment save pipeline", () => {
   it("asks for explicit opt-in before offering the four attachment purposes", async () => {
-    const { sessionStore, graph, lineContent, scanner, handler } = await setup();
+    const { sessionStore, graph, lineContent, handler } = await setup();
     await seedPendingAttachment(sessionStore, { stage: "awaiting_opt_in" });
 
     const result = await handler.handle({ text: "是" }, context("是"));
@@ -203,7 +196,6 @@ describe("attachment save pipeline", () => {
       "小哈資料庫"
     ]);
     expect(lineContent.getMessageContent).not.toHaveBeenCalled();
-    expect(scanner.scan).not.toHaveBeenCalled();
     expect(graph.uploadFile).not.toHaveBeenCalled();
     await expect(
       sessionStore.findPendingAttachment({
@@ -232,7 +224,7 @@ describe("attachment save pipeline", () => {
   });
 
   it("collects purpose and title separately before creating the preview", async () => {
-    const { sessionStore, graph, lineContent, scanner, handler } = await setup();
+    const { sessionStore, graph, lineContent, handler } = await setup();
     await seedPendingAttachment(sessionStore);
 
     const purpose = await handler.handle({ text: "投影片" }, context("投影片"));
@@ -255,7 +247,6 @@ describe("attachment save pipeline", () => {
     expect(preview?.replyText).toContain("名稱：七月主日流程");
     expect(preview?.quickReplies?.map((item) => item.label)).toEqual(["保存", "取消"]);
     expect(lineContent.getMessageContent).not.toHaveBeenCalled();
-    expect(scanner.scan).not.toHaveBeenCalled();
     expect(graph.uploadFile).not.toHaveBeenCalled();
   });
 
@@ -300,7 +291,7 @@ describe("attachment save pipeline", () => {
   });
 
   it("validates a pending attachment and creates a confirmation preview without uploading", async () => {
-    const { sessionStore, catalog, graph, lineContent, scanner, handler } = await setup();
+    const { sessionStore, catalog, graph, lineContent, handler } = await setup();
     await seedPendingAttachment(sessionStore);
 
     await handler.handle({ text: "投影片" }, context("投影片"));
@@ -309,7 +300,6 @@ describe("attachment save pipeline", () => {
     expect(result?.quickReplies).toHaveLength(2);
     expect(result?.replyText).toContain("OriginalDeck.pptx");
     expect(lineContent.getMessageContent).not.toHaveBeenCalled();
-    expect(scanner.scan).not.toHaveBeenCalled();
     expect(graph.uploadFile).not.toHaveBeenCalled();
     await expect(
       catalog.searchItems({ profileName: "helper", query: "SundayDeck", itemKinds: ["ppt_slide"] })
@@ -348,16 +338,8 @@ describe("attachment save pipeline", () => {
   });
 
   it("creates requester-scoped pending job and opaque work only after final confirmation", async () => {
-    const {
-      sessionStore,
-      agentJobStore,
-      scanWorkStore,
-      scanQueue,
-      graph,
-      lineContent,
-      scanner,
-      handler
-    } = await setup();
+    const { sessionStore, agentJobStore, scanWorkStore, scanQueue, graph, lineContent, handler } =
+      await setup();
     await seedPendingAttachment(sessionStore);
     await handler.handle({ text: "投影片" }, context("投影片", "req-purpose"));
     await handler.handle({ text: "SundayDeck" }, context("SundayDeck", "req-preview"));
@@ -406,7 +388,6 @@ describe("attachment save pipeline", () => {
       })
     ).resolves.toBeUndefined();
     expect(lineContent.getMessageContent).not.toHaveBeenCalled();
-    expect(scanner.scan).not.toHaveBeenCalled();
     expect(graph.uploadFile).not.toHaveBeenCalled();
   });
 

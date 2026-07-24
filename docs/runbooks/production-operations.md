@@ -209,34 +209,9 @@ Do not add `image` or `file` to a production profile's `allowedMessageTypes` unt
 
 - `save_resource` is granted only to the intended helper users/groups.
 - The target catalog sources have write capabilities and real OneDrive folder IDs.
-- `CLAMAV_HOST` and `CLAMAV_PORT` point to a private reachable `clamd` service. The HTTP scanner settings are only a compatibility fallback.
 - Redis is configured so pending attachment sessions are not lost across restarts or replicas.
+- The finite attachment-scan worker has a local ClamAV database, a current signature manifest, and the queue/job configuration required to process confirmed attachments.
 
-The webhook entrance still only creates a short-lived pending attachment session and asks for purpose. The later pending-attachment handler downloads the LINE content only after the requester provides a supported purpose, then validates size, MIME/magic bytes, extension, safe filename, hash, and virus scan. It previews the resolved name/type and requires the requester to reply `保存` before uploading to OneDrive and upserting catalog metadata.
+The webhook entrance still only creates a short-lived pending attachment session and asks for purpose. After final confirmation it queues opaque work; the finite worker downloads the LINE content, validates size, MIME/magic bytes, extension, safe filename, and hash, then scans it locally. It publishes only after a `clean` result with a current signature manifest.
 
-If the scanner is missing, times out, returns a non-2xx response, or returns any status other than `clean`, publishing fails closed. The bot should not bypass this for production.
-
-## Office Local Scanner
-
-ClamAV runs on the office Windows workstation from
-[`infra/local-services/docker-compose.yml`](../../infra/local-services/docker-compose.yml).
-It uses `restart: unless-stopped`, a persistent volume, bounded logs, and a health
-check. SearXNG is instead deployed as the internal `hhc-searxng` ACA app by the
-production release script; do not expose or relay a workstation SearXNG port.
-Run the scanner reconciler manually with:
-
-```powershell
-.\scripts\start-local-services.ps1
-```
-
-Install the logon startup entry with:
-
-```powershell
-.\scripts\install-local-services-autostart.ps1
-```
-
-The installer prefers an ONLOGON Scheduled Task and falls back to the current
-user Startup folder when Task Scheduler registration is not permitted. The
-startup script launches Docker Desktop when needed, waits for the engine, and
-runs `docker compose up -d`. The bastion relays port 3310 only across the
-private VNet/Tailscale path; do not expose it publicly.
+If the worker, scanner, manifest, or queue is unavailable, or the scan result is anything other than `clean`, publishing fails closed. The bot should not bypass this for production.

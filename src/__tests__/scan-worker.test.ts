@@ -215,6 +215,25 @@ describe("attachment scan worker", () => {
     expect(graph.uploadFile).not.toHaveBeenCalled();
   });
 
+  it("revalidates signatures immediately before publishing", async () => {
+    const { graph, scanner, work, workerOptions } = await setup();
+    const clock = vi
+      .fn<() => Date>()
+      .mockReturnValueOnce(new Date("2026-07-24T04:00:00.000Z"))
+      .mockReturnValueOnce(new Date("2026-07-27T03:00:00.001Z"));
+    workerOptions.now = clock;
+
+    await expect(runAttachmentScanWorker(work.id, workerOptions)).resolves.toMatchObject({
+      status: "failed",
+      failureCode: "signature_stale",
+      infrastructureFailure: true
+    });
+
+    expect(scanner.scan).toHaveBeenCalledTimes(1);
+    expect(graph.uploadFile).not.toHaveBeenCalled();
+    expect(clock).toHaveBeenCalledTimes(2);
+  });
+
   it("does not download or publish duplicate claimed work", async () => {
     const { graph, lineContent, work, workerOptions } = await setup();
 

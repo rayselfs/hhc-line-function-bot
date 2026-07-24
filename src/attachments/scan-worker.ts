@@ -66,10 +66,11 @@ export async function runAttachmentScanWorker(
   }
 
   try {
+    const signatureManifest = options.signatureManifest;
     const now = options.now?.() ?? new Date();
     if (
       !isCurrentClamAvSignatureManifest(
-        options.signatureManifest,
+        signatureManifest,
         now,
         options.signatureMaxAgeMs ?? DEFAULT_SIGNATURE_MAX_AGE_MS
       )
@@ -141,13 +142,24 @@ export async function runAttachmentScanWorker(
         return failWork(options.workStore, work, "scan_unavailable", true);
       }
 
+      const publicationNow = options.now?.() ?? new Date();
+      if (
+        !isCurrentClamAvSignatureManifest(
+          signatureManifest,
+          publicationNow,
+          options.signatureMaxAgeMs ?? DEFAULT_SIGNATURE_MAX_AGE_MS
+        )
+      ) {
+        return failWork(options.workStore, work, "signature_stale", true);
+      }
+
       const publication = await options.publisher.publishVerifiedResource({
         resource: preparation.resource,
         scan: {
           status: "clean",
-          signatureVersion: options.signatureManifest.signatureVersion
+          signatureVersion: signatureManifest.signatureVersion
         },
-        now
+        now: publicationNow
       });
       if (publication.status === "failed") {
         return failWork(options.workStore, work, "publish_failed", true);

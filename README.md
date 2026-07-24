@@ -402,7 +402,7 @@ Requester-scoped task-frame state records the last successful capability plus ca
 
 Production profiles still allow text messages only unless `allowedMessageTypes` is explicitly expanded. When a profile allows `image` or `file`, the webhook does not immediately download, upload, or save the attachment. Direct chat stores a requester/source-scoped pending attachment session and asks `要我幫忙保存這個檔案嗎？` with `是` and `否` quick replies. Groups first require the requester-scoped two-minute upload activation described above; without it the attachment is ignored without a reply or session.
 
-After opt-in, the bot offers exactly four purposes: `投影片`, `流行歌譜`, `詩歌歌譜`, and `小哈資料庫`. It checks the selected target's write capability, asks the requester to enter a title, and then creates a metadata-only preview with `保存` and `取消`. It does not download or scan the binary during these stages. Only after the requester replies `保存` does the bot atomically claim the pending attachment, download the LINE content once with `MAX_ATTACHMENT_BYTES` (default 25 MiB) and `LINE_CONTENT_DOWNLOAD_TIMEOUT_MS` (default 30 seconds), then check actual size, MIME/magic bytes, extension, safe filename, hash, and virus scan status. Concurrent duplicate confirmations cannot publish the same session twice. If the scanner is missing, times out, or returns anything other than `clean`, the save fails closed. OneDrive upload and catalog upsert form one logical commit: catalog failure compensates by deleting the uploaded Graph item. A successful commit returns the exact catalog item reference so immediate follow-up lookup does not depend on fuzzy title search.
+After opt-in, the bot offers exactly four purposes: `投影片`, `流行歌譜`, `詩歌歌譜`, and `小哈資料庫`. It checks the selected target's write capability, asks the requester to enter a title, and then creates a metadata-only preview with `保存` and `取消`. It does not download or scan the binary during these stages. Only after the requester replies `保存` does the bot atomically claim the pending attachment and queue one opaque scan job. The finite scan worker downloads the LINE content once with `MAX_ATTACHMENT_BYTES` (default 25 MiB) and `LINE_CONTENT_DOWNLOAD_TIMEOUT_MS` (default 30 seconds), checks actual size, MIME/magic bytes, extension, safe filename, and hash, then publishes only after a local ClamAV `clean` result with a current signature manifest. Concurrent duplicate confirmations cannot publish the same session twice. If the worker, scanner, or signatures are unavailable or stale, the save fails closed. OneDrive upload and catalog upsert form one logical commit: catalog failure compensates by deleting the uploaded Graph item. A successful commit returns the exact catalog item reference so immediate follow-up lookup does not depend on fuzzy title search.
 
 The attachment binary is fetched outbound from the bot through the LINE Content API; it is not part of the inbound webhook JSON. API Gateway, Dapr, and Fastify webhook body limits therefore remain unchanged.
 
@@ -413,7 +413,7 @@ Supported attachment targets in this flow:
 - `詩歌歌譜`: writes to the `hymn_sheet_music` OneDrive root and indexes `hymn_sheet`.
 - `小哈資料庫` / `教會資料`: writes to `xiaoha_database` subfolders and indexes `church_document`, `church_image`, or `church_other` with 90-day retention.
 
-Set `CLAMAV_HOST` to use a native ClamAV `clamd` scanner for attachment publishing. The app streams bytes with ClamAV's `INSTREAM` protocol and publishes only a `clean` result. `VIRUS_SCAN_ENDPOINT` remains an optional HTTP-compatible fallback when native ClamAV is not configured. If neither scanner is configured, attachment publishing is intentionally unavailable.
+The always-on bot process has no TCP or HTTP scanner endpoint configuration. The finite attachment-scan worker runs local ClamAV and requires `CLAMAV_DATABASE_DIRECTORY` plus `CLAMAV_SIGNATURE_MANIFEST_PATH` (defaulting to `manifest.json` in that directory). `CLAMAV_SCAN_TIMEOUT_MS` controls its bounded scan duration. It revalidates the manifest immediately before publication and fails closed when it is missing or stale.
 
 ## Runtime Secrets
 
@@ -425,8 +425,6 @@ Do not commit real `.env` files. In Azure Container Apps, store only real creden
 - `DATABASE_URL` and `REDIS_URL`
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
-- `VIRUS_SCAN_API_KEY` if the configured scanner endpoint requires one
-- `CLAMAV_HOST`, `CLAMAV_PORT`, and `CLAMAV_TIMEOUT_MS` for the preferred native scanner
 
 `config/profiles.json` is intentionally non-sensitive and is packaged in the image. Do not set `BOT_PROFILES_JSON` or `BOT_PROFILES_BASE64_JSON`; the runtime rejects both.
 
