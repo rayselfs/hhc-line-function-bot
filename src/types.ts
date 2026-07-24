@@ -262,9 +262,6 @@ export interface BotProfileConfig {
 export interface LlmConfig {
   provider?: ModelProviderName;
   fallbackProvider?: ModelProviderName;
-  ollamaBaseUrl: string;
-  ollamaModel: string;
-  ollamaKeepAlive?: string | number;
   deepseekApiKey?: string;
   deepseekBaseUrl: string;
   deepseekModel: string;
@@ -274,7 +271,6 @@ export interface LlmConfig {
   contextCompressionThresholdRatio?: number;
   generalMaxOutputTokens?: number;
   routeMaxOutputTokens?: number;
-  timeoutMs: number;
 }
 
 export interface GraphConfig {
@@ -357,13 +353,13 @@ export interface ObservabilityConfig {
 export interface KnowledgeConfig {
   notionToken: string;
   embedding: {
-    provider: "ollama";
+    provider: "openai";
+    apiKey: string;
     baseUrl: string;
     model: string;
-    dimensions: 1024;
+    dimensions: 1536;
     batchSize: number;
     timeoutMs: number;
-    keepAlive: string | number;
   };
 }
 
@@ -402,7 +398,7 @@ export interface LastErrorsConfig {
   maxEntries: number;
 }
 
-export type DependencyName = "postgres" | "redis" | "ollama" | "embedding" | "graph" | "notion";
+export type DependencyName = "postgres" | "redis" | "embedding" | "graph" | "notion";
 
 export type DependencyStatusValue = "ok" | "degraded" | "missing" | "error";
 

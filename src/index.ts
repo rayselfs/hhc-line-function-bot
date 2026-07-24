@@ -1,4 +1,4 @@
-import { createOllamaEmbeddingClient } from "./clients/ollama-embedding.js";
+import { createOpenAiEmbeddingClient } from "./clients/openai-embedding.js";
 import { createDeepSeekProvider } from "./clients/deepseek.js";
 import { createAdminActionRouter } from "./admin-action-router.js";
 import { RedisConfirmationStore } from "./actions/confirmation-store.js";
@@ -181,12 +181,12 @@ const knowledgePurgeTimer = setInterval(
 );
 knowledgePurgeTimer.unref();
 const knowledgeEmbedding = config.knowledge
-  ? createOllamaEmbeddingClient({
+  ? createOpenAiEmbeddingClient({
+      apiKey: config.knowledge.embedding.apiKey,
       baseUrl: config.knowledge.embedding.baseUrl,
       model: config.knowledge.embedding.model,
       dimensions: config.knowledge.embedding.dimensions,
-      timeoutMs: config.knowledge.embedding.timeoutMs,
-      keepAlive: config.knowledge.embedding.keepAlive
+      timeoutMs: config.knowledge.embedding.timeoutMs
     })
   : undefined;
 if (knowledgeEmbedding) {

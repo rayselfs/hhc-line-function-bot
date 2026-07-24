@@ -21,6 +21,17 @@ function baseEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function knowledgeEnv(): NodeJS.ProcessEnv {
+  return {
+    NOTION_TOKEN: "notion-secret",
+    NOTION_SERVICE_DATABASE_ID: "database-id",
+    NOTION_DATE_PROPERTY: "date",
+    NOTION_MEETING_PROPERTY: "meeting",
+    NOTION_ROLE_PROPERTY: "role",
+    NOTION_PERSON_PROPERTY: "person"
+  };
+}
+
 function profilesEnv(profiles: unknown): NodeJS.ProcessEnv {
   const directory = mkdtempSync(join(tmpdir(), "hhc-line-function-bot-profile-sync-"));
   const path = join(directory, "profiles.json");
@@ -566,12 +577,42 @@ describe("config", () => {
       LLM_PROVIDER: "ollama",
       LLM_FALLBACK_PROVIDER: "ollama",
       OLLAMA_BASE_URL: "http://127.0.0.1:11434",
-      OLLAMA_KEEP_ALIVE: "-1"
+      OLLAMA_KEEP_ALIVE: "-1",
+      OLLAMA_EMBEDDING_MODEL: "bge-m3",
+      EMBEDDING_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+      EMBEDDING_KEEP_ALIVE: "1m"
     })) {
       expect(() => loadConfigFromEnv({ ...baseEnv(), [name]: value })).toThrow(
         "Ollama runtime settings are no longer supported"
       );
     }
+  });
+
+  it("requires an OpenAI API key when Notion knowledge embeddings are enabled", () => {
+    expect(() =>
+      loadConfigFromEnv({
+        ...baseEnv(),
+        ...knowledgeEnv()
+      })
+    ).toThrow("OPENAI_API_KEY is required when knowledge embeddings are enabled");
+  });
+
+  it("uses OpenAI text-embedding-3-small at its native 1536 dimensions", () => {
+    const config = loadConfigFromEnv({
+      ...baseEnv(),
+      ...knowledgeEnv(),
+      OPENAI_API_KEY: "openai-secret"
+    });
+
+    expect(config.knowledge?.embedding).toEqual({
+      provider: "openai",
+      apiKey: "openai-secret",
+      baseUrl: "https://api.openai.com/v1",
+      model: "text-embedding-3-small",
+      dimensions: 1536,
+      batchSize: 16,
+      timeoutMs: 30_000
+    });
   });
 
   it("loads DeepSeek as the sole LLM provider", () => {

@@ -12,6 +12,7 @@ import { DEFAULT_SCHEDULE_DOMAINS } from "./schedules/domain-registry.js";
 import type {
   AppConfig,
   FunctionName,
+  KnowledgeConfig,
   ModelProviderName,
   ProviderPolicy,
   SmallTalkConfig,
@@ -242,7 +243,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
   if (env.NODE_ENV === "production" && !observabilityHmacKey) {
     throw new Error("OBSERVABILITY_HMAC_KEY is required in production");
   }
-  const ollamaBaseUrl = env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+  const knowledgeEmbedding = readKnowledgeEmbeddingConfig(env);
   return {
     serviceName: env.SERVICE_NAME || "hhc-line-function-bot",
     host: env.HOST || "0.0.0.0",
@@ -266,9 +267,6 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
     llm: {
       provider: llmProvider,
       fallbackProvider: undefined,
-      ollamaBaseUrl,
-      ollamaModel: env.OLLAMA_MODEL || "qwen3:4b-instruct",
-      ollamaKeepAlive: readOllamaKeepAlive(env.OLLAMA_KEEP_ALIVE),
       deepseekApiKey: env.DEEPSEEK_API_KEY || undefined,
       deepseekBaseUrl: env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
       deepseekModel: env.DEEPSEEK_MODEL || "deepseek-v4-flash",
@@ -280,21 +278,12 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv): AppConfig {
         0.75
       ),
       generalMaxOutputTokens: readInt(env.LLM_GENERAL_MAX_OUTPUT_TOKENS, 512),
-      routeMaxOutputTokens: readInt(env.LLM_ROUTE_MAX_OUTPUT_TOKENS, 256),
-      timeoutMs: readInt(env.OLLAMA_TIMEOUT_MS, 8000)
+      routeMaxOutputTokens: readInt(env.LLM_ROUTE_MAX_OUTPUT_TOKENS, 256)
     },
     knowledge: env.NOTION_TOKEN
       ? {
           notionToken: env.NOTION_TOKEN,
-          embedding: {
-            provider: "ollama",
-            baseUrl: env.EMBEDDING_OLLAMA_BASE_URL || ollamaBaseUrl,
-            model: env.OLLAMA_EMBEDDING_MODEL || "bge-m3",
-            dimensions: 1024,
-            batchSize: readInt(env.EMBEDDING_BATCH_SIZE, 16),
-            timeoutMs: readInt(env.EMBEDDING_TIMEOUT_MS, 30_000),
-            keepAlive: readOllamaKeepAlive(env.EMBEDDING_KEEP_ALIVE) ?? "1m"
-          }
+          embedding: knowledgeEmbedding!
         }
       : undefined,
     graph:
@@ -537,7 +526,15 @@ function validateProviderPolicy(
 }
 
 function assertNoRetiredOllamaRuntimeSettings(env: NodeJS.ProcessEnv): void {
-  const retired = ["OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_KEEP_ALIVE", "OLLAMA_TIMEOUT_MS"];
+  const retired = [
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_KEEP_ALIVE",
+    "OLLAMA_TIMEOUT_MS",
+    "OLLAMA_EMBEDDING_MODEL",
+    "EMBEDDING_OLLAMA_BASE_URL",
+    "EMBEDDING_KEEP_ALIVE"
+  ];
   if (
     env.LLM_PROVIDER === "ollama" ||
     env.LLM_FALLBACK_PROVIDER?.trim() ||
@@ -545,6 +542,23 @@ function assertNoRetiredOllamaRuntimeSettings(env: NodeJS.ProcessEnv): void {
   ) {
     throw new Error("Ollama runtime settings are no longer supported");
   }
+}
+
+function readKnowledgeEmbeddingConfig(env: NodeJS.ProcessEnv): KnowledgeConfig["embedding"] | undefined {
+  if (!env.NOTION_TOKEN) return undefined;
+  const apiKey = env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required when knowledge embeddings are enabled");
+  }
+  return {
+    provider: "openai",
+    apiKey,
+    baseUrl: env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    model: env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small",
+    dimensions: 1536,
+    batchSize: readInt(env.EMBEDDING_BATCH_SIZE, 16),
+    timeoutMs: readInt(env.EMBEDDING_TIMEOUT_MS, 30_000)
+  };
 }
 
 function assertNoLegacyProfileFields(parsedProfiles: unknown): void {
@@ -736,17 +750,6 @@ function readModelProvider(
     return "deepseek";
   }
   return fallback;
-}
-
-function readOllamaKeepAlive(value: string | undefined): string | number | undefined {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return undefined;
-  }
-  if (/^-?\d+$/.test(normalized)) {
-    return Number.parseInt(normalized, 10);
-  }
-  return normalized;
 }
 
 function readList(value: string): string[] {
