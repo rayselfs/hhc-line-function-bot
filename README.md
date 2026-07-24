@@ -483,7 +483,7 @@ pnpm eval:kernel
 pnpm build
 ```
 
-Optional live local-model check:
+Optional live DeepSeek planner check:
 
 ```powershell
 pnpm eval:agent:live
