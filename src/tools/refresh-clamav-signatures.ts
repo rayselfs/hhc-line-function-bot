@@ -43,6 +43,10 @@ export interface ClamAvSignatureRefreshEnvironment {
   validationTimeoutMs: number;
 }
 
+export interface ClamAvManifestReplacementOptions {
+  renameFile?: typeof rename;
+}
+
 const REQUIRED_DATABASE_NAMES = ["main", "daily", "bytecode"] as const;
 const DEFAULT_REFRESH_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_VALIDATION_TIMEOUT_MS = 60 * 1000;
@@ -191,7 +195,7 @@ async function promoteStagedSet(
       flag: "wx",
       mode: 0o600
     });
-    await rename(manifestTemporaryPath, manifestPath);
+    await replaceClamAvManifest(manifestTemporaryPath, manifestPath);
     await removeRetiredDatabaseSets(
       setsDirectory,
       manifest.signatureVersion,
@@ -204,6 +208,38 @@ async function promoteStagedSet(
       await rm(promotedDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
     return false;
+  }
+}
+
+export async function replaceClamAvManifest(
+  temporaryPath: string,
+  manifestPath: string,
+  options: ClamAvManifestReplacementOptions = {}
+): Promise<void> {
+  const renameFile = options.renameFile ?? rename;
+  try {
+    await renameFile(temporaryPath, manifestPath);
+    return;
+  } catch (error) {
+    if (!isRenameOverwriteUnsupported(error)) throw error;
+
+    let previousManifest: Buffer;
+    try {
+      previousManifest = await readFile(manifestPath);
+    } catch {
+      throw error;
+    }
+
+    await rm(manifestPath, { force: true });
+    try {
+      await renameFile(temporaryPath, manifestPath);
+    } catch (replacementError) {
+      await writeFile(manifestPath, previousManifest, {
+        flag: "wx",
+        mode: 0o600
+      }).catch(() => undefined);
+      throw replacementError;
+    }
   }
 }
 
@@ -285,6 +321,13 @@ function isMissingFileError(error: unknown): boolean {
     typeof error === "object" &&
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function isRenameOverwriteUnsupported(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return new Set(["EACCES", "EEXIST", "ENOTEMPTY", "EPERM"]).has(
+    String((error as { code?: unknown }).code)
   );
 }
 

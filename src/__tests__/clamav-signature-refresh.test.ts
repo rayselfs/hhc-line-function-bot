@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  replaceClamAvManifest,
   refreshClamAvSignatures,
   type ClamAvRefreshExecFile
 } from "../tools/refresh-clamav-signatures.js";
@@ -138,6 +139,30 @@ describe("ClamAV signature refresh", () => {
     ).toEqual(["bytecode.cvd", "daily.cvd", "main.cvd"]);
     expect(await readFile(join(root, "current", "old.cvd"), "utf8")).toBe("old signatures");
     expect((await readdir(root)).filter((name) => name !== "current")).toEqual([]);
+  });
+
+  it("safely replaces an existing manifest when Azure Files rejects rename-overwrite", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hhc-clamav-manifest-test-"));
+    temporaryRoots.push(root);
+    const manifestPath = join(root, "manifest.json");
+    const temporaryPath = join(root, "manifest.tmp");
+    await writeFile(manifestPath, "old manifest");
+    await writeFile(temporaryPath, "new manifest");
+    let renameAttempts = 0;
+
+    await replaceClamAvManifest(temporaryPath, manifestPath, {
+      renameFile: async (source, destination) => {
+        renameAttempts += 1;
+        if (renameAttempts === 1) {
+          throw Object.assign(new Error("SMB overwrite unsupported"), { code: "EPERM" });
+        }
+        await rename(source, destination);
+      }
+    });
+
+    expect(renameAttempts).toBe(2);
+    expect(await readFile(manifestPath, "utf8")).toBe("new manifest");
+    expect(existsSync(temporaryPath)).toBe(false);
   });
 
   it("retains the active set when freshclam fails", async () => {
