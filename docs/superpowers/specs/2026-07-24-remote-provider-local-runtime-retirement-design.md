@@ -75,13 +75,13 @@ scoped job/postback retrieval path; it does not use LINE push. Confirmation
 deduplication and job claiming must be atomic so a file is neither downloaded
 before confirmation nor published twice.
 
-A scheduled ACA Job refreshes ClamAV signatures onto an Azure Files share and
-validates the completed signature set before making it current. Scan jobs mount
-that share read-only. A missing, stale, invalid, or unreadable signature set,
-scan timeout, scanner failure, or infected result fails closed: it creates no
-OneDrive item and no catalog record. Initial scan-job sizing is 1 vCPU and
-4 GiB memory, then adjusted only from measured queue duration, memory, and
-signature-load telemetry.
+A scheduled ACA Job refreshes ClamAV signatures onto an Azure Files share every
+two days and validates the completed signature set before making it current.
+Scan jobs mount that share read-only. A missing, invalid, unreadable, or more
+than 72-hour-old signature set, scan timeout, scanner failure, or infected
+result fails closed: it creates no OneDrive item and no catalog record. Initial
+scan-job sizing is 1 vCPU and 4 GiB memory, then adjusted only from measured
+queue duration, memory, and signature-load telemetry.
 
 ## Knowledge Index Migration
 

@@ -342,9 +342,10 @@ changes.
   catalog upsert through the sole binary-publisher path. It reports through
   requester-scoped long-running job retrieval/postback rather than LINE push.
 - Use an Azure Files share for ClamAV signature data. A scheduled ACA Job
-  refreshes and validates signatures; scan jobs mount the share read-only and
-  fail closed when signatures are absent, stale, or unhealthy. No attachment
-  bytes, file names, raw messages, or secrets enter queues or telemetry.
+  refreshes and validates signatures every two days; scan jobs mount the share
+  read-only and fail closed when signatures are absent, older than 72 hours,
+  stale, or unhealthy. No attachment bytes, file names, raw messages, or
+  secrets enter queues or telemetry.
 - Remove office-hosted SearXNG and ClamAV endpoint configuration, local-service
   startup requirements, and deployment references once their ACA workloads
   pass the replacement contract.
@@ -498,7 +499,7 @@ availability target.
 - SBOM, image vulnerability policy, and pinned workflow dependencies.
 - PostgreSQL PITR, OneDrive retention validation, and quarterly restore drills.
 - ClamAV signature/reachability monitoring and explicit degraded behavior for
-  local Ollama and SearXNG dependencies.
+  remote-provider, ACA SearXNG, and ACA Job dependencies.
 - Data inventory, retention, export, deletion, source ownership, offboarding,
   incident response, and secret rotation runbooks.
 - Provider data-classification policy, including a local-only lane for private
