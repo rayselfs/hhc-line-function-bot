@@ -47,15 +47,11 @@ update_args=(
   "EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000"
   "EXTERNAL_RESOURCE_MAX_REDIRECTS=3"
   "SHEET_MUSIC_ALLOWED_EXTENSIONS=pdf,jpg,jpeg,png"
-  "SEARXNG_BASE_URL=http://172.16.65.5:8888"
+  "SEARXNG_BASE_URL=http://hhc-searxng"
   "SEARXNG_TIMEOUT_MS=8000"
-  "CLAMAV_HOST=172.16.65.5"
-  "CLAMAV_PORT=3310"
-  "CLAMAV_TIMEOUT_MS=15000"
-  "OLLAMA_EMBEDDING_MODEL=bge-m3"
+  "OPENAI_EMBEDDING_MODEL=text-embedding-3-small"
   "EMBEDDING_BATCH_SIZE=16"
   "EMBEDDING_TIMEOUT_MS=30000"
-  "EMBEDDING_KEEP_ALIVE=1m"
   "OBSERVABILITY_HMAC_KEY=secretref:observability-hmac-key"
 )
 if [[ ${#legacy_profile_envs[@]} -gt 0 ]]; then
@@ -124,35 +120,6 @@ if [[ "${revision_ready}" != "true" ]]; then
 fi
 
 subscription_id="$(az account show --query id --output tsv)"
-ollama_base_url="$(az rest \
-  --method post \
-  --uri "https://management.azure.com/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.App/containerApps/${CONTAINER_APP_NAME}/listSecrets?api-version=2024-03-01" \
-  --query "value[?name=='ollama-base-url'].value | [0]" \
-  --output tsv)"
-if [[ -z "${ollama_base_url}" ]]; then
-  echo "Missing ollama-base-url app secret"
-  exit 1
-fi
-az containerapp job secret set \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${CATALOG_SYNC_JOB_NAME}" \
-  --secrets "ollama-base-url=${ollama_base_url}" \
-  --only-show-errors \
-  --output none
-unset ollama_base_url
-az containerapp job update \
-  --resource-group "${RESOURCE_GROUP}" \
-  --name "${CATALOG_SYNC_JOB_NAME}" \
-  --container-name catalog-sync \
-  --image "${image_ref}" \
-  --set-env-vars \
-    "OLLAMA_BASE_URL=secretref:ollama-base-url" \
-    "OLLAMA_EMBEDDING_MODEL=bge-m3" \
-    "EMBEDDING_BATCH_SIZE=16" \
-    "EMBEDDING_TIMEOUT_MS=30000" \
-    "EMBEDDING_KEEP_ALIVE=1m" \
-  --only-show-errors \
-  --output none
 
 legacy_profile_secret="$(az containerapp secret list \
   --resource-group "${RESOURCE_GROUP}" \

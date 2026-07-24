@@ -14,6 +14,20 @@ function projectFileExists(path: string): boolean {
 }
 
 describe("production profile configuration deployment contract", () => {
+  it("hosts SearXNG as an internal always-on ACA app without office-network routes", () => {
+    const searxng = readProjectFile("aca.searxng.containerapp.yaml");
+    const bot = readProjectFile("aca.containerapp.yaml");
+    const deployment = readProjectFile("scripts/deploy-aca.sh");
+
+    expect(searxng).toContain("type: Microsoft.App/containerApps");
+    expect(searxng).toContain("external: false");
+    expect(searxng).toContain("targetPort: 8080");
+    expect(searxng).toContain("minReplicas: 1");
+    expect(searxng).toContain("searxng/searxng@sha256:");
+    expect(bot).not.toContain("172.16.65.5");
+    expect(deployment).not.toContain("172.16.65.5");
+  });
+
   it("ships file-backed profiles and does not deploy an ACA profile secret", () => {
     const dockerfile = readProjectFile("Dockerfile");
     const manifest = readProjectFile("aca.containerapp.yaml");
@@ -54,8 +68,8 @@ describe("production profile configuration deployment contract", () => {
     expect(manifest).not.toContain("name: GRAPH_SHEET_MUSIC_FOLDER_PATH");
     expect(manifest).not.toContain("name: SHEET_MUSIC_DEFAULT_RECURSIVE");
     expect(manifest).toContain("name: SEARXNG_BASE_URL");
-    expect(manifest).toContain("name: CLAMAV_HOST");
-    expect(manifest).toContain("name: CLAMAV_PORT");
+    expect(manifest).not.toContain("name: CLAMAV_HOST");
+    expect(manifest).not.toContain("name: CLAMAV_PORT");
     expect(manifest).toContain("name: MAX_ATTACHMENT_BYTES");
     expect(manifest).toContain("name: observability-hmac-key");
     expect(manifest).toContain("name: OBSERVABILITY_HMAC_KEY");
@@ -76,16 +90,16 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain('--dapr-app-id "hhc-line-function-bot"');
     expect(deployment).toContain("--dapr-app-port 3000");
     expect(deployment).not.toContain("az containerapp dapr disable");
-    expect(deployment).toContain("SEARXNG_BASE_URL=http://172.16.65.5:8888");
-    expect(deployment).toContain("CLAMAV_HOST=172.16.65.5");
+    expect(deployment).toContain("SEARXNG_BASE_URL=http://hhc-searxng");
+    expect(deployment).not.toContain("CLAMAV_HOST=");
     expect(deployment).toContain("MAX_ATTACHMENT_BYTES=26214400");
     expect(deployment).toContain("LINE_CONTENT_DOWNLOAD_TIMEOUT_MS=30000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
-    expect(deployment).toContain("OLLAMA_EMBEDDING_MODEL=bge-m3");
+    expect(deployment).toContain("OPENAI_EMBEDDING_MODEL=text-embedding-3-small");
     expect(deployment).toContain("EMBEDDING_BATCH_SIZE=16");
     expect(deployment).toContain("EMBEDDING_TIMEOUT_MS=30000");
-    expect(deployment).toContain("EMBEDDING_KEEP_ALIVE=1m");
+    expect(deployment).not.toContain("EMBEDDING_KEEP_ALIVE=");
     expect(helper?.enabledFunctions).toEqual(
       expect.arrayContaining(["find_resource", "save_resource", "save_memory", "retrieve_memory"])
     );
