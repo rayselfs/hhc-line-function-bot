@@ -298,11 +298,13 @@ resource-memory, freshness, and invalidation lifecycle.
 
 ### Outcome
 
-The service no longer depends on an office-hosted Ollama endpoint. DeepSeek is
-the only active remote LLM provider, while `text-embedding-3-small` supplies
-cloud embeddings for knowledge retrieval. Both remain configured through
-provider contracts and secret references so a future remote API provider can
-replace either integration without capability-specific changes.
+The service no longer depends on an office-hosted runtime. DeepSeek is the only
+active remote LLM provider, while `text-embedding-3-small` supplies cloud
+embeddings for knowledge retrieval. SearXNG runs as an internal, always-on ACA
+service and ClamAV runs as bounded ACA Jobs. Provider and workload contracts
+remain configuration-backed so a future remote API provider or infrastructure
+implementation can replace either integration without capability-specific
+changes.
 
 ### Scope
 
@@ -330,6 +332,22 @@ replace either integration without capability-specific changes.
 - Remove Ollama configuration, clients, diagnostics, tests, local-services
   runtime requirements, and deployment references after the remote replacement
   is live and verified.
+- Move the consent-only sheet-music SearXNG fallback to an internal-only ACA
+  Container App that remains available rather than scaling to zero. Preserve
+  its existing limited purpose: it is not a general web-browsing capability and
+  it never saves a result automatically.
+- Move attachment scanning and publication to an event-driven ACA Job. The
+  confirmed attachment workflow queues only an opaque work identifier; the job
+  performs the existing validation, antivirus scan, OneDrive publication, and
+  catalog upsert through the sole binary-publisher path. It reports through
+  requester-scoped long-running job retrieval/postback rather than LINE push.
+- Use an Azure Files share for ClamAV signature data. A scheduled ACA Job
+  refreshes and validates signatures; scan jobs mount the share read-only and
+  fail closed when signatures are absent, stale, or unhealthy. No attachment
+  bytes, file names, raw messages, or secrets enter queues or telemetry.
+- Remove office-hosted SearXNG and ClamAV endpoint configuration, local-service
+  startup requirements, and deployment references once their ACA workloads
+  pass the replacement contract.
 - Add provider usage, timeout, unavailable, and rebuild metrics without raw
   content, API keys, prompts, source titles, or URLs.
 
@@ -338,13 +356,16 @@ replace either integration without capability-specific changes.
 - No second semantic LLM fallback in this milestone.
 - No provider-hosted file/vector-store product and no local CPU/GPU embedding
   service.
+- No public SearXNG ingress, no general web-search function, and no always-on
+  ClamAV daemon.
 - No migration of secrets into PostgreSQL, no raw-text telemetry, and no
   downgrade of controlled routing, access, or result-envelope rules.
 
 ### Exit criteria
 
-- A deployment with no reachable office/Ollama endpoint starts and completes
-  all supported LLM and knowledge flows through remote providers.
+- A deployment with no reachable office endpoint starts and completes all
+  supported LLM, knowledge, external-sheet-search, and attachment-publication
+  flows through ACA and remote providers.
 - DeepSeek failure exercises deterministic recovery or a safe unavailable/
   clarification response; it never attempts a local-model connection.
 - All enabled knowledge sources are re-indexed with `text-embedding-3-small`
@@ -355,6 +376,11 @@ replace either integration without capability-specific changes.
 - The remote-provider contract supports a future OpenAI-compatible provider
   through configuration and a provider adapter, without changes in capability
   handlers or the controlled router.
+- SearXNG has internal ingress only and remains limited to the existing
+  requester-consented sheet-music fallback.
+- Clean attachments complete through the event-driven scan job; infected,
+  timed-out, unavailable, duplicate, or stale-signature jobs publish nothing
+  and return a requester-scoped failed result.
 - Full tests, remote-provider integration tests, and the versioned Kernel gate
   pass with the revised lane policy.
 

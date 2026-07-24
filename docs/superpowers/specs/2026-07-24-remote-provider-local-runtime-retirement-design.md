@@ -1,4 +1,4 @@
-# Remote Provider and Local Runtime Retirement Design
+# Remote Provider and Office Runtime Retirement Design
 
 ## Status
 
@@ -8,9 +8,9 @@ stabilization.
 
 ## Goal
 
-Remove all runtime dependence on the office-hosted Ollama service while
-preserving the restricted bot's deterministic authority boundary, safe failure
-behavior, and provider replaceability.
+Remove all runtime dependence on office-hosted services while preserving the
+restricted bot's deterministic authority boundary, safe failure behavior, and
+provider replaceability.
 
 ## Decisions
 
@@ -32,6 +32,12 @@ behavior, and provider replaceability.
 - Providers remain explicit configuration-backed adapters. API keys are ACA
   secrets referenced by environment variable names and are never stored in
   PostgreSQL or committed configuration.
+- SearXNG becomes an internal-only, always-on ACA Container App. It remains a
+  requester-consented sheet-music not-found fallback, never a general web
+  capability, and never saves a result automatically.
+- ClamAV becomes two ACA Jobs: an event-driven scan-and-publish job and a
+  scheduled signature-refresh job. They use an Azure Files share for signature
+  data; no office-hosted `clamd` service remains in the request path.
 
 ## Provider Architecture
 
@@ -46,6 +52,36 @@ and profile policy must permit a future named remote provider adapter without
 changing function handlers, planner logic, or capability contracts. A provider
 change is a configuration plus adapter change, not a database-stored secret or
 an ad-hoc runtime command.
+
+## External Search and Antivirus Execution
+
+SearXNG is deployed as a separate internal ACA Container App in the same ACA
+environment, with no public ingress and a minimum replica count of one. The
+bot calls its internal endpoint only after the existing sheet-music fallback
+consent and keeps the existing allowed-result and safe-download checks. It is a
+workload boundary, not a new product service or general web-search surface.
+
+After final attachment confirmation, the controlled attachment workflow creates
+an atomic requester/source-scoped long-running job record and enqueues an
+opaque work identifier to Azure Storage Queue. The event-driven ClamAV ACA Job
+uses that identifier to load the authorized work state, then performs download,
+size/MIME/magic-byte/extension/safe-name/hash validation, virus scanning,
+OneDrive publication, and catalog upsert through the existing sole binary
+publisher. The queue, traces, and telemetry carry no attachment bytes, file
+names, raw LINE messages, URLs, credentials, or scan output.
+
+The scan job returns a sanitized terminal state to the existing requester-
+scoped job/postback retrieval path; it does not use LINE push. Confirmation
+deduplication and job claiming must be atomic so a file is neither downloaded
+before confirmation nor published twice.
+
+A scheduled ACA Job refreshes ClamAV signatures onto an Azure Files share and
+validates the completed signature set before making it current. Scan jobs mount
+that share read-only. A missing, stale, invalid, or unreadable signature set,
+scan timeout, scanner failure, or infected result fails closed: it creates no
+OneDrive item and no catalog record. Initial scan-job sizing is 1 vCPU and
+4 GiB memory, then adjusted only from measured queue duration, memory, and
+signature-load telemetry.
 
 ## Knowledge Index Migration
 
@@ -79,11 +115,12 @@ fallback embedding model is used against the active index.
 
 ## Removal Scope
 
-After remote-provider integration passes, remove Ollama clients, embedding
-clients, environment variables, profile allowlists/policies, diagnostics,
-tests, local-services startup configuration, and documentation. The deployment
-must not contact the office network during startup, request handling, scheduled
-sync, or background rebuild.
+After replacement integration passes, remove Ollama clients, embedding clients,
+environment variables, profile allowlists/policies, diagnostics, tests,
+office-hosted SearXNG/ClamAV endpoints, local-services startup configuration,
+and documentation. The deployment must not contact the office network during
+startup, request handling, scheduled sync, background rebuild, external
+sheet-music fallback, or attachment scanning/publication.
 
 ## Verification
 
@@ -93,6 +130,15 @@ sync, or background rebuild.
 - Migration tests start from a populated 1024-dimensional derived knowledge
   snapshot, preserve source/access/audit metadata, clear derived rows, rebuild
   1536-dimensional vectors, and atomically publish only complete sources.
+- Deployment-contract and consent tests prove SearXNG has internal ACA ingress
+  only and cannot become a general-search or automatic-save path.
+- Attachment-job tests cover one-shot confirmation, opaque queue payloads,
+  requester/source isolation, atomic claims, and no download before final
+  confirmation.
+- Scanner tests cover clean, infected, timeout, unavailable, duplicate, and
+  stale/missing-signature outcomes; every non-clean outcome leaves OneDrive and
+  catalog state unchanged.
 - A live controlled evaluation uses only DeepSeek and confirms deterministic
   fail-closed behavior when it is unavailable.
-- Kernel cases cover provider unavailability and rebuilt-knowledge lifecycle.
+- Kernel cases cover provider unavailability, rebuilt-knowledge lifecycle, and
+  attachment-job terminal states.
