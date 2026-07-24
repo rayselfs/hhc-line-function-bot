@@ -17,7 +17,7 @@ describe("agent memory migrations", () => {
     expect(scheduleVisibilityConstraints[0]).toContain("'private', 'group', 'profile'");
   });
 
-  it("adds idempotent lexical and pgvector indexes for explicit text memory", async () => {
+  it("preserves explicit text memory while clearing only vectors for the 1536 rebuild", async () => {
     const query = vi.fn().mockResolvedValue(undefined);
 
     await runAgentMemoryMigrations({ query });
@@ -29,6 +29,7 @@ describe("agent memory migrations", () => {
     expect(sql).toContain("agent_text_memories_search_idx");
     expect(sql).toContain("agent_text_memories_embedding_idx");
     expect(sql).toContain("if not exists");
+    expect(sql).not.toMatch(/delete\s+from\s+agent_text_memories/iu);
   });
 
   it("adds resource lifecycle metadata and retires legacy aliases without deleting resources", async () => {

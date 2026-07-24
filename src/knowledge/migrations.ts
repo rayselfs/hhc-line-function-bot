@@ -142,9 +142,9 @@ const migrations = [
       where c.relname='knowledge_embeddings' and a.attname='embedding'
         and format_type(a.atttypid,a.atttypmod)='vector(1024)'
     ) then
+      delete from knowledge_embeddings;
+      delete from knowledge_chunks;
       delete from knowledge_documents;
-      update knowledge_sources set last_synced_at=null, sync_status='pending',
-        sync_error_code=null, routing_display_name=null;
       drop index if exists knowledge_embeddings_cosine_idx;
       alter table knowledge_embeddings drop constraint if exists knowledge_embeddings_dimensions_check;
       alter table knowledge_embeddings alter column embedding type vector(1536);
@@ -152,6 +152,8 @@ const migrations = [
         check (dimensions = 1536);
       create index knowledge_embeddings_cosine_idx
         on knowledge_embeddings using hnsw (embedding vector_cosine_ops);
+      update knowledge_sources set last_synced_at=null, sync_status='pending',
+        sync_error_code=null, routing_display_name=null;
     end if;
   end $$
   `
