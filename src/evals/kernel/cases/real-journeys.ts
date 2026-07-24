@@ -496,6 +496,11 @@ function profile(enabledFunctions: FunctionName[]): BotProfileConfig {
 function graphClient(): GraphDriveClient {
   return {
     listFolderChildren: async () => [],
+    getItemById: async (_driveId, itemId) => ({
+      id: itemId,
+      name: "synthetic",
+      driveId: "drive"
+    }),
     createSharingLink: async () => "https://example.test/synthetic-link",
     uploadFile: async () => ({ id: "unused", name: "unused", driveId: "drive" })
   };

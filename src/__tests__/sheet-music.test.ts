@@ -53,6 +53,10 @@ function personalizedHandlerContext(): FunctionHandlerContext {
   };
 }
 
+async function currentItemById(_driveId: string, itemId: string) {
+  return { id: itemId, name: "current-item" };
+}
+
 describe("find_sheet_music", () => {
   it("reports provider failures as unavailable instead of not found", async () => {
     const handler = createFindPopSheetMusicHandler({
@@ -96,6 +100,7 @@ describe("find_sheet_music", () => {
     });
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/png")
     };
     const handler = createFindPopSheetMusicHandler({
@@ -137,6 +142,7 @@ describe("find_sheet_music", () => {
       listFolderFilesRecursive: vi
         .fn()
         .mockResolvedValue([{ id: "legacy", driveId: "legacy-drive", name: "A TIME FOR US.pdf" }]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/catalog-sheet")
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
@@ -173,6 +179,7 @@ describe("find_sheet_music", () => {
       listFolderFilesRecursive: vi
         .fn()
         .mockResolvedValue([{ id: "legacy", driveId: "legacy-drive", name: "A TIME FOR US.pdf" }]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/legacy")
     };
     const handler = createFindPopSheetMusicHandler({
@@ -220,6 +227,7 @@ describe("find_sheet_music", () => {
           path: "流行歌譜 (捷徑)/01大紅(分頁)"
         }
       ]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/a-time-for-us")
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
@@ -308,6 +316,7 @@ describe("find_sheet_music", () => {
       listFolderFilesRecursive: vi
         .fn()
         .mockResolvedValue([{ id: "pdf-1", driveId: "drive-id", name: "A TIME FOR US.pdf" }]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/current-sheet")
     };
     const sessionStore = new InMemorySessionStore({ now: () => now, ttlMs: 10 * 60 * 1000 });
@@ -345,6 +354,7 @@ describe("find_sheet_music", () => {
         .mockResolvedValueOnce([
           { id: "pdf-2", driveId: "drive-id", name: "NEW SONG-The Band-001.pdf" }
         ]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi
         .fn()
         .mockResolvedValueOnce("https://download.invalid/yesterday-1")
@@ -374,6 +384,7 @@ describe("find_sheet_music", () => {
           { id: "pdf-1", driveId: "drive-id", name: "YESTERDAY-The Beatles-001.pdf" }
         ]),
       listFolderFilesRecursive: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/yesterday")
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
@@ -672,6 +683,7 @@ describe("find_sheet_music", () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),
       listFolderFilesRecursive: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/selected")
     };
     const now = new Date("2026-07-04T10:00:00.000Z");
@@ -751,6 +763,7 @@ describe("find_sheet_music", () => {
     const graph: GraphDriveClient = {
       listFolderChildren: vi.fn(),
       listFolderFilesRecursive: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/numeric")
     };
     const now = new Date("2026-07-04T10:00:00.000Z");

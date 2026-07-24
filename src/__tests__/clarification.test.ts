@@ -15,6 +15,10 @@ import type {
   NotionDatabaseClient
 } from "../types.js";
 
+async function currentItemById(_driveId: string, itemId: string) {
+  return { id: itemId, name: "current-item" };
+}
+
 function testConfig(): AppConfig {
   return {
     serviceName: "hhc-line-function-bot",
@@ -157,6 +161,7 @@ describe("clarification flow", () => {
         }
       ]),
       listFolderFilesRecursive: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/amazing-grace")
     };
     const config = testConfig();
@@ -239,6 +244,7 @@ describe("clarification flow", () => {
         }
       ]),
       listFolderFilesRecursive: vi.fn(),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/amazing-grace")
     };
     const config = testConfig();
@@ -306,6 +312,7 @@ describe("clarification flow", () => {
           name: "YESTERDAY-The Beatles-001.pdf"
         }
       ]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/yesterday")
     };
     const config = testConfig();
@@ -379,6 +386,7 @@ describe("clarification flow", () => {
           name: "YESTERDAY-The Beatles-001.pdf"
         }
       ]),
+      getItemById: vi.fn(currentItemById),
       createSharingLink: vi.fn().mockResolvedValue("https://download.invalid/yesterday")
     };
     const config = testConfig();
