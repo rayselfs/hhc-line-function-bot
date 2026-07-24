@@ -232,11 +232,11 @@ async function scanUnavailableFailsClosed(now: Date): Promise<boolean> {
     profiles: [profile],
     publisher: createResourceBinaryPublisher({ catalog, graph }),
     scanner: { scan: async () => ({ status: "unavailable" }) },
-    signatureManifest: {
+    readSignatureManifest: async () => ({
       version: 1,
       signatureVersion: "synthetic-current",
       lastSuccessfulAt: now.toISOString()
-    },
+    }),
     databaseDirectory: "/synthetic/clamav",
     maxBytes: 1024,
     lineDownloadTimeoutMs: 1000,

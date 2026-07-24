@@ -75,7 +75,6 @@ export async function runAttachmentScanJob(
       sources: buildCatalogSourceSeedsForProfiles(env, config.profiles)
     });
     const graph = createGraphDriveClient(config.graph);
-    const signatureManifest = await readSignatureManifest(jobEnvironment.signatureManifestPath);
     const result = await runAttachmentScanWorker(jobEnvironment.workId, {
       workStore,
       lineContent: createLineSdkContentClient(),
@@ -84,7 +83,7 @@ export async function runAttachmentScanJob(
       scanner: {
         scan: (input) => scanWithClamAvCli(input)
       },
-      signatureManifest,
+      readSignatureManifest: () => readSignatureManifest(jobEnvironment.signatureManifestPath),
       databaseDirectory: jobEnvironment.databaseDirectory,
       maxBytes: config.attachments.maxBytes,
       lineDownloadTimeoutMs: config.attachments.lineDownloadTimeoutMs,

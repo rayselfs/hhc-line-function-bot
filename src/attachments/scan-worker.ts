@@ -37,7 +37,7 @@ export interface AttachmentScanWorkerOptions {
   profiles: BotProfileConfig[];
   publisher: ResourceBinaryPublisher;
   scanner: AttachmentFileScanner;
-  signatureManifest: unknown;
+  readSignatureManifest: () => Promise<unknown>;
   databaseDirectory: string;
   maxBytes: number;
   lineDownloadTimeoutMs: number;
@@ -66,7 +66,7 @@ export async function runAttachmentScanWorker(
   }
 
   try {
-    const signatureManifest = options.signatureManifest;
+    const signatureManifest = await options.readSignatureManifest();
     const now = options.now?.() ?? new Date();
     if (
       !isCurrentClamAvSignatureManifest(
@@ -143,9 +143,10 @@ export async function runAttachmentScanWorker(
       }
 
       const publicationNow = options.now?.() ?? new Date();
+      const publicationSignatureManifest = await options.readSignatureManifest();
       if (
         !isCurrentClamAvSignatureManifest(
-          signatureManifest,
+          publicationSignatureManifest,
           publicationNow,
           options.signatureMaxAgeMs ?? DEFAULT_SIGNATURE_MAX_AGE_MS
         )
@@ -157,7 +158,7 @@ export async function runAttachmentScanWorker(
         resource: preparation.resource,
         scan: {
           status: "clean",
-          signatureVersion: signatureManifest.signatureVersion
+          signatureVersion: publicationSignatureManifest.signatureVersion
         },
         now: publicationNow
       });

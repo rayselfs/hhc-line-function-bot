@@ -116,7 +116,7 @@ async function setup(
       profiles: [profile],
       publisher: createResourceBinaryPublisher({ catalog, graph }),
       scanner,
-      signatureManifest: options.signatureManifest ?? freshSignature,
+      readSignatureManifest: vi.fn().mockResolvedValue(options.signatureManifest ?? freshSignature),
       databaseDirectory: "/var/lib/clamav/current",
       maxBytes: 25 * 1024 * 1024,
       lineDownloadTimeoutMs: 30_000,
@@ -215,13 +215,16 @@ describe("attachment scan worker", () => {
     expect(graph.uploadFile).not.toHaveBeenCalled();
   });
 
-  it("revalidates signatures immediately before publishing", async () => {
+  it("re-reads the replaced signature manifest immediately before publishing", async () => {
     const { graph, scanner, work, workerOptions } = await setup();
-    const clock = vi
-      .fn<() => Date>()
-      .mockReturnValueOnce(new Date("2026-07-24T04:00:00.000Z"))
-      .mockReturnValueOnce(new Date("2026-07-27T03:00:00.001Z"));
-    workerOptions.now = clock;
+    const readSignatureManifest = vi
+      .fn<() => Promise<unknown>>()
+      .mockResolvedValueOnce(freshSignature)
+      .mockResolvedValueOnce({
+        ...freshSignature,
+        lastSuccessfulAt: "2026-07-20T03:00:00.000Z"
+      });
+    workerOptions.readSignatureManifest = readSignatureManifest;
 
     await expect(runAttachmentScanWorker(work.id, workerOptions)).resolves.toMatchObject({
       status: "failed",
@@ -231,7 +234,7 @@ describe("attachment scan worker", () => {
 
     expect(scanner.scan).toHaveBeenCalledTimes(1);
     expect(graph.uploadFile).not.toHaveBeenCalled();
-    expect(clock).toHaveBeenCalledTimes(2);
+    expect(readSignatureManifest).toHaveBeenCalledTimes(2);
   });
 
   it("does not download or publish duplicate claimed work", async () => {
