@@ -192,6 +192,10 @@ retired_exact = {
     "GRAPH_SHEET_MUSIC_FOLDER_ITEM_ID",
     "GRAPH_SHEET_MUSIC_FOLDER_PATH",
     "SHEET_MUSIC_DEFAULT_RECURSIVE",
+    "LLM_PROVIDER",
+    "LLM_FALLBACK_PROVIDER",
+    "EMBEDDING_KEEP_ALIVE",
+    "CLAMAV_TIMEOUT_MS",
     "".join(("CLAM", "AV_HOST")),
     "".join(("CLAM", "AV_PORT")),
 }
@@ -199,6 +203,7 @@ retired_prefixes = (
     "".join(("OLLA", "MA_")),
     "".join(("VIRUS_", "SCAN_")),
 )
+retired_provider_token = "".join(("OLLA", "MA"))
 retired_office_address = ".".join(["172", "16", "65", "5"])
 for item in json.loads(os.environ["BOT_ENV_JSON"]):
     name = item.get("name", "")
@@ -206,6 +211,7 @@ for item in json.loads(os.environ["BOT_ENV_JSON"]):
     if (
         name in retired_exact
         or name.startswith(retired_prefixes)
+        or f"_{retired_provider_token}_" in name
         or retired_office_address in value
     ):
         print(name)
