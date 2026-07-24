@@ -1,9 +1,16 @@
 name: hhc-line-bot-attachment-scan
 type: Microsoft.App/jobs
 location: PLACEHOLDER_AZURE_REGION
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    PLACEHOLDER_CONTAINER_APP_JOB_IDENTITY_ID: {}
 properties:
   environmentId: PLACEHOLDER_CONTAINER_APP_ENVIRONMENT_ID
   configuration:
+    registries:
+      - server: alive.azurecr.io
+        identity: PLACEHOLDER_CONTAINER_APP_JOB_IDENTITY_ID
     triggerType: Event
     replicaTimeout: 900
     replicaRetryLimit: 1

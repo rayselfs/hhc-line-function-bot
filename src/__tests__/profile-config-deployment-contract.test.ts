@@ -359,6 +359,17 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("az containerapp job update");
     expect(deployment).toContain("ATTACHMENT_SCAN_JOB_NAME");
     expect(deployment).toContain("CLAMAV_SIGNATURE_REFRESH_JOB_NAME");
+    expect(deployment).toContain("CONTAINER_APP_JOB_IDENTITY_NAME:=hhc-line-bot-jobs");
+    expect(deployment).toContain("az identity show");
+    expect(deployment).toContain("CONTAINER_APP_JOB_IDENTITY_ID");
+
+    for (const jobManifest of [catalogJob, scanJob, refreshJob]) {
+      expect(jobManifest).toContain("type: UserAssigned");
+      expect(jobManifest).toContain("PLACEHOLDER_CONTAINER_APP_JOB_IDENTITY_ID: {}");
+      expect(jobManifest).toContain("registries:");
+      expect(jobManifest).toContain("server: alive.azurecr.io");
+      expect(jobManifest).toContain("identity: PLACEHOLDER_CONTAINER_APP_JOB_IDENTITY_ID");
+    }
 
     const retiredEnvBlock = deployment.slice(
       deployment.indexOf("retired_exact = {"),
