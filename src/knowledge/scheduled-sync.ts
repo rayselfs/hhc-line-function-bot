@@ -1,4 +1,4 @@
-import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import type { EmbeddingClient } from "../clients/embedding.js";
 import type { NotionKnowledgeClient } from "../clients/notion-knowledge.js";
 import { markKnowledgeSyncFailure, syncKnowledgeSource } from "./sync-service.js";
 import type { KnowledgeSourceRecord, KnowledgeStore } from "./store.js";

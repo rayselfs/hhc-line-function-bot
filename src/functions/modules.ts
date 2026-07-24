@@ -39,7 +39,7 @@ import { createFindResourceHandler } from "./find-resource.js";
 import type { CatalogStore } from "../catalog/store.js";
 import type { ScheduleStore } from "../schedules/store.js";
 import type { ExternalBinaryClient } from "../clients/external-binary.js";
-import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import type { EmbeddingClient } from "../clients/embedding.js";
 import type { KnowledgeStore } from "../knowledge/store.js";
 import { createResourceBinaryPublisher } from "./resource-binary-publisher.js";
 import { createSaveResourceHandler } from "./save-resource.js";

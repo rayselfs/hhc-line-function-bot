@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import type { EmbeddingClient } from "../clients/embedding.js";
 import { queryKnowledgeArgumentsSchema } from "../function-arguments.js";
 import {
   listKnowledgeRoutingMetadata,

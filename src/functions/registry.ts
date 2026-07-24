@@ -13,7 +13,7 @@ import type { SheetMusicExternalSearchSummarizer } from "../search/sheet-music-e
 import { InMemoryAgentMemoryStore, type AgentMemoryStore } from "../agent/memory-store.js";
 import { MemoryCacheStore, type CacheStore } from "../cache/cache-store.js";
 import { InMemoryCatalogStore, type CatalogStore } from "../catalog/store.js";
-import type { EmbeddingClient } from "../clients/ollama-embedding.js";
+import type { EmbeddingClient } from "../clients/embedding.js";
 import { InMemoryKnowledgeStore, type KnowledgeStore } from "../knowledge/store.js";
 import { createLlmStatusAdminHandler } from "../llm-diagnostics.js";
 import { InMemoryScheduleStore, type ScheduleStore } from "../schedules/store.js";
