@@ -225,6 +225,95 @@ describe("production profile configuration deployment contract", () => {
     expect(readme).toContain("node dist/tools/sync-catalog.js");
   });
 
+  it("provisions finite queue scans and atomic scheduled ClamAV signature refreshes", () => {
+    const scanJob = readProjectFile("aca.attachment-scan-job.yaml");
+    const refreshJob = readProjectFile("aca.clamav-signature-refresh-job.yaml");
+    const bot = readProjectFile("aca.containerapp.yaml");
+    const catalogJob = readProjectFile("aca.catalog-sync-job.yaml");
+    const dockerfile = readProjectFile("Dockerfile");
+    const releaseWorkflow = readProjectFile(".github/workflows/release.yml");
+    const deployment = readProjectFile("scripts/deploy-aca.sh");
+
+    expect(scanJob).toContain("type: Microsoft.App/jobs");
+    expect(scanJob).toContain("triggerType: Event");
+    expect(scanJob).toContain("eventTriggerConfig:");
+    expect(scanJob).toContain("minExecutions: 0");
+    expect(scanJob).toContain("parallelism: 1");
+    expect(scanJob).toContain("replicaCompletionCount: 1");
+    expect(scanJob).toContain("type: azure-queue");
+    expect(scanJob).toContain("queueLength: 1");
+    expect(scanJob).toContain("triggerParameter: connection");
+    expect(scanJob).toContain("secretRef: attachment-scan-queue-connection-string");
+    expect(scanJob).toContain("name: ATTACHMENT_SCAN_QUEUE_URL");
+    expect(scanJob).toContain("secretRef: attachment-scan-queue-url");
+    expect(scanJob).toContain("image: alive.azurecr.io/alive/hhc-line-function-bot-scan:latest");
+    expect(scanJob).toContain("cpu: 1.0");
+    expect(scanJob).toContain("memory: 4Gi");
+    expect(scanJob).toContain("mountPath: /var/lib/clamav");
+    expect(scanJob).toContain("storageName: clamav-signatures-readonly");
+    expect(scanJob).not.toContain("ingress:");
+
+    expect(refreshJob).toContain("type: Microsoft.App/jobs");
+    expect(refreshJob).toContain("triggerType: Schedule");
+    expect(refreshJob).toContain('cronExpression: "10 19 */2 * *"');
+    expect(refreshJob).toContain("parallelism: 1");
+    expect(refreshJob).toContain("replicaCompletionCount: 1");
+    expect(refreshJob).toContain("dist/tools/refresh-clamav-signatures.js");
+    expect(refreshJob).toContain("mountPath: /var/lib/clamav");
+    expect(refreshJob).toContain("storageName: clamav-signatures-readwrite");
+    expect(refreshJob).not.toContain("ingress:");
+    expect(dockerfile).toContain('"clamav-freshclam=${CLAMAV_VERSION}"');
+    expect(dockerfile.indexOf("clamav-freshclam")).toBeLessThan(
+      dockerfile.indexOf("FROM gcr.io/distroless")
+    );
+
+    expect(bot).toContain("name: ATTACHMENT_SCAN_QUEUE_URL");
+    expect(bot).toContain("secretRef: attachment-scan-queue-url");
+    expect(bot).not.toContain("name: CLAMAV_DATABASE_DIRECTORY");
+    expect(catalogJob).not.toContain("name: CLAMAV_DATABASE_DIRECTORY");
+    expect(catalogJob).toContain("name: ATTACHMENT_SCAN_QUEUE_URL");
+
+    expect(releaseWorkflow).toContain("- aca.attachment-scan-job.yaml");
+    expect(releaseWorkflow).toContain("- aca.clamav-signature-refresh-job.yaml");
+    expect(releaseWorkflow).toContain("--target attachment-scan-worker");
+    expect(releaseWorkflow).toContain("SCAN_IMAGE_REPOSITORY");
+
+    expect(deployment).toContain("az containerapp env storage set");
+    expect(deployment).toContain("--storage-name clamav-signatures-readonly");
+    expect(deployment).toContain("--access-mode ReadOnly");
+    expect(deployment).toContain("--storage-name clamav-signatures-readwrite");
+    expect(deployment).toContain("--access-mode ReadWrite");
+    expect(deployment).toContain("az containerapp job update");
+    expect(deployment).toContain("ATTACHMENT_SCAN_JOB_NAME");
+    expect(deployment).toContain("CLAMAV_SIGNATURE_REFRESH_JOB_NAME");
+
+    const searxngDeploy = deployment.indexOf('az containerapp update --yaml "${searxng_manifest}"');
+    const botDeploy = deployment.indexOf('az containerapp update "${update_args[@]}"');
+    const refreshDeploy = deployment.indexOf('deploy_job "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}"');
+    const refreshBootstrap = deployment.indexOf(
+      'start_job_and_wait "${CLAMAV_SIGNATURE_REFRESH_JOB_NAME}"'
+    );
+    const scanDeploy = deployment.indexOf('deploy_job "${ATTACHMENT_SCAN_JOB_NAME}"');
+    expect(searxngDeploy).toBeGreaterThanOrEqual(0);
+    expect(searxngDeploy).toBeLessThan(botDeploy);
+    expect(botDeploy).toBeLessThan(refreshDeploy);
+    expect(refreshDeploy).toBeLessThan(refreshBootstrap);
+    expect(refreshBootstrap).toBeLessThan(scanDeploy);
+    expect(refreshDeploy).toBeLessThan(scanDeploy);
+
+    for (const contents of [scanJob, refreshJob, bot, catalogJob]) {
+      expect(contents).not.toMatch(/OLLAMA_|CLAMAV_HOST|CLAMAV_PORT|VIRUS_SCAN_|172\.16\.65\.5/u);
+    }
+    expect(deployment).toContain('"CLAMAV_HOST"');
+    expect(deployment).toContain('"CLAMAV_PORT"');
+    expect(deployment).toContain('name.startswith("OLLAMA_")');
+    expect(deployment).toContain('name.startswith("VIRUS_SCAN_")');
+    expect(deployment).not.toMatch(
+      /(?:OLLAMA_[A-Z_]*|CLAMAV_HOST|CLAMAV_PORT|VIRUS_SCAN_[A-Z_]*)=/u
+    );
+    expect(deployment).not.toContain("172.16.65.5");
+  });
+
   it("keeps only the scanner in workstation local services", () => {
     const compose = readProjectFile("infra/local-services/docker-compose.yml");
     const startup = readProjectFile("scripts/start-local-services.ps1");

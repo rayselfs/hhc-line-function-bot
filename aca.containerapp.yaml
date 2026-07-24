@@ -36,6 +36,12 @@ properties:
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
       - name: observability-hmac-key
         value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: attachment-scan-queue-url
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: attachment-scan-queue-connection-string
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
+      - name: clamav-signature-storage-key
+        value: PLACEHOLDER_SET_IN_AZURE_CONTAINER_APP_SECRETS
   template:
     containers:
       - name: hhc-line-function-bot
@@ -59,6 +65,8 @@ properties:
             value: "26214400"
           - name: LINE_CONTENT_DOWNLOAD_TIMEOUT_MS
             value: "30000"
+          - name: ATTACHMENT_SCAN_QUEUE_URL
+            secretRef: attachment-scan-queue-url
           - name: EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS
             value: "15000"
           - name: EXTERNAL_RESOURCE_MAX_REDIRECTS

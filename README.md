@@ -402,7 +402,7 @@ Requester-scoped task-frame state records the last successful capability plus ca
 
 Production profiles still allow text messages only unless `allowedMessageTypes` is explicitly expanded. When a profile allows `image` or `file`, the webhook does not immediately download, upload, or save the attachment. Direct chat stores a requester/source-scoped pending attachment session and asks `要我幫忙保存這個檔案嗎？` with `是` and `否` quick replies. Groups first require the requester-scoped two-minute upload activation described above; without it the attachment is ignored without a reply or session.
 
-After opt-in, the bot offers exactly four purposes: `投影片`, `流行歌譜`, `詩歌歌譜`, and `小哈資料庫`. It checks the selected target's write capability, asks the requester to enter a title, and then creates a metadata-only preview with `保存` and `取消`. It does not download or scan the binary during these stages. Only after the requester replies `保存` does the bot atomically claim the pending attachment and queue one opaque scan job. The finite scan worker downloads the LINE content once with `MAX_ATTACHMENT_BYTES` (default 25 MiB) and `LINE_CONTENT_DOWNLOAD_TIMEOUT_MS` (default 30 seconds), checks actual size, MIME/magic bytes, extension, safe filename, and hash, then publishes only after a local ClamAV `clean` result with a current signature manifest. Concurrent duplicate confirmations cannot publish the same session twice. If the worker, scanner, or signatures are unavailable or stale, the save fails closed. OneDrive upload and catalog upsert form one logical commit: catalog failure compensates by deleting the uploaded Graph item. A successful commit returns the exact catalog item reference so immediate follow-up lookup does not depend on fuzzy title search.
+After opt-in, the bot offers exactly four purposes: `投影片`, `流行歌譜`, `詩歌歌譜`, and `小哈資料庫`. It checks the selected target's write capability, asks the requester to enter a title, and then creates a metadata-only preview with `保存` and `取消`. It does not download or scan the binary during these stages. Only after the requester replies `保存` does the bot atomically claim the pending attachment and queue one opaque work ID. The event-driven `aca.attachment-scan-job.yaml` execution leases one queue message, downloads the LINE content once with `MAX_ATTACHMENT_BYTES` (default 25 MiB) and `LINE_CONTENT_DOWNLOAD_TIMEOUT_MS` (default 30 seconds), checks actual size, MIME/magic bytes, extension, safe filename, and hash, then publishes only after a local ClamAV `clean` result with a current signature manifest. Each execution has one replica, bounded runtime, 1 vCPU/4 GiB, no ingress, and a read-only signature mount. Concurrent duplicate confirmations cannot publish the same session twice. If the worker, scanner, or signatures are unavailable or stale, the save fails closed. OneDrive upload and catalog upsert form one logical commit: catalog failure compensates by deleting the uploaded Graph item. A successful commit returns the exact catalog item reference so immediate follow-up lookup does not depend on fuzzy title search.
 
 The attachment binary is fetched outbound from the bot through the LINE Content API; it is not part of the inbound webhook JSON. API Gateway, Dapr, and Fastify webhook body limits therefore remain unchanged.
 
@@ -413,7 +413,9 @@ Supported attachment targets in this flow:
 - `詩歌歌譜`: writes to the `hymn_sheet_music` OneDrive root and indexes `hymn_sheet`.
 - `小哈資料庫` / `教會資料`: writes to `xiaoha_database` subfolders and indexes `church_document`, `church_image`, or `church_other` with 90-day retention.
 
-The always-on bot process has no TCP or HTTP scanner endpoint configuration. The finite attachment-scan worker runs local ClamAV and requires `CLAMAV_DATABASE_DIRECTORY` plus `CLAMAV_SIGNATURE_MANIFEST_PATH` (defaulting to `manifest.json` in that directory). `CLAMAV_SCAN_TIMEOUT_MS` controls its bounded scan duration. It revalidates the manifest immediately before publication and fails closed when it is missing or stale.
+The always-on bot process has no TCP or HTTP scanner endpoint configuration. The finite attachment-scan worker runs local ClamAV and requires `CLAMAV_DATABASE_DIRECTORY` plus `CLAMAV_SIGNATURE_MANIFEST_PATH` (defaulting to `manifest.json` in that directory). The manifest selects an immutable versioned database directory beneath the configured root, so a refresh cannot create a reader-visible gap. `CLAMAV_SCAN_TIMEOUT_MS` controls its bounded scan duration. It revalidates the same signature version immediately before publication and fails closed when the manifest is missing, malformed, changed during the scan, from the future, or more than 72 hours old.
+
+`aca.clamav-signature-refresh-job.yaml` runs at `10 19 */2 * *` UTC. It mounts the same Azure Files share through a separate read/write environment storage definition, downloads into a private staging directory, requires `main`, `daily`, and `bytecode` databases, validates each with ClamAV tooling, moves the set into an immutable versioned directory, and atomically replaces the sanitized manifest last. Deployment also starts and waits for one refresh execution before enabling the queue scanner, so a newly provisioned share is never left empty until the first scheduled run. Any download, completeness, validation, or promotion failure exits non-zero and retains the prior active set.
 
 ## Runtime Secrets
 
@@ -425,6 +427,8 @@ Do not commit real `.env` files. In Azure Container Apps, store only real creden
 - `DATABASE_URL` and `REDIS_URL`
 - `NOTION_TOKEN`
 - `GRAPH_CLIENT_SECRET`
+- `ATTACHMENT_SCAN_QUEUE_URL` as the queue-scoped bot producer secret
+- the attachment queue connection string and ClamAV Azure Files account key used only while deploying/running ACA Jobs
 
 `config/profiles.json` is intentionally non-sensitive and is packaged in the image. Do not set `BOT_PROFILES_JSON` or `BOT_PROFILES_BASE64_JSON`; the runtime rejects both.
 
@@ -460,9 +464,11 @@ Operational details are in `docs/runbooks/production-operations.md`.
 ```text
 alive.azurecr.io/alive/hhc-line-function-bot:<branch>-<githubRunId>
 alive.azurecr.io/alive/hhc-line-function-bot:latest
+alive.azurecr.io/alive/hhc-line-function-bot-scan:<branch>-<githubRunId>
+alive.azurecr.io/alive/hhc-line-function-bot-scan:latest
 ```
 
-`scripts/deploy-aca.sh` updates the bot and catalog-sync job, restores the required Dapr configuration, and waits for the new bot revision to be healthy. Azure Container Apps runtime secrets remain preconfigured in Azure.
+`scripts/deploy-aca.sh` deploys internal SearXNG first, updates the bot, restores the required Dapr configuration, waits for the new bot revision to be healthy, and then updates the signature-refresh, attachment-scan, and catalog-sync jobs. The script binds the same Azure Files share read/write for refresh and read-only for scanning, and copies only the exact preconfigured ACA secrets and non-secret storage/queue references needed by each job.
 
 Documentation-only merges do not trigger `Production Release`. GitHub Actions is the sole CI/CD system for this repository; the former Azure DevOps pipeline and its YAML definition have been removed.
 

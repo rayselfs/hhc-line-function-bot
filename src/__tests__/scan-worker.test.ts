@@ -31,7 +31,8 @@ const profile: BotProfileConfig = {
 const freshSignature: ClamAvSignatureManifest = {
   version: 1,
   signatureVersion: "daily-20260724",
-  lastSuccessfulAt: "2026-07-24T03:00:00.000Z"
+  lastSuccessfulAt: "2026-07-24T03:00:00.000Z",
+  databaseDirectory: "sets/daily-20260724"
 };
 
 async function setup(
@@ -142,7 +143,7 @@ describe("attachment scan worker", () => {
     expect(lineContent.getMessageContent).toHaveBeenCalledTimes(1);
     expect(scanner.scan).toHaveBeenCalledWith({
       filePath: expect.any(String),
-      databaseDirectory: "/var/lib/clamav/current",
+      databaseDirectory: "/var/lib/clamav/current/sets/daily-20260724",
       timeoutMs: 15_000
     });
     expect(graph.uploadFile).toHaveBeenCalledTimes(1);
@@ -235,6 +236,27 @@ describe("attachment scan worker", () => {
     expect(scanner.scan).toHaveBeenCalledTimes(1);
     expect(graph.uploadFile).not.toHaveBeenCalled();
     expect(readSignatureManifest).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not publish a scan when the active signature set changes during execution", async () => {
+    const { graph, scanner, work, workerOptions } = await setup();
+    workerOptions.readSignatureManifest = vi
+      .fn<() => Promise<unknown>>()
+      .mockResolvedValueOnce(freshSignature)
+      .mockResolvedValueOnce({
+        ...freshSignature,
+        signatureVersion: "daily-20260725",
+        databaseDirectory: "sets/daily-20260725"
+      });
+
+    await expect(runAttachmentScanWorker(work.id, workerOptions)).resolves.toMatchObject({
+      status: "failed",
+      failureCode: "signature_stale",
+      infrastructureFailure: true
+    });
+
+    expect(scanner.scan).toHaveBeenCalledTimes(1);
+    expect(graph.uploadFile).not.toHaveBeenCalled();
   });
 
   it("does not download or publish duplicate claimed work", async () => {

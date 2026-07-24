@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import type {
   AttachmentScanFailureCode,
@@ -21,6 +21,7 @@ export interface ClamAvSignatureManifest {
   version: 1;
   signatureVersion: string;
   lastSuccessfulAt: string;
+  databaseDirectory?: string;
 }
 
 export interface AttachmentFileScanner {
@@ -128,7 +129,10 @@ export async function runAttachmentScanWorker(
       try {
         scan = await options.scanner.scan({
           filePath,
-          databaseDirectory: options.databaseDirectory,
+          databaseDirectory: databaseDirectoryForManifest(
+            signatureManifest,
+            options.databaseDirectory
+          ),
           timeoutMs: options.scanTimeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS
         });
       } catch {
@@ -149,7 +153,9 @@ export async function runAttachmentScanWorker(
           publicationSignatureManifest,
           publicationNow,
           options.signatureMaxAgeMs ?? DEFAULT_SIGNATURE_MAX_AGE_MS
-        )
+        ) ||
+        publicationSignatureManifest.signatureVersion !== signatureManifest.signatureVersion ||
+        publicationSignatureManifest.databaseDirectory !== signatureManifest.databaseDirectory
       ) {
         return failWork(options.workStore, work, "signature_stale", true);
       }
@@ -188,7 +194,10 @@ export function isCurrentClamAvSignatureManifest(
     value.version !== 1 ||
     typeof value.signatureVersion !== "string" ||
     !/^[A-Za-z0-9._-]{1,120}$/u.test(value.signatureVersion) ||
-    typeof value.lastSuccessfulAt !== "string"
+    typeof value.lastSuccessfulAt !== "string" ||
+    (value.databaseDirectory !== undefined &&
+      (typeof value.databaseDirectory !== "string" ||
+        !/^sets\/[A-Za-z0-9._-]{1,120}$/u.test(value.databaseDirectory)))
   ) {
     return false;
   }
@@ -198,6 +207,14 @@ export function isCurrentClamAvSignatureManifest(
   }
   const ageMs = now.getTime() - timestamp;
   return ageMs >= 0 && ageMs <= maxAgeMs;
+}
+
+function databaseDirectoryForManifest(
+  manifest: ClamAvSignatureManifest,
+  configuredDirectory: string
+): string {
+  if (!manifest.databaseDirectory) return configuredDirectory;
+  return posix.join(configuredDirectory.replaceAll("\\", "/"), manifest.databaseDirectory);
 }
 
 async function failWork(

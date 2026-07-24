@@ -25,9 +25,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       "clamav=${CLAMAV_VERSION}" \
       "clamav-base=${CLAMAV_VERSION}" \
+      "clamav-freshclam=${CLAMAV_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 LABEL org.opencontainers.image.source="https://github.com/HallelujahHomeChurch/hhc-line-function-bot"
-LABEL org.opencontainers.image.description="Finite LINE attachment scan and publication worker"
+LABEL org.opencontainers.image.description="Finite LINE attachment scan and signature refresh worker"
 COPY --from=prod-deps /app/package.json ./package.json
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

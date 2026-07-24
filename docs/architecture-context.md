@@ -480,13 +480,18 @@ The later pending-attachment text handler accepts deterministic purposes such as
 slides, pop sheet music, hymn sheet music, or Xiaoha database/church resources.
 Purpose selection verifies the target source has write capability and stores a
 metadata-only confirmation target. It does not download or scan content. On
-explicit confirmation, the handler performs one bounded LINE Content API
-download and hands the bytes to the shared binary publisher for actual-size,
-MIME/magic-byte, extension, safe-filename, hash, virus-scan, conflict, upload,
-and catalog checks. The pending session is claimed atomically before download,
-so duplicate confirmations cannot publish twice. OneDrive upload and catalog
-upsert form one logical commit; catalog failure compensates by deleting the
-uploaded Graph item. Scanner results other than `clean` fail closed. The
+explicit confirmation, the handler atomically persists scoped work and queues
+only its opaque ID. An event-driven ACA Job leases one queue item, atomically
+claims the work, and only then performs the bounded LINE Content API download,
+actual-size, MIME/magic-byte, extension, safe-filename, hash, local ClamAV,
+conflict, upload, and catalog checks. OneDrive upload and catalog upsert form one
+logical commit; catalog failure compensates by deleting the uploaded Graph item.
+Scanner results other than `clean`, or signatures without a valid at-most-72-hour
+manifest, fail closed. A separate two-day scheduled ACA Job stages and validates
+an immutable versioned database set, then atomically replaces the manifest that
+selects it. Scans retain their selected set and must observe the same manifest
+version immediately before publication. Deployment bootstraps and waits for one
+refresh before it enables the queue scanner. The
 `xiaoha_database` manual source is skipped by catalog sync and receives a 90-day
 catalog `expiresAt`; formal synced sources do not. Successful publication
 records opaque drive/item metadata as a recent general resource, so a scoped
@@ -507,7 +512,9 @@ attachment-size controls and remain unchanged.
 Function dependencies are intentionally behind ports/clients:
 
 - LINE: `src/clients/line.ts`
-- Virus scanner: `src/clients/virus-scan.ts`
+- Finite ClamAV scanner and refresh tools: `src/attachments/clamav-cli.ts`,
+  `src/tools/run-attachment-scan-job.ts`, and
+  `src/tools/refresh-clamav-signatures.ts`
 - SearXNG web search: `src/clients/searxng.ts`
 - DeepSeek provider: `src/clients/deepseek.ts`
 - OpenAI embeddings: `src/clients/openai-embedding.ts`
