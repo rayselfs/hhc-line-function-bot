@@ -42,14 +42,14 @@ authenticates with the Azure `api-key` header:
 
 The production configuration uses these names:
 
-| Setting | Production value or source |
-| --- | --- |
-| `EMBEDDING_PROVIDER` | `azure_openai` |
-| `AZURE_OPENAI_EMBEDDING_ENDPOINT` | Azure account endpoint |
-| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` |
-| `AZURE_OPENAI_EMBEDDING_API_VERSION` | `2024-10-21` |
-| `AZURE_OPENAI_EMBEDDING_API_KEY` | `secretref:azure-openai-embedding-key` |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` |
+| Setting                              | Production value or source             |
+| ------------------------------------ | -------------------------------------- |
+| `EMBEDDING_PROVIDER`                 | `azure_openai`                         |
+| `AZURE_OPENAI_EMBEDDING_ENDPOINT`    | Azure account endpoint                 |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`  | `text-embedding-3-small`               |
+| `AZURE_OPENAI_EMBEDDING_API_VERSION` | `2024-10-21`                           |
+| `AZURE_OPENAI_EMBEDDING_API_KEY`     | `secretref:azure-openai-embedding-key` |
+| `EMBEDDING_MODEL`                    | `text-embedding-3-small`               |
 
 It never sends the Azure key to `api.openai.com`, and it rejects an endpoint
 outside the configured Azure AI Services account.

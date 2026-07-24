@@ -126,13 +126,11 @@ describe("production profile configuration deployment contract", () => {
     expect(deployment).toContain("EXTERNAL_RESOURCE_DOWNLOAD_TIMEOUT_MS=15000");
     expect(deployment).toContain("EXTERNAL_RESOURCE_MAX_REDIRECTS=3");
     expect(deployment).toContain(
-      'AZURE_OPENAI_EMBEDDING_RESOURCE_NAME:=bible-text-embedding-resource'
+      "AZURE_OPENAI_EMBEDDING_RESOURCE_NAME:=bible-text-embedding-resource"
     );
     expect(deployment).toContain("az cognitiveservices account deployment list");
     expect(deployment).toContain("az cognitiveservices account keys list");
-    expect(deployment).toContain(
-      '"azure-openai-embedding-key=${azure_openai_embedding_key}"'
-    );
+    expect(deployment).toContain('"azure-openai-embedding-key=${azure_openai_embedding_key}"');
     expect(deployment).toContain(
       '"AZURE_OPENAI_EMBEDDING_API_KEY=secretref:azure-openai-embedding-key"'
     );

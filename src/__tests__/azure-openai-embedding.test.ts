@@ -35,9 +35,9 @@ describe("Azure OpenAI embedding client", () => {
     expect(() =>
       createAzureOpenAiEmbeddingClient({ ...options(), deployment: "other-deployment" })
     ).toThrow("embedding_deployment_unsupported");
-    expect(() =>
-      createAzureOpenAiEmbeddingClient({ ...options(), apiVersion: "preview" })
-    ).toThrow("embedding_api_version_unsupported");
+    expect(() => createAzureOpenAiEmbeddingClient({ ...options(), apiVersion: "preview" })).toThrow(
+      "embedding_api_version_unsupported"
+    );
     expect(() =>
       createAzureOpenAiEmbeddingClient({ ...options(), model: "text-embedding-3-large" })
     ).toThrow("embedding_model_unsupported");

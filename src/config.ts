@@ -586,9 +586,7 @@ function readKnowledgeEmbeddingConfig(
   }
   const endpoint = readAzureEmbeddingEndpoint(env.AZURE_OPENAI_EMBEDDING_ENDPOINT);
   if (env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT?.trim() !== AZURE_OPENAI_EMBEDDING_DEPLOYMENT) {
-    throw new Error(
-      "AZURE_OPENAI_EMBEDDING_DEPLOYMENT must be text-embedding-3-small"
-    );
+    throw new Error("AZURE_OPENAI_EMBEDDING_DEPLOYMENT must be text-embedding-3-small");
   }
   if (env.AZURE_OPENAI_EMBEDDING_API_VERSION?.trim() !== AZURE_OPENAI_EMBEDDING_API_VERSION) {
     throw new Error("AZURE_OPENAI_EMBEDDING_API_VERSION must be 2024-10-21");
@@ -619,8 +617,7 @@ function readAzureEmbeddingEndpoint(value: string | undefined): string {
   const hostname = endpoint.hostname.toLowerCase();
   if (
     endpoint.protocol !== "https:" ||
-    (!hostname.endsWith(".cognitiveservices.azure.com") &&
-      !hostname.endsWith(".openai.azure.com"))
+    (!hostname.endsWith(".cognitiveservices.azure.com") && !hostname.endsWith(".openai.azure.com"))
   ) {
     throw new Error("AZURE_OPENAI_EMBEDDING_ENDPOINT must be an Azure HTTPS endpoint");
   }

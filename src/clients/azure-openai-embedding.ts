@@ -103,8 +103,7 @@ function parseAzureEndpoint(value: string): URL {
   const hostname = endpoint.hostname.toLowerCase();
   if (
     endpoint.protocol !== "https:" ||
-    (!hostname.endsWith(".cognitiveservices.azure.com") &&
-      !hostname.endsWith(".openai.azure.com"))
+    (!hostname.endsWith(".cognitiveservices.azure.com") && !hostname.endsWith(".openai.azure.com"))
   ) {
     throw new Error("embedding_endpoint_unsupported");
   }

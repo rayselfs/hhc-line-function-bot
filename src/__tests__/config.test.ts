@@ -703,7 +703,11 @@ describe("config", () => {
         "preview",
         "AZURE_OPENAI_EMBEDDING_API_VERSION must be 2024-10-21"
       ],
-      ["EMBEDDING_MODEL", "text-embedding-3-large", "EMBEDDING_MODEL must be text-embedding-3-small"]
+      [
+        "EMBEDDING_MODEL",
+        "text-embedding-3-large",
+        "EMBEDDING_MODEL must be text-embedding-3-small"
+      ]
     ] as const) {
       expect(() =>
         loadConfigFromEnv({
